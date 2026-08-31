@@ -1,0 +1,41 @@
+:root{color-scheme:dark;--bg:#000}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
+body{font-family:Arial,Helvetica,sans-serif;user-select:none}
+.screen{position:fixed;inset:0;width:100vw;height:100dvh;background:#000;cursor:none}
+#ledCanvas{position:absolute;inset:0;width:100%;height:100%;display:block;background:#000}
+.hover-controls{position:fixed;right:14px;bottom:14px;display:flex;gap:6px;opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:10}
+.screen.show-controls{cursor:default}.screen.show-controls .hover-controls,.screen:focus-within .hover-controls{opacity:1;pointer-events:auto}
+.hover-controls button,.hover-controls a{appearance:none;border:1px solid rgba(255,255,255,.16);background:rgba(10,10,10,.76);color:#e8e8e8;text-decoration:none;width:38px;height:38px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;font-size:18px;backdrop-filter:blur(4px);cursor:pointer}
+.hover-controls button:hover,.hover-controls a:hover{background:rgba(28,28,28,.94)}
+
+/* v2.8 cleaner kiosk controls */
+.hover-controls{right:18px;bottom:18px;gap:8px}
+.hover-controls button,.hover-controls a{width:43px;height:43px;border-radius:13px;border-color:rgba(123,188,215,.16);background:rgba(6,11,15,.78);color:#d8e8ee;box-shadow:0 10px 30px rgba(0,0,0,.30);backdrop-filter:blur(12px);transition:transform .15s ease,background .15s,border-color .15s}
+.hover-controls button:hover,.hover-controls a:hover{transform:translateY(-2px);background:rgba(16,31,41,.94);border-color:rgba(91,216,255,.35)}
+
+.incident-map-panel{position:absolute;top:5.2vh;right:2.2vw;bottom:5.8vh;width:min(32vw,600px);z-index:6;pointer-events:none;display:flex;align-items:stretch;justify-content:flex-end}
+.incident-map-panel[hidden]{display:none!important}
+.incident-map-card{width:100%;border-radius:18px;border:1px solid rgba(188,216,228,.13);background:#071015;box-shadow:0 22px 70px rgba(0,0,0,.46),inset 0 1px 0 rgba(255,255,255,.035);overflow:hidden;display:flex;flex-direction:column}
+.incident-map-head{padding:15px 17px 12px;border-bottom:1px solid rgba(255,255,255,.07);background:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0))}
+.incident-map-kicker{font:800 10px/1.2 Arial,Helvetica,sans-serif;letter-spacing:.20em;color:rgba(157,190,204,.60)}
+.incident-map-title{margin-top:7px;font:800 clamp(17px,1.25vw,23px)/1.2 Arial,Helvetica,sans-serif;color:#f0f5f7;word-break:break-word}
+.incident-map-frame{flex:1;min-height:280px;width:100%;border:0;background:#081116}
+.incident-map-meta{padding:10px 17px 13px;font:650 12px/1.4 Arial,Helvetica,sans-serif;color:rgba(190,211,220,.64);border-top:1px solid rgba(255,255,255,.06);background:#071015}
+@media (max-width:1200px){.incident-map-panel{width:min(40vw,520px)}}
+@media (max-width:920px){.incident-map-panel{display:none!important}}
+.incident-map-loading{flex:1;min-height:280px;display:grid;place-items:center;padding:28px;text-align:center;font:800 clamp(18px,1.4vw,28px)/1.35 Arial,Helvetica,sans-serif;letter-spacing:.03em;color:rgba(188,226,242,.84);background:radial-gradient(circle at 50% 40%,rgba(55,158,204,.14),transparent 62%),#081116}
+.incident-map-loading[hidden]{display:none!important}
+.incident-map-loading.error{color:#ff9fa5;background:radial-gradient(circle at 50% 40%,rgba(255,94,105,.12),transparent 62%),#10090b}
+.incident-map-frame[hidden]{display:none!important}
+
+/* v4.0.3 - standards-safe audio unlock fallback for Chrome/Edge */
+.audio-unlock-overlay{position:absolute;inset:0;z-index:50;display:grid;place-items:center;padding:32px;background:rgba(0,0,0,.78);backdrop-filter:blur(10px);cursor:default;pointer-events:auto}
+.audio-unlock-overlay[hidden]{display:none!important}
+.audio-unlock-card{width:min(620px,92vw);padding:30px 32px 28px;border-radius:22px;border:1px solid rgba(255,116,87,.34);background:linear-gradient(180deg,rgba(31,12,10,.98),rgba(8,10,12,.98));box-shadow:0 30px 90px rgba(0,0,0,.62);text-align:center;color:#f7f8f8}
+.audio-unlock-kicker{font:900 12px/1.2 Arial,sans-serif;letter-spacing:.18em;color:#ff765d}
+.audio-unlock-title{margin-top:10px;font:900 clamp(27px,3vw,42px)/1.06 Arial,sans-serif}
+.audio-unlock-card p{margin:15px auto 20px;max-width:520px;font:600 16px/1.5 Arial,sans-serif;color:rgba(230,238,241,.78)}
+.audio-unlock-card button{appearance:none;border:1px solid rgba(255,130,103,.52);border-radius:14px;padding:15px 22px;min-height:52px;background:#ff654c;color:#110807;font:900 15px/1 Arial,sans-serif;letter-spacing:.04em;cursor:pointer}
+.audio-unlock-card button:focus-visible{outline:3px solid #fff;outline-offset:4px}
+.audio-unlock-card small{display:block;margin-top:16px;color:rgba(184,202,210,.56);font:600 12px/1.4 Arial,sans-serif}

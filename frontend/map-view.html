@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="nl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Incidentkaart</title><style>
+html,body,#map{margin:0;width:100%;height:100%;overflow:hidden;background:#0a1217;font-family:Arial,Helvetica,sans-serif}
+#map{position:relative;background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);background-size:32px 32px}
+.tile{position:absolute;width:256px;height:256px;object-fit:cover;user-select:none;-webkit-user-drag:none;filter:grayscale(.38) saturate(.62) brightness(.68) contrast(1.12)}
+.shade{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 105px rgba(0,0,0,.58);background:linear-gradient(180deg,rgba(4,11,15,.10),rgba(4,11,15,.24))}
+.marker{position:absolute;left:50%;top:50%;width:27px;height:27px;transform:translate(-50%,-100%);filter:drop-shadow(0 6px 10px rgba(0,0,0,.72));z-index:20}
+.marker:before{content:"";position:absolute;left:2px;top:2px;width:20px;height:20px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:#ff4338;border:3px solid rgba(255,255,255,.96);box-sizing:border-box}
+.marker:after{content:"";position:absolute;left:9px;top:9px;width:6px;height:6px;border-radius:50%;background:#fff}
+.pulse{position:absolute;left:50%;top:50%;width:48px;height:48px;transform:translate(-50%,-50%);border:2px solid rgba(255,59,48,.72);border-radius:50%;animation:pulse 1.8s ease-out infinite;z-index:18}
+@keyframes pulse{0%{transform:translate(-50%,-50%) scale(.35);opacity:.9}100%{transform:translate(-50%,-50%) scale(1.6);opacity:0}}
+.coord{position:absolute;left:9px;bottom:8px;z-index:25;padding:5px 7px;border-radius:7px;background:rgba(4,10,14,.72);color:rgba(230,244,250,.82);font:600 10px/1.2 Arial,sans-serif;letter-spacing:.02em}
+.attr{position:absolute;right:7px;bottom:7px;z-index:25;padding:4px 6px;border-radius:5px;background:rgba(255,255,255,.82);color:#222;font:10px/1.2 Arial,sans-serif}.attr a{color:#174a76;text-decoration:none}
+.offline{position:absolute;left:50%;top:50%;z-index:5;transform:translate(-50%,-50%);max-width:80%;text-align:center;color:rgba(214,232,240,.66);font:700 14px/1.35 Arial,sans-serif}.offline small{display:block;margin-top:5px;font-weight:500;opacity:.8}
+</style></head><body><div id="map"><div class="offline" id="offline">PDOK-kaart laden…<small>Officiële Nederlandse straatnamen en kaartdata.</small></div><div class="shade"></div><div class="pulse"></div><div class="marker"></div><div class="coord" id="coord"></div><div class="attr">Kaartgegevens © <a href="https://www.kadaster.nl" target="_blank" rel="noopener">Kadaster / PDOK</a></div></div>
+<script>
+'use strict';
+const q=new URLSearchParams(location.search),lat=Math.max(-85,Math.min(85,Number(q.get('lat'))||52.252)),lon=Math.max(-180,Math.min(180,Number(q.get('lon'))||5.26)),zoom=Math.max(12,Math.min(18,Math.round(Number(q.get('zoom'))||16)));
+const map=document.getElementById('map'),offline=document.getElementById('offline'),coord=document.getElementById('coord');coord.textContent=`${lat.toFixed(5)}, ${lon.toFixed(5)} • z${zoom}`;
+let tiles=[];
+function mercator(lat,lon,z){const n=2**z,x=(lon+180)/360*n,r=lat*Math.PI/180,y=(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n;return{x,y,n}}
+function clearTiles(){for(const t of tiles)t.remove();tiles=[]}
+function render(){clearTiles();const w=innerWidth,h=innerHeight,c=mercator(lat,lon,zoom),rx=Math.ceil(w/512)+1,ry=Math.ceil(h/512)+1,cx=Math.floor(c.x),cy=Math.floor(c.y);let loaded=0,failed=0,total=0;
+  for(let ty=cy-ry;ty<=cy+ry;ty++){if(ty<0||ty>=c.n)continue;for(let tx=cx-rx;tx<=cx+rx;tx++){total++;const wx=((tx%c.n)+c.n)%c.n,img=new Image();img.className='tile';img.alt='';img.referrerPolicy='no-referrer';img.decoding='async';img.style.left=`${Math.round(w/2+(tx-c.x)*256)}px`;img.style.top=`${Math.round(h/2+(ty-c.y)*256)}px`;img.onload=()=>{loaded++;if(loaded>0)offline.style.display='none'};img.onerror=()=>{
+      if(img.dataset.fallback!=='osm'){img.dataset.fallback='osm';img.src=`https://tile.openstreetmap.org/${zoom}/${wx}/${ty}.png`;return;}
+      failed++;img.remove();if(failed>=total&&loaded===0){offline.innerHTML='Kaarttegels tijdelijk niet bereikbaar<small>Locatie is wel gevonden; marker staat op de juiste coördinaten.</small>'}
+    };
+    img.dataset.fallback='pdok';
+    img.src=`https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/grijs/EPSG:3857/${zoom}/${wx}/${ty}.png`;
+    map.insertBefore(img,map.firstChild);tiles.push(img)}}
+}
+addEventListener('resize',()=>requestAnimationFrame(render));render();
+</script></body></html>

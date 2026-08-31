@@ -1,0 +1,71 @@
+P2000 MONITOR WINDOWS v4.1.1 — SNELSTART
+========================================
+
+1. Pak de HELE ZIP uit naar een vaste map, bijvoorbeeld:
+   C:\P2000-Monitor
+
+2. Zorg dat de pc bij de allereerste start internet heeft en dubbelklik
+   START_P2000.bat.
+
+   Je hoeft Python NIET zelf te installeren.
+   Bij de eerste start controleert de monitor automatisch of de eigen
+   Python 3.13-runtime aanwezig is. Ontbreekt die, dan wordt het officiele
+   embedded ZIP-pakket vanaf python.org gedownload, via SHA-256 gecontroleerd
+   en lokaal uitgepakt. Geen installer, admin of PATH-wijziging nodig.
+
+3. Daarna start de backend vanzelf en opent automatisch de configuratiewizard.
+   Kies:
+   - Particulier of bedrijf/organisatie;
+   - naam of bedrijfsnaam;
+   - standplaats / hoofdplaats;
+   - de P2000-regio's die je wilt ontvangen;
+   - per regio: Brandweer, Ambulance, Politie, KNRM en/of Lifeliner.
+
+4. Klik in de wizard op "Opslaan en monitor starten".
+
+5. Test daarna via Instellingen:
+   - Testmelding;
+   - Test omroep;
+   - kaart/geocoding;
+   - RSS-status;
+   - Roepnummerdatabase. De gekozen brandweerregio's worden op de achtergrond bijgewerkt.
+
+6. Klinkt de omroep Engels of is er geen Nederlandse stem?
+   Sluit de monitor en start INSTALL_NEDERLANDSE_STEM.bat.
+
+7. Automatisch laten starten bij Windows-aanmelding:
+   INSTALL_AUTOSTART.bat
+
+Handige bestanden:
+- START_P2000.bat             normale start + automatische embedded Python-runtime
+- ENSURE_PYTHON.bat           Python-runtime controleren/herstellen
+- START_P2000_DEBUG.bat       startdiagnose; venster blijft altijd open
+- START_EDGE.bat              expliciet Edge
+- START_CHROME.bat            expliciet Chrome
+- STOP_P2000.bat              monitor netjes stoppen
+- CONFIGURATIE_WIZARD.bat     regio's/profiel later wijzigen
+- OPEN_INSTELLINGEN.bat       beheerpagina openen
+- WINDOWS_CHECK.bat           installatie en RSS controleren
+- OPEN_HANDLEIDING.bat        uitgebreide handleiding
+
+LET OP
+Deze monitor is informatief en is geen vervanging voor C2000, pager/pieper,
+meldkamercommunicatie of andere officiele alarmeringsmiddelen.
+
+Python-check configuratiewizard: CONFIGURATIE_WIZARD.bat controleert en herstelt altijd eerst de eigen P2000 Python 3.13-runtime, ook wanneer de backend al actief is.
+
+STARTPROBLEMEN v4.1.1
+---------------------
+Een foutvenster hoort niet meer vanzelf te verdwijnen. Kijk bij een fout in:
+%LOCALAPPDATA%\P2000-Monitor\Logs\python-bootstrap.log
+%LOCALAPPDATA%\P2000-Monitor\Logs\backend.log
+De normale Python-route gebruikt geen PowerShell meer.
+
+
+Start de BAT-bestanden nooit rechtstreeks vanuit de ZIP; pak de volledige ZIP eerst uit. Vanaf v4.1.1 wordt dit automatisch herkend en blijft het foutvenster open.
+
+
+## Nieuwe persoonlijke weergave (v4.1.1)
+- **Omroepplaatsen:** Instellingen → *Alleen deze steden uitspreken*. Komma, puntkomma of nieuwe regel. Leeg = alles dat zichtbaar binnenkomt mag gesproken worden.
+- **Achtergrond:** zwart, nachtblauw, antraciet, donkergroen, donkerrood of een eigen kleur.
+- **Doelscherm:** Instellingen → *Windows scherm*. Kies een gedetecteerd scherm en herstart de lichtkrant. Chrome/Edge krijgt automatisch de juiste Windows-positie en resolutie.

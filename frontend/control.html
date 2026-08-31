@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#071018">
+  <title>P2000 Monitor • Instellingen</title>
+  <link rel="stylesheet" href="/styles.css?v=4100">
+  <style>
+    .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
+    .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
+    .feed-row,.unknown-row{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.045);word-break:break-word}
+    .feed-row code{font-size:.84rem}.scope-tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.scope-tags span{padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.06);font-size:.82rem}
+    .service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-top:10px}
+    .service-grid label{display:flex;gap:9px;align-items:center;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:12px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.wide{grid-column:1/-1}.status-grid.compact-grid{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+  </style>
+</head>
+<body class="control-page">
+<main class="control-shell">
+  <header class="control-header command-hero">
+    <div class="hero-copy">
+      <span class="eyebrow">WINDOWS • P2000 ONLY</span>
+      <h1>P2000 <span>Monitor</span></h1>
+      <p>Windows P2000-monitor met configureerbare standplaats, regio’s en disciplines. Geen agenda, geen weer en geen Linux-afhankelijkheden.</p>
+      <div class="hero-badges"><span class="hero-badge"><i class="live-dot"></i> LIVE</span><span class="hero-badge" id="profileBadge">CONFIGUREERBAAR</span><span class="hero-badge">WINDOWS KIOSK</span></div>
+    </div>
+    <div class="header-actions">
+      <a class="secondary-btn" href="/setup.html?edit=1">Configuratiewizard</a>
+      <a class="secondary-btn" href="/" target="_blank" rel="noopener">Open monitor</a>
+      <button id="saveBtn" class="primary-btn">Instellingen opslaan</button>
+    </div>
+  </header>
+
+  <div class="control-grid">
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">INSTALLATIEPROFIEL</span><h3 id="profileTitle">Regio’s en standplaats</h3></div><span id="controlStatus" class="status-pill">verbinden…</span></div>
+      <div class="profile-note" id="profileSummary">Configuratie laden…</div>
+      <div class="scope-tags" id="scopeTags"></div>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">WEERGAVE</span><h3>Monitor</h3></div></div>
+      <label class="field"><span>Titel</span><input id="nameInput" type="text" maxlength="30" placeholder="P2000 Monitor"></label>
+      <div class="two-col">
+        <label class="field"><span>Melding zichtbaar (min)</span><input id="messageMinutesInput" type="number" min="0.25" max="15" step="0.25"></label>
+        <label class="field"><span>Max. leeftijd (min)</span><input id="maxAgeMinutesInput" type="number" min="0.25" max="30" step="0.25"></label>
+      </div>
+      <label class="switch-row"><span><b>Voertuigkop tonen</b><small>Bekende voertuignaam waar beschikbaar; onbekende roepnummers blijven zichtbaar.</small></span><input id="vehicleHeaderInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Incidentkaart tonen</b><small>Alleen bij een P2000-melding met bruikbare locatie.</small></span><input id="mapEnabledInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Burn-in bescherming</b><small>Verschuift statische elementen minimaal.</small></span><input id="burnInProtectionInput" type="checkbox"></label>
+      <label class="field"><span>Achtergrond</span><select id="backgroundStyleInput"><option value="black">Zwart</option><option value="nightblue">Nachtblauw</option><option value="graphite">Antraciet</option><option value="deepgreen">Donkergroen</option><option value="deepred">Donkerrood</option><option value="custom">Eigen kleur</option><option value="photo">Foto</option></select></label>
+      <label class="field" id="backgroundColorField"><span>Eigen achtergrondkleur</span><input id="backgroundColorInput" type="color" value="#020506"></label>
+      <div id="backgroundPhotoField" class="field" style="display:none">
+        <span>Achtergrondfoto</span>
+        <input id="backgroundPhotoInput" type="file" accept="image/jpeg,image/png,image/webp">
+        <div class="two-col">
+          <label class="field"><span>Donkere laag</span><input id="backgroundPhotoDarknessInput" type="range" min="0" max="90" step="5" value="60"></label>
+          <label class="field"><span>Weergave</span><select id="backgroundPhotoFitInput"><option value="cover">Scherm vullen</option><option value="contain">Hele foto tonen</option></select></label>
+        </div>
+        <div class="button-row"><button id="uploadBackgroundPhotoBtn" class="secondary-btn" type="button">Foto opslaan</button><button id="removeBackgroundPhotoBtn" class="secondary-btn" type="button">Foto verwijderen</button></div>
+        <p id="backgroundPhotoStatus" class="hint">Nog geen foto gekozen.</p>
+      </div>
+      <p class="hint">Kies een donkere kleur of een lokale JPG/PNG/WebP. Foto's worden lokaal op deze Windows-pc opgeslagen; de donkere laag houdt de P2000-tekst leesbaar.</p>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">FILTER</span><h3>Hulpdiensten</h3></div></div>
+      <p class="hint">De configuratiewizard bepaalt welke regio/discipline-combinaties werkelijk worden opgehaald. Met deze schakelaars kun je een discipline daarnaast tijdelijk op de lichtkrant verbergen.</p>
+      <div class="service-grid">
+        <label><input type="checkbox" data-service="brandweer"> Brandweer</label>
+        <label><input type="checkbox" data-service="ambulance"> Ambulance</label>
+        <label><input type="checkbox" data-service="politie"> Politie</label>
+        <label><input type="checkbox" data-service="lifeliner"> Lifeliner / traumaheli</label>
+        <label><input type="checkbox" data-service="knrm"> Waterhulpverlening</label>
+        <label><input type="checkbox" data-service="overig"> Overig P2000</label>
+      </div>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">OMROEP</span><h3>Kazerne-omroep</h3></div><span id="ttsStatus" class="status-pill">controleren…</span></div>
+      <label class="switch-row"><span><b>P2000 voorlezen</b><small>Bij nieuwe lokale meldingen.</small></span><input id="speechEnabledInput" type="checkbox"></label>
+      <label class="field"><span>Alleen deze steden uitspreken</span><textarea id="speechCitiesInput" rows="3" placeholder="Bijv. Tilburg, Goirle, Oisterwijk"></textarea></label>
+      <p class="hint">Komma, puntkomma of nieuwe regel gebruiken. Leeg = alle zichtbare meldingen mogen worden uitgesproken. Dit filter verandert alleen de omroep.</p>
+      <label class="field"><span>Omroepengine</span><select id="speechEngineInput"><option value="online">Lokale WAV-omroep • Chrome + Edge</option></select></label>
+      <div class="two-col">
+        <label class="field"><span>Snelheid</span><input id="speechRateInput" type="number" min="0.65" max="1.25" step="0.01"></label>
+        <label class="field"><span>Pitch (noodfallback)</span><input id="speechPitchInput" type="number" min="0.75" max="1.30" step="0.01"></label>
+      </div>
+      <div class="button-row"><button id="voiceTestBtn" class="secondary-btn">Test omroep</button><button id="stopSpeechBtn" class="secondary-btn">Stop geluid</button></div>
+      <p class="hint">De backend maakt lokaal een gewoon WAV-audiobestand met Windows SAPI. Chrome en Edge spelen exact hetzelfde bestand af via één vaste speler in het lichtkrant-tabblad. Als een handmatig geopende browser autoplay blokkeert, verschijnt op de lichtkrant éénmalig een knop om geluid te ontgrendelen.</p>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">WINDOWS SCHERM</span><h3>Scherm & slaapstand</h3></div><span id="displayStatus" class="status-pill">controleren…</span></div>
+      <label class="field"><span>Lichtkrant openen op</span><select id="kioskMonitorInput"><option value="primary">Primair scherm</option></select></label>
+      <p class="hint" id="kioskMonitorHint">Windows-schermen worden automatisch gedetecteerd. De keuze wordt toegepast bij de volgende start van Chrome/Edge.</p>
+      <label class="switch-row"><span><b>Scherm automatisch uit</b><small>Gebruikt Windows SC_MONITORPOWER; geen xrandr of Wayland.</small></span><input id="displaySleepInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Nachtstand</b><small>Gebruik de onderstaande tijden voor de donkere stand/slaapstand.</small></span><input id="nightModeInput" type="checkbox"></label>
+      <div class="two-col">
+        <label class="field"><span>Vanaf</span><input id="nightStartInput" type="time"></label>
+        <label class="field"><span>Tot</span><input id="nightEndInput" type="time"></label>
+      </div>
+      <div class="button-row"><button id="displayOffBtn" class="secondary-btn">Scherm uit</button><button id="displayOnBtn" class="secondary-btn">Scherm aan</button><button id="detectDisplayBtn" class="secondary-btn">Controleer Windows</button></div>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">RSS</span><h3>P2000-bronnen</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
+      <div id="feedList" class="feed-list"><div class="feed-row">laden…</div></div>
+      <p class="hint">Deze lijst wordt automatisch opgebouwd uit de regio/discipline-matrix in de configuratiewizard. Je hoeft RSS-links nooit handmatig te kopiëren.</p>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">TEST</span><h3>Eigen P2000-regel</h3></div></div>
+      <label class="field"><span>Originele melding</span><textarea id="testInput" rows="4">P 1 BR woning Hoofdstraat Utrecht</textarea></label>
+      <div class="button-row"><button id="testDisplayBtn" class="primary-btn">Toon testmelding</button><button id="testSpeakBtn" class="secondary-btn">Toon + spreek</button></div>
+      <p id="testStatus" class="hint">Tests worden niet als echte P2000-melding opgeslagen.</p>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">VOERTUIGEN</span><h3>Roepnummerdatabase</h3></div><button id="syncVehiclesBtn" class="secondary-btn">Nu bijwerken</button></div>
+      <div class="status-grid compact-grid">
+        <div><dt>Bekend</dt><dd id="vehicleCount">—</dd></div>
+        <div><dt>Versie</dt><dd id="vehicleVersion">—</dd></div>
+        <div><dt>Regio-cache</dt><dd id="vehicleRegionStatus">—</dd></div>
+      </div>
+      <p id="vehicleSyncDetail" class="hint">De regionale voertuigcache wordt op de achtergrond bijgewerkt. Hier verschijnt de gebruikte bron of een concrete foutmelding.</p>
+      <p class="hint">Alleen de gekozen brandweerregio’s worden exact in geheugen geladen; onbekende roepnummers blijven direct bruikbaar via het landelijke nummerplan.</p>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">DIAGNOSE</span><h3>Nog onbekende roepnummers</h3></div><button id="refreshUnknownBtn" class="secondary-btn">Vernieuwen</button></div>
+      <div id="unknownList" class="unknown-list"><div class="unknown-row">laden…</div></div>
+    </section>
+
+    <section class="control-card wide" id="updatesCard">
+      <div class="panel-head compact"><div><span class="eyebrow">UPDATES</span><h3>Automatisch via GitHub Releases</h3></div><span id="updateStatusPill" class="status-pill">controleren…</span></div>
+      <div class="two-col">
+        <label class="field"><span>GitHub repository</span><input id="githubRepoInput" type="text" value="xSophie1119/lichtkrant" placeholder="owner/repository of https://github.com/owner/repository"></label>
+        <label class="field"><span>Controle-interval</span><select id="githubCheckHoursInput"><option value="1">Elk uur</option><option value="3">Elke 3 uur</option><option value="6">Elke 6 uur</option><option value="12">Elke 12 uur</option><option value="24">Dagelijks</option></select></label>
+      </div>
+      <label class="switch-row"><span><b>Automatisch controleren</b><small>Controleert bij opstarten en daarna volgens het interval op de nieuwste gepubliceerde GitHub Release.</small></span><input id="githubAutoCheckInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Nieuwe versie automatisch installeren</b><small>Downloadt de Windows-ZIP uit de nieuwste release, maakt eerst een backup en herstart daarna de monitor.</small></span><input id="githubAutoInstallInput" type="checkbox"></label>
+      <div class="status-grid compact-grid">
+        <div><dt>Geïnstalleerd</dt><dd id="updateCurrentVersion">—</dd></div>
+        <div><dt>GitHub</dt><dd id="updateLatestVersion">—</dd></div>
+        <div><dt>Bron</dt><dd id="updateRepoStatus">—</dd></div>
+        <div><dt>Laatste status</dt><dd id="updateStateText">—</dd></div>
+      </div>
+      <p id="updateDetail" class="hint">Vul één openbaar GitHub repository in. Iedere release moet een complete P2000 Monitor Windows-ZIP als release asset bevatten.</p>
+      <div class="button-row"><button id="saveUpdateSettingsBtn" class="secondary-btn">Update-instellingen opslaan</button><button id="checkUpdateBtn" class="secondary-btn">Controleer nu</button><button id="installUpdateBtn" class="primary-btn" disabled>Update installeren</button><button id="rollbackUpdateBtn" class="secondary-btn">Vorige versie herstellen</button></div>
+      <p class="hint">Config, database, achtergrondfoto en regionale caches worden niet overschreven. Er worden maximaal drie programmabackups bewaard in <code>data\updates\backups</code>. Publieke GitHub Releases hebben geen account/token nodig.</p>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">BACKEND</span><h3>Status</h3></div></div>
+      <div class="status-grid compact-grid">
+        <div><dt>Versie</dt><dd id="versionStatus">—</dd></div>
+        <div><dt>Feed</dt><dd id="feedStatus">—</dd></div>
+        <div><dt>Vandaag</dt><dd id="todayStatus">—</dd></div>
+        <div><dt>Laatste melding</dt><dd id="lastMessageStatus">—</dd></div>
+        <div><dt>Scope</dt><dd id="scopeStatus">—</dd></div>
+        <div><dt>Laatste fout</dt><dd id="errorStatus">—</dd></div>
+      </div>
+    </section>
+  </div>
+</main>
+<script src="/control.js?v=4101" defer></script>
+</body>
+</html>
