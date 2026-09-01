@@ -15,7 +15,7 @@ Een configureerbare P2000-lichtkrant voor **Windows 10/11**. De monitor is niet 
 
 ## Permanente lichtkrantinstellingen
 
-De instellingen uit de beheerpagina worden vanaf nu atomisch en per Windows-gebruiker opgeslagen in `%LOCALAPPDATA%\\P2000-Monitor\\Settings\\display-settings.json`. Ze blijven daardoor behouden na een backendherstart, software-update en wanneer een nieuwe versie in een andere map wordt uitgepakt. De bestaande SQLite-instellingen worden bij de eerste start automatisch gemigreerd en blijven daarnaast als compatibiliteitskopie bijgewerkt. Op Linux wordt `$XDG_CONFIG_HOME/p2000-monitor` gebruikt (of `~/.config/p2000-monitor` als fallback). Met `P2000_SETTINGS_DIR` kan bewust een andere permanente map worden gekozen.
+De instellingen uit de beheerpagina worden vanaf nu atomisch en per Windows-gebruiker opgeslagen in `%LOCALAPPDATA%\P2000-Monitor\Settings\display-settings.json`. Ze blijven daardoor behouden na een backendherstart, software-update en wanneer een nieuwe versie in een andere map wordt uitgepakt. De bestaande SQLite-instellingen worden bij de eerste start automatisch gemigreerd en blijven daarnaast als compatibiliteitskopie bijgewerkt. Op Linux wordt `$XDG_CONFIG_HOME/p2000-monitor` gebruikt (of `~/.config/p2000-monitor` als fallback). Met `P2000_SETTINGS_DIR` kan bewust een andere permanente map worden gekozen.
 
 - `START_P2000.bat` zet bij de eerste start automatisch een eigen **Python 3.13.15 embedded runtime** klaar als die nog ontbreekt.
 - De runtime staat per gebruiker onder `%LOCALAPPDATA%\P2000-Monitor\Runtime\Python313` en wijzigt Windows `PATH`, registry en bestaande Python-installaties niet.
