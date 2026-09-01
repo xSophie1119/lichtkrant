@@ -53,6 +53,81 @@ ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = ROOT / "frontend"
 CONFIG_PATH = ROOT / "config" / "config.json"
 DATA_DIR = ROOT / "data"
+
+
+def resolve_display_settings_dir(
+    env: dict | None = None,
+    platform_name: str | None = None,
+    home: Path | None = None,
+) -> Path:
+    """Return a user-writable settings directory that survives app updates/moves."""
+    env = os.environ if env is None else env
+    override = str(env.get("P2000_SETTINGS_DIR") or "").strip()
+    if override:
+        return Path(override).expanduser()
+
+    platform_name = sys.platform if platform_name is None else platform_name
+    if str(platform_name).lower().startswith("win"):
+        base = str(env.get("LOCALAPPDATA") or env.get("APPDATA") or "").strip()
+        if base:
+            return Path(base) / "P2000-Monitor" / "Settings"
+
+    xdg_config = str(env.get("XDG_CONFIG_HOME") or "").strip()
+    if xdg_config:
+        return Path(xdg_config).expanduser() / "p2000-monitor"
+
+    try:
+        user_home = Path.home() if home is None else Path(home)
+    except (OSError, RuntimeError):
+        return DATA_DIR / "settings"
+    return user_home / ".config" / "p2000-monitor"
+
+
+DISPLAY_SETTINGS_PATH = resolve_display_settings_dir() / "display-settings.json"
+MAX_DISPLAY_SETTINGS_BYTES = 512 * 1024
+
+
+def _normalize_loaded_display_settings(value) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    value = dict(value)
+    if isinstance(value.get("services"), list):
+        allowed = {"brandweer", "ambulance", "politie", "lifeliner", "knrm", "overig"}
+        value["services"] = [x for x in value["services"] if x in allowed]
+        if not value["services"]:
+            value["services"] = ["brandweer", "politie", "lifeliner", "knrm", "overig"]
+    return value
+
+
+def _read_persistent_display_settings() -> dict | None:
+    if not DISPLAY_SETTINGS_PATH.exists():
+        return None
+    if DISPLAY_SETTINGS_PATH.stat().st_size > MAX_DISPLAY_SETTINGS_BYTES:
+        raise ValueError("permanent instellingenbestand is onverwacht groot")
+    value = json.loads(DISPLAY_SETTINGS_PATH.read_text(encoding="utf-8"))
+    normalized = _normalize_loaded_display_settings(value)
+    if normalized is None:
+        raise ValueError("permanent instellingenbestand bevat geen JSON-object")
+    return normalized
+
+
+def _write_persistent_display_settings(settings: dict):
+    """Durably replace the settings file; never expose a half-written JSON file."""
+    DISPLAY_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp = DISPLAY_SETTINGS_PATH.with_name(
+        f".{DISPLAY_SETTINGS_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    try:
+        with temp.open("w", encoding="utf-8", newline="\n") as fp:
+            json.dump(settings, fp, ensure_ascii=False, indent=2)
+            fp.write("\n")
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(temp, DISPLAY_SETTINGS_PATH)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
 DB_PATH = DATA_DIR / "p2000.sqlite3"
 VEHICLE_DB_PATH = FRONTEND_DIR / "vehicles.json"
 VEHICLE_CACHE_DIR = DATA_DIR / "vehicles"
@@ -2601,6 +2676,16 @@ class AppState:
         self.manual_refresh_event.set()
 
     def get_display_settings(self) -> dict:
+        # AppData/XDG is the authoritative store. It is independent of the
+        # extracted application directory and therefore survives updates,
+        # reinstalls and starting the same version from another folder.
+        try:
+            persistent = _read_persistent_display_settings()
+            if persistent is not None:
+                return persistent
+        except Exception as exc:
+            print(f"Waarschuwing: permanente lichtkrantinstellingen konden niet worden gelezen: {exc}", file=sys.stderr)
+
         try:
             with self.connect() as con:
                 row = con.execute("SELECT value FROM kv WHERE key='display:settings'").fetchone()
@@ -2612,14 +2697,15 @@ class AppState:
         if not row:
             return {}
         try:
-            value = json.loads(row["value"])
-            if not isinstance(value, dict):
+            value = _normalize_loaded_display_settings(json.loads(row["value"]))
+            if value is None:
                 return {}
-            if isinstance(value.get("services"), list):
-                allowed = {"brandweer", "ambulance", "politie", "lifeliner", "knrm", "overig"}
-                value["services"] = [x for x in value["services"] if x in allowed]
-                if not value["services"]:
-                    value["services"] = ["brandweer", "politie", "lifeliner", "knrm", "overig"]
+            # One-time, non-destructive migration for existing installations.
+            # A migration write failure must not hide the valid SQLite settings.
+            try:
+                _write_persistent_display_settings(value)
+            except Exception as exc:
+                print(f"Waarschuwing: lichtkrantinstellingen konden niet naar permanente opslag worden gemigreerd: {exc}", file=sys.stderr)
             return value
         except Exception:
             return {}
@@ -2771,11 +2857,20 @@ class AppState:
             if url and not re.match(r"^https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", url, re.I):
                 url = ""
             clean["dispatchTuneYoutubeUrl"] = url
-        with self.connect() as con:
-            con.execute(
-                "INSERT INTO kv(key,value) VALUES('display:settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (json.dumps(clean, ensure_ascii=False, separators=(",", ":")),),
-            )
+        # The durable JSON file is written first. Only acknowledge the request
+        # after its atomic replacement succeeded, so the portal can never show a
+        # false "opgeslagen" confirmation.
+        _write_persistent_display_settings(clean)
+        try:
+            with self.connect() as con:
+                con.execute(
+                    "INSERT INTO kv(key,value) VALUES('display:settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (json.dumps(clean, ensure_ascii=False, separators=(",", ":")),),
+                )
+        except sqlite3.Error as exc:
+            # The AppData/XDG file is authoritative. Keep the monitor usable if
+            # only the history database is temporarily locked or damaged.
+            print(f"Waarschuwing: SQLite-kopie van lichtkrantinstellingen kon niet worden bijgewerkt: {exc}", file=sys.stderr)
         self.broadcast({"type": "settings", "settings": clean})
         return clean
 

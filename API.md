@@ -15,7 +15,7 @@ De backend luistert standaard op `http://127.0.0.1:8765` en dient ook de lichtkr
 - `GET /api/health` — watchdog/clientstatus, inclusief audio-status van het lichtkrant-tabblad.
 - `GET /api/messages?limit=100` — opgeslagen meldingen binnen de huidige selectie.
 - `GET /api/stream` — Server-Sent Events voor nieuwe meldingen, status, instellingen en testopdrachten.
-- `GET /api/settings` / `POST /api/settings` — lichtkrantinstellingen.
+- `GET /api/settings` / `POST /api/settings` — lichtkrantinstellingen; wijzigingen worden atomisch en permanent onder de gebruikersconfiguratiemap opgeslagen, met SQLite als compatibiliteitskopie.
 - `GET /api/feed-config` — door de wizard opgebouwde RSS-bronnen.
 - `POST /api/feeds/reconnect` — feedcache legen en opnieuw verbinden.
 
