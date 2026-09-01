@@ -1,4 +1,4 @@
-P2000 MONITOR WINDOWS v4.1.1 — SNELSTART
+P2000 MONITOR WINDOWS v4.2.0 — SNELSTART
 ========================================
 
 1. Pak de HELE ZIP uit naar een vaste map, bijvoorbeeld:
@@ -54,7 +54,7 @@ meldkamercommunicatie of andere officiele alarmeringsmiddelen.
 
 Python-check configuratiewizard: CONFIGURATIE_WIZARD.bat controleert en herstelt altijd eerst de eigen P2000 Python 3.13-runtime, ook wanneer de backend al actief is.
 
-STARTPROBLEMEN v4.1.1
+STARTPROBLEMEN v4.2.0
 ---------------------
 Een foutvenster hoort niet meer vanzelf te verdwijnen. Kijk bij een fout in:
 %LOCALAPPDATA%\P2000-Monitor\Logs\python-bootstrap.log
@@ -62,10 +62,10 @@ Een foutvenster hoort niet meer vanzelf te verdwijnen. Kijk bij een fout in:
 De normale Python-route gebruikt geen PowerShell meer.
 
 
-Start de BAT-bestanden nooit rechtstreeks vanuit de ZIP; pak de volledige ZIP eerst uit. Vanaf v4.1.1 wordt dit automatisch herkend en blijft het foutvenster open.
+Start de BAT-bestanden nooit rechtstreeks vanuit de ZIP; pak de volledige ZIP eerst uit. Vanaf v4.2.0 wordt dit automatisch herkend en blijft het foutvenster open.
 
 
-## Nieuwe persoonlijke weergave (v4.1.1)
+## Nieuwe persoonlijke weergave (v4.2.0)
 - **Omroepplaatsen:** Instellingen → *Alleen deze steden uitspreken*. Komma, puntkomma of nieuwe regel. Leeg = alles dat zichtbaar binnenkomt mag gesproken worden.
 - **Achtergrond:** zwart, nachtblauw, antraciet, donkergroen, donkerrood of een eigen kleur.
 - **Doelscherm:** Instellingen → *Windows scherm*. Kies een gedetecteerd scherm en herstart de lichtkrant. Chrome/Edge krijgt automatisch de juiste Windows-positie en resolutie.

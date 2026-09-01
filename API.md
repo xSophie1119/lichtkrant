@@ -1,4 +1,4 @@
-# P2000 Monitor lokale API — Windows v4.1.1
+# P2000 Monitor lokale API — Windows v4.2.0
 
 De backend luistert standaard op `http://127.0.0.1:8765` en dient ook de lichtkrant, beheerpagina en configuratiewizard uit.
 
@@ -44,7 +44,7 @@ Regionale caches staan onder `data/vehicles/<regiocode>.json` en worden standaar
 - `POST /api/background/upload` – raw image body, maximaal 15 MB; alleen JPG/PNG/WebP.
 - `POST /api/background/remove` – verwijdert de lokale achtergrondfoto.
 
-## GitHub Releases updates (v4.1.1)
+## GitHub Releases updates (v4.2.0)
 
 - `GET /api/update/github/settings` — huidige GitHub update-instellingen.
 - `POST /api/update/github/settings` — `{github_repo, github_auto_check, github_auto_install, github_check_hours}`.

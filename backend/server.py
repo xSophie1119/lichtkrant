@@ -60,6 +60,8 @@ VENDOR_DIR = ROOT / "vendor"
 TTS_CACHE_DIR = DATA_DIR / "tts-cache"
 BACKGROUND_DIR = DATA_DIR / "background"
 MAX_BACKGROUND_BYTES = 15 * 1024 * 1024
+TUNE_DIR = DATA_DIR / "tunes"
+MAX_TUNE_BYTES = 12 * 1024 * 1024
 UPDATE_DIR = DATA_DIR / "updates"
 UPDATE_STATUS_PATH = UPDATE_DIR / "status.json"
 UPDATE_BACKUP_DIR = UPDATE_DIR / "backups"
@@ -68,7 +70,7 @@ DEFAULT_GITHUB_REPO = "xSophie1119/lichtkrant"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.1.1"
+APP_VERSION = "4.2.0"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -2633,7 +2635,10 @@ class AppState:
             "idleStyle", "idleDimEnabled", "idleDimStart", "idleDimEnd", "idleDimMin",
             "idleDimEarliest", "smartSilenceEnabled", "smartSilenceMinutes",
             "postIncidentQuietEnabled", "postIncidentQuietSeconds",
-            "backgroundStyle", "backgroundColor", "backgroundPhotoVersion", "backgroundPhotoDarkness", "backgroundPhotoFit", "kioskMonitor"
+            "backgroundStyle", "backgroundColor", "backgroundPhotoVersion", "backgroundPhotoDarkness", "backgroundPhotoFit", "kioskMonitor",
+            "dispatchTuneEnabled", "dispatchTuneDefault", "dispatchTuneBrandweer", "dispatchTuneAmbulance",
+            "dispatchTunePolitie", "dispatchTuneLifeliner", "dispatchTuneKnrm", "dispatchTuneUrgent",
+            "dispatchTuneYoutubeUrl", "dispatchTuneYoutubeSeconds", "dispatchTuneVolume", "dispatchTuneCustomVersion"
         }
         clean = {k: v for k, v in (payload or {}).items() if k in allowed}
         # Server-side type/range hygiene as well as frontend validation. A bad
@@ -2643,7 +2648,7 @@ class AppState:
             "nightMode", "idleCentered", "burnInProtection", "autoTextSize",
             "vehicleHeader", "displaySleep", "speechEnabled",
             "mapEnabled", "idleDimEnabled",
-            "smartSilenceEnabled", "postIncidentQuietEnabled",
+            "smartSilenceEnabled", "postIncidentQuietEnabled", "dispatchTuneEnabled",
         )
         for key in bool_keys:
             if key in clean and not isinstance(clean[key], bool):
@@ -2661,6 +2666,9 @@ class AppState:
             "speechDeviceVolumeUrgent": (5, 100, int),
             "backgroundPhotoVersion": (0, 9_999_999_999_999, int),
             "backgroundPhotoDarkness": (0.0, 0.90, float),
+            "dispatchTuneYoutubeSeconds": (1.0, 15.0, float),
+            "dispatchTuneVolume": (0, 100, int),
+            "dispatchTuneCustomVersion": (0, 9_999_999_999_999, int),
         }
         for key, (lo, hi, caster) in numeric_ranges.items():
             if key not in clean:
@@ -2751,6 +2759,18 @@ class AppState:
             clean["backgroundPhotoFit"] = "contain" if str(clean["backgroundPhotoFit"]).lower() == "contain" else "cover"
         if "kioskMonitor" in clean:
             clean["kioskMonitor"] = str(clean["kioskMonitor"] or "primary")[:80]
+        tune_choices = {"inherit", "none", "builtin:classic", "builtin:double", "builtin:rising", "builtin:urgent", "youtube", "custom"}
+        for key in ("dispatchTuneDefault", "dispatchTuneBrandweer", "dispatchTuneAmbulance", "dispatchTunePolitie", "dispatchTuneLifeliner", "dispatchTuneKnrm", "dispatchTuneUrgent"):
+            if key in clean:
+                val = str(clean[key] or "inherit").lower()[:40]
+                clean[key] = val if val in tune_choices else "inherit"
+        if "dispatchTuneDefault" in clean and clean["dispatchTuneDefault"] == "inherit":
+            clean["dispatchTuneDefault"] = "none"
+        if "dispatchTuneYoutubeUrl" in clean:
+            url = str(clean["dispatchTuneYoutubeUrl"] or "").strip()[:500]
+            if url and not re.match(r"^https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", url, re.I):
+                url = ""
+            clean["dispatchTuneYoutubeUrl"] = url
         with self.connect() as con:
             con.execute(
                 "INSERT INTO kv(key,value) VALUES('display:settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -4174,7 +4194,7 @@ def _prepend_attention_to_wav(speech_wav: bytes, service: str = "brandweer", urg
         return speech_wav
 
 
-def generate_local_sapi_wav(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False) -> bytes:
+def generate_local_sapi_wav(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False, attention: bool = True) -> bytes:
     """Render Dutch speech to a real WAV file with Windows SAPI/System.Speech.
 
     The browser only receives ordinary same-origin audio. This deliberately
@@ -4191,7 +4211,7 @@ def generate_local_sapi_wav(text: str, rate: float = 0.96, service: str = "brand
 
     rate = max(0.65, min(1.25, float(rate or 0.96)))
     sapi_rate = max(-5, min(4, int(round((rate - 1.0) * 11))))
-    cue_key = f"{(service or 'brandweer').lower()}:{1 if urgent else 0}"
+    cue_key = f"{(service or 'brandweer').lower()}:{1 if urgent else 0}:{1 if attention else 0}"
     key = hashlib.sha256((f"sapi-wav-v3-nl-only|{sapi_rate}|{cue_key}|" + text).encode("utf-8")).hexdigest()
     TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = TTS_CACHE_DIR / f"{key}.wav"
@@ -4269,7 +4289,7 @@ try {
             if not _TTS_RENDER_LAST_VOICE:
                 _TTS_RENDER_LAST_VOICE = "Nederlandse Windows-stem (nl-*)"
             speech = speech_tmp.read_bytes()
-            data = _prepend_attention_to_wav(speech, service=service, urgent=urgent)
+            data = _prepend_attention_to_wav(speech, service=service, urgent=urgent) if attention else speech
             tmp = cache_file.with_suffix(".tmp")
             tmp.write_bytes(data)
             tmp.replace(cache_file)
@@ -4293,7 +4313,7 @@ try {
                 pass
 
 
-def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False) -> tuple[bytes, str, str]:
+def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False, attention: bool = True) -> tuple[bytes, str, str]:
     """Render one complete dispatch audio asset.
 
     Windows SAPI WAV is primary and fully local. gTTS MP3 remains a network
@@ -4303,7 +4323,7 @@ def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = "brand
     global _TTS_RENDER_LAST_ENGINE, _TTS_RENDER_LAST_ERROR, _TTS_RENDER_LAST_AT, _TTS_RENDER_LAST_VOICE
     local_error = None
     try:
-        data = generate_local_sapi_wav(text, rate=rate, service=service, urgent=urgent)
+        data = generate_local_sapi_wav(text, rate=rate, service=service, urgent=urgent, attention=attention)
         return data, "audio/wav", _TTS_RENDER_LAST_ENGINE or "windows-sapi-wav"
     except Exception as exc:
         local_error = exc
@@ -5183,6 +5203,54 @@ class Handler(BaseHTTPRequestHandler):
         info.update({"ok": True, "mime": mime})
         return self.send_json(info)
 
+    @staticmethod
+    def _tune_file():
+        for name, mime in (("custom.mp3","audio/mpeg"),("custom.wav","audio/wav"),("custom.ogg","audio/ogg")):
+            path = TUNE_DIR / name
+            if path.exists() and path.is_file():
+                return path, mime
+        return None, None
+
+    def _tune_info(self):
+        path, mime = self._tune_file()
+        if not path:
+            return {"exists": False, "version": 0, "bytes": 0, "type": ""}
+        st = path.stat()
+        return {"exists": True, "version": int(st.st_mtime_ns // 1_000_000), "bytes": int(st.st_size), "type": mime, "name": path.name}
+
+    def _handle_tune_upload(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except (TypeError, ValueError):
+            length = 0
+        if length <= 0:
+            return self.send_json({"ok": False, "error": "Geen audiobestand ontvangen."}, 400)
+        if length > MAX_TUNE_BYTES:
+            return self.send_json({"ok": False, "error": "Deuntje is groter dan 12 MB."}, 413)
+        body = self.rfile.read(length)
+        if len(body) != length:
+            return self.send_json({"ok": False, "error": "Audio-upload werd voortijdig afgebroken."}, 400)
+        ext = mime = None
+        if body.startswith(b"ID3") or (len(body) >= 2 and body[0] == 0xFF and (body[1] & 0xE0) == 0xE0):
+            ext, mime = ".mp3", "audio/mpeg"
+        elif len(body) >= 12 and body[:4] == b"RIFF" and body[8:12] == b"WAVE":
+            ext, mime = ".wav", "audio/wav"
+        elif body.startswith(b"OggS"):
+            ext, mime = ".ogg", "audio/ogg"
+        if not ext:
+            return self.send_json({"ok": False, "error": "Alleen MP3, WAV en OGG worden ondersteund."}, 415)
+        TUNE_DIR.mkdir(parents=True, exist_ok=True)
+        target = TUNE_DIR / f"custom{ext}"
+        temp = TUNE_DIR / f".upload-{time.time_ns()}{ext}"
+        temp.write_bytes(body)
+        for old in TUNE_DIR.glob("custom.*"):
+            if old != target:
+                old.unlink(missing_ok=True)
+        os.replace(temp, target)
+        info = self._tune_info()
+        info.update({"ok": True, "mime": mime})
+        return self.send_json(info)
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.cors()
@@ -5201,6 +5269,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if parsed.path == "/api/background/upload":
             return self._handle_background_upload()
+        if parsed.path == "/api/tune/upload":
+            return self._handle_tune_upload()
+        if parsed.path == "/api/tune/remove":
+            TUNE_DIR.mkdir(parents=True, exist_ok=True)
+            removed = False
+            for old in TUNE_DIR.glob("custom.*"):
+                if old.is_file():
+                    old.unlink(missing_ok=True); removed = True
+            return self.send_json({"ok": True, "removed": removed})
         if parsed.path == "/api/background/remove":
             BACKGROUND_DIR.mkdir(parents=True, exist_ok=True)
             removed = False
@@ -5342,12 +5419,13 @@ class Handler(BaseHTTPRequestHandler):
             text = str(payload.get("text") or "")[:500]
             service = normalize_space(str(payload.get("service") or "brandweer"))[:40].lower()
             urgent = bool(payload.get("urgent", False))
+            attention = bool(payload.get("attention", True))
             try:
                 rate = max(0.65, min(1.25, float(payload.get("rate", 0.96) or 0.96)))
             except Exception:
                 rate = 0.96
             try:
-                audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=service, urgent=urgent)
+                audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=service, urgent=urgent, attention=attention)
                 return self.send_bytes(audio, mime, extra_headers={"X-P2000-TTS-Engine": engine})
             except Exception as e:
                 return self.send_json({"error": str(e), "fallback": "none"}, 503)
@@ -5434,6 +5512,16 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
         if parsed.path == "/api/background/info":
             return self.send_json(self._background_info())
+        if parsed.path == "/api/tune/info":
+            return self.send_json(self._tune_info())
+        if parsed.path == "/api/tune/audio":
+            path, mime = self._tune_file()
+            if not path:
+                return self.send_json({"error": "Geen eigen deuntje ingesteld"}, 404)
+            try:
+                return self.send_bytes(path.read_bytes(), mime, extra_headers={"Accept-Ranges": "bytes"})
+            except Exception as exc:
+                return self.send_json({"error": str(exc)}, 500)
         if parsed.path == "/api/background/image":
             path, mime = self._background_file()
             if not path:

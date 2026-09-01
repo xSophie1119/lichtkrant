@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071018">
   <title>P2000 Monitor • Instellingen</title>
-  <link rel="stylesheet" href="/styles.css?v=4100">
+  <link rel="stylesheet" href="/styles.css?v=4200">
   <style>
     .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
     .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
@@ -91,6 +91,28 @@
       <p class="hint">De backend maakt lokaal een gewoon WAV-audiobestand met Windows SAPI. Chrome en Edge spelen exact hetzelfde bestand af via één vaste speler in het lichtkrant-tabblad. Als een handmatig geopende browser autoplay blokkeert, verschijnt op de lichtkrant éénmalig een knop om geluid te ontgrendelen.</p>
     </section>
 
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">DEUNTJES</span><h3>Alarmering vóór de omroep</h3></div><span id="tuneStatus" class="status-pill">klaar</span></div>
+      <label class="switch-row"><span><b>Deuntje afspelen</b><small>Speelt vóór de gesproken P2000-omroep. Per discipline kun je een andere keuze maken.</small></span><input id="dispatchTuneEnabledInput" type="checkbox"></label>
+      <div class="two-col">
+        <label class="field"><span>Standaard</span><select id="dispatchTuneDefaultInput" data-tune-select data-default-tune></select></label>
+        <label class="field"><span>Urgente meldingen</span><select id="dispatchTuneUrgentInput" data-tune-select></select></label>
+        <label class="field"><span>Brandweer</span><select id="dispatchTuneBrandweerInput" data-tune-select></select></label>
+        <label class="field"><span>Ambulance</span><select id="dispatchTuneAmbulanceInput" data-tune-select></select></label>
+        <label class="field"><span>Politie</span><select id="dispatchTunePolitieInput" data-tune-select></select></label>
+        <label class="field"><span>Lifeliner / MMT</span><select id="dispatchTuneLifelinerInput" data-tune-select></select></label>
+        <label class="field"><span>KNRM / waterhulp</span><select id="dispatchTuneKnrmInput" data-tune-select></select></label>
+        <label class="field"><span>Deuntjevolume</span><input id="dispatchTuneVolumeInput" type="range" min="0" max="100" step="5"><small><span id="dispatchTuneVolumeValue">80</span>%</small></label>
+      </div>
+      <label class="field"><span>YouTube-deuntje</span><input id="dispatchTuneYoutubeUrlInput" type="url" placeholder="https://www.youtube.com/watch?v=..."><small>De door jou opgegeven video staat standaard ingevuld. De monitor streamt alleen het gekozen fragment; de audio wordt niet in het pakket opgeslagen.</small></label>
+      <div class="two-col">
+        <label class="field"><span>YouTube afspeelduur (sec)</span><input id="dispatchTuneYoutubeSecondsInput" type="number" min="1" max="15" step="0.5"></label>
+        <div class="field"><span>Eigen deuntje</span><input id="dispatchTuneFileInput" type="file" accept="audio/mpeg,audio/wav,audio/ogg,.mp3,.wav,.ogg"><small id="dispatchTuneFileStatus">Nog geen bestand geladen.</small></div>
+      </div>
+      <div class="button-row"><button id="uploadDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje opslaan</button><button id="removeDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje verwijderen</button><button id="testDispatchTuneBtn" class="secondary-btn" type="button">Test gekozen deuntje</button></div>
+      <p class="hint">Keuzes: geen geluid, drie ingebouwde kazerne-tonen, urgent-signaal, YouTube of je eigen MP3/WAV/OGG. “Overnemen” gebruikt de standaardkeuze. Bij urgente meldingen heeft de urgente keuze voorrang.</p>
+    </section>
+
     <section class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">WINDOWS SCHERM</span><h3>Scherm & slaapstand</h3></div><span id="displayStatus" class="status-pill">controleren…</span></div>
       <label class="field"><span>Lichtkrant openen op</span><select id="kioskMonitorInput"><option value="primary">Primair scherm</option></select></label>
@@ -165,6 +187,6 @@
     </section>
   </div>
 </main>
-<script src="/control.js?v=4101" defer></script>
+<script src="/control.js?v=4200" defer></script>
 </body>
 </html>

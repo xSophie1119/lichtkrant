@@ -1,8 +1,8 @@
 # GitHub-updates publiceren
 
 1. Zet de P2000 Monitor in een **openbaar GitHub repository**.
-2. Maak voor iedere uitgave een GitHub **Release**, bijvoorbeeld tag `v4.1.1`.
-3. Upload de complete distributie-ZIP als Release asset, bij voorkeur `P2000_Monitor_Windows_v4.1.1.zip`.
+2. Maak voor iedere uitgave een GitHub **Release**, bijvoorbeeld tag `v4.2.0`.
+3. Upload de complete distributie-ZIP als Release asset, bij voorkeur `P2000_Monitor_Windows_v4.2.0.zip`.
 4. Open op iedere monitor **Instellingen → Updates** en vul `xSophie1119/lichtkrant` in.
 5. Zet **Automatisch controleren** aan. Zet desgewenst ook **Nieuwe versie automatisch installeren** aan.
 

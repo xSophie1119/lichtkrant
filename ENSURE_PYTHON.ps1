@@ -30,7 +30,7 @@ try {
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
     } catch {}
-    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip -TimeoutSec 180 -Headers @{ 'User-Agent' = 'P2000-Monitor-Windows/4.1.1' }
+    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zip -TimeoutSec 180 -Headers @{ 'User-Agent' = 'P2000-Monitor-Windows/4.2.0' }
 
     $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $expected) { throw "SHA256-controle mislukt. Verwacht $expected, ontvangen $actual" }

@@ -2,7 +2,7 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem ---------------------------------------------------------------------------
-rem P2000 Monitor v4.1.1 - Python bootstrap
+rem P2000 Monitor v4.2.0 - Python bootstrap
 rem Primary path uses only Windows curl.exe + tar.exe + certutil.exe.
 rem No Python installer, registry changes, PATH changes or administrator rights.
 rem PowerShell is only a last-resort fallback on older Windows installations.

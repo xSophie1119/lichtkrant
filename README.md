@@ -1,8 +1,8 @@
-# P2000 Monitor — Windows v4.1.1
+# P2000 Monitor — Windows v4.2.0
 
 Een configureerbare P2000-lichtkrant voor **Windows 10/11**. De monitor is niet meer aan één plaats of veiligheidsregio gekoppeld: bij de eerste start stel je zelf de standplaats, gebruiker/organisatie, regio's en disciplines in.
 
-## v4.1.1 – automatische GitHub Releases-updater
+## v4.2.0 – automatische GitHub Releases-updater
 
 - Nieuwe **GitHub Releases-updater**: controleert optioneel automatisch bij opstart en daarna periodiek op een nieuwere versie.
 - Werkt met een openbaar repository in de vorm `xSophie1119/lichtkrant` of een volledige `https://github.com/xSophie1119/lichtkrant` URL.
@@ -29,7 +29,7 @@ Een configureerbare P2000-lichtkrant voor **Windows 10/11**. De monitor is niet 
 - De Tilburg-regressiemelding `209432 209452 209031 209092` heeft een kleine geverifieerde offline seed gekregen.
 
 
-## Wat is nieuw in 4.1.1
+## Wat is nieuw in 4.2.0
 
 - Eerste-start **configuratiewizard**.
 - Profielkeuze **Particulier** of **Bedrijf / organisatie**.
@@ -85,7 +85,7 @@ Als alle 25 veiligheidsregio's voor één regionale discipline geselecteerd zijn
 
 ## Landelijke parser
 
-P2000-regels verschillen sterk per regio. Daarom bevat v4.1.1 een regressiecorpus met 168 echte regels uit onder andere Amsterdam-Amstelland, Rotterdam-Rijnmond, Haaglanden, Kennemerland, Twente, Groningen, Flevoland, Utrecht, Brabant, Limburg, Gelderland, IJsselland en Zaanstreek-Waterland.
+P2000-regels verschillen sterk per regio. Daarom bevat v4.2.0 een regressiecorpus met 168 echte regels uit onder andere Amsterdam-Amstelland, Rotterdam-Rijnmond, Haaglanden, Kennemerland, Twente, Groningen, Flevoland, Utrecht, Brabant, Limburg, Gelderland, IJsselland en Zaanstreek-Waterland.
 
 De parser probeert steeds deze structuur te maken:
 
@@ -138,13 +138,19 @@ Chrome en Edge gebruiken dus dezelfde HTML5-audioroute. De browser hoeft zelf ge
 - `START_EDGE.bat` en `START_CHROME.bat` gebruiken ieder een eigen kioskprofiel met autoplay-instellingen.
 - Als een handmatig geopend browsertabblad geluid blokkeert, verschijnt `OMROEP INSCHAKELEN`; één klik ontgrendelt audio voor dat tabblad.
 
+### Deuntjes vóór de omroep (v4.2.0)
+
+Onder **Instellingen → Deuntjes** kan vóór de gesproken melding een apart alarmeringsdeuntje worden gekozen. Er zijn aparte keuzes voor standaard, brandweer, ambulance, politie, Lifeliner/MMT, KNRM/waterhulp en urgente meldingen. Beschikbaar zijn ingebouwde attentietonen, een YouTube-stream of één eigen MP3/WAV/OGG-bestand tot 12 MB.
+
+De meegeleverde standaard-YouTube-URL is `https://www.youtube.com/watch?v=VleijwaD_-U`. De video wordt niet gedownload of in het pakket gekopieerd; het geselecteerde fragment wordt via de YouTube-embed afgespeeld. De afspeelduur en het deuntjevolume zijn instelbaar. Een eigen bestand wordt lokaal bewaard onder `data/tunes/` en blijft behouden bij software-updates. Als een deuntje succesvol wordt afgespeeld vervangt het de oude korte attentiepiep, waarna de normale Nederlandse omroep start.
+
 ## Automatische updates via GitHub
 
 De updater gebruikt **GitHub Releases**. Publiceer dus niet alleen een commit/tag, maar maak een Release en voeg de complete Windows-ZIP toe, bijvoorbeeld:
 
 ```text
-Tag: v4.1.1
-Asset: P2000_Monitor_Windows_v4.1.1.zip
+Tag: v4.2.0
+Asset: P2000_Monitor_Windows_v4.2.0.zip
 ```
 
 Stel daarna op de monitor onder **Instellingen → Updates** het repository in als `xSophie1119/lichtkrant`. Je kunt kiezen tussen alleen automatisch controleren of nieuwe releases ook meteen automatisch installeren. Standaard gebruikt de monitor xSophie1119/lichtkrant en staan automatisch controleren en installeren aan. Zet die schakelaars uit als je dat niet wilt. De controle loopt bij backendstart na een korte wachttijd en daarna minimaal eens per ingesteld interval (1–168 uur), zodat de publieke GitHub API niet onnodig wordt belast.
@@ -197,7 +203,7 @@ Deze monitor is een informatieve weergave van openbare P2000-data. Hij is **geen
 Python-check configuratiewizard: CONFIGURATIE_WIZARD.bat controleert en herstelt altijd eerst de eigen P2000 Python 3.13-runtime, ook wanneer de backend al actief is.
 
 
-## Startproblemen en logs (v4.1.1)
+## Startproblemen en logs (v4.2.0)
 
 Als een start mislukt sluit het venster niet meer direct. De concrete fout blijft in beeld. De twee belangrijkste logbestanden zijn:
 
@@ -207,14 +213,14 @@ Als een start mislukt sluit het venster niet meer direct. De concrete fout blijf
 Gebruik `START_BACKEND.bat` als extra diagnose; dit venster blijft ook na een crash open. De normale Python-bootstrap heeft PowerShell niet nodig.
 
 
-Start de BAT-bestanden nooit rechtstreeks vanuit de ZIP; pak de volledige ZIP eerst uit. Vanaf v4.1.1 wordt dit automatisch herkend en blijft het foutvenster open.
+Start de BAT-bestanden nooit rechtstreeks vanuit de ZIP; pak de volledige ZIP eerst uit. Vanaf v4.2.0 wordt dit automatisch herkend en blijft het foutvenster open.
 
 
-## Nieuwe persoonlijke weergave (v4.1.1)
+## Nieuwe persoonlijke weergave (v4.2.0)
 - **Omroepplaatsen:** Instellingen → *Alleen deze steden uitspreken*. Komma, puntkomma of nieuwe regel. Leeg = alles dat zichtbaar binnenkomt mag gesproken worden.
 - **Achtergrond:** zwart, nachtblauw, antraciet, donkergroen, donkerrood of een eigen kleur.
 - **Doelscherm:** Instellingen → *Windows scherm*. Kies een gedetecteerd scherm en herstart de lichtkrant. Chrome/Edge krijgt automatisch de juiste Windows-positie en resolutie.
 
 
-## Achtergrondfoto (v4.1.1)
+## Achtergrondfoto (v4.2.0)
 Onder **Instellingen → Weergave → Achtergrond → Foto** kan een lokale JPG, PNG of WebP tot 15 MB worden gekozen. De afbeelding wordt opgeslagen onder `data/background/` en blijft daardoor behouden bij software-updates. Met **Donkere laag** (0–90%) blijft tekst leesbaar; **Scherm vullen** snijdt zo nodig bij, **Hele foto tonen** behoudt de volledige afbeelding. De foto wordt alleen lokaal vanaf de monitor-pc geserveerd en veroorzaakt geen externe netwerkrequests.

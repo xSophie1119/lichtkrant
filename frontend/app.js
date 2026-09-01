@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.1.1';
+const CLIENT_VERSION='4.2.0';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -25,6 +25,7 @@ const DEFAULTS={
   displaySleep:false,
   speechEnabled:true,speechCities:[],speechRate:0.96,speechPitch:1.0,speechEngine:'online',
   speechDeviceVolumeDay:38,speechDeviceVolumeNight:20,speechDeviceVolumeUrgent:55,
+  dispatchTuneEnabled:true,dispatchTuneDefault:'youtube',dispatchTuneBrandweer:'inherit',dispatchTuneAmbulance:'inherit',dispatchTunePolitie:'inherit',dispatchTuneLifeliner:'inherit',dispatchTuneKnrm:'inherit',dispatchTuneUrgent:'youtube',dispatchTuneYoutubeUrl:'https://www.youtube.com/watch?v=VleijwaD_-U',dispatchTuneYoutubeSeconds:5,dispatchTuneVolume:80,dispatchTuneCustomVersion:0,
   mapEnabled:true,mapZoom:16,backgroundStyle:'black',backgroundColor:'#020506',backgroundPhotoVersion:0,backgroundPhotoDarkness:.60,backgroundPhotoFit:'cover',kioskMonitor:'primary',
   locationAliases:{'Prof. Asserweg':'Professor Asserweg','Prof Asserweg':'Professor Asserweg'},
   ttsDictionary:{'Prof.':'Professor','OvD-G':'Officier van Dienst Geneeskundig','OvD-B':'Officier van Dienst Brandweer','MMT':'Mobiel Medisch Team','TS':'tankautospuit','HW':'hoogwerker'},
@@ -37,7 +38,7 @@ const state={
   vehicleDb:{},vehicleDbMeta:null,vehiclePostMap:{},spokenIds:new Set(),currentSpeechAudio:null,speechRequestSeq:0,testBlackoutUntil:0,testIdleUntil:0,
   speechQueue:[],speechCurrent:null,speechJobTimer:null,speechJobSeq:0,
   audioStats:{attempts:0,successes:0,failures:0,fallbacks:0,lastError:'',lastMode:'',lastSuccessAt:0,unlocked:false},
-  audioBus:{armed:false,locked:false,arming:null,primeUrl:'',blockedJobs:0},
+  audioBus:{armed:false,locked:false,arming:null,primeUrl:'',blockedJobs:0},currentTuneStop:null,
   activityEvents:[],activityIds:new Map(),carouselShownAt:new Map(),
   lastRefreshAt:0,
   mapCache:new Map(),mapFailureCache:new Map(),currentMapKey:'',currentMapUrl:'',currentMapData:null,mapFetchKey:'',mapVisible:false,
@@ -800,6 +801,74 @@ async function armAudioBus({gesture=false}={}){
   })();
   return state.audioBus.arming;
 }
+function youtubeVideoId(url){
+  const raw=String(url||'').trim();if(!raw)return '';
+  try{const u=new URL(raw,location.href);if(/youtu\.be$/i.test(u.hostname))return String(u.pathname.split('/').filter(Boolean)[0]||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,20);if(/youtube\.com$/i.test(u.hostname)||/\.youtube\.com$/i.test(u.hostname)){if(u.pathname.startsWith('/shorts/'))return String(u.pathname.split('/')[2]||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,20);return String(u.searchParams.get('v')||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,20)}}catch{}return '';
+}
+function dispatchTuneChoice(service='',urgent=false){
+  if(state.settings.dispatchTuneEnabled===false)return 'none';
+  let choice='inherit';
+  if(urgent)choice=String(state.settings.dispatchTuneUrgent||'inherit');
+  if(choice==='inherit'){
+    const key=String(service||'').toLowerCase();
+    const map={brandweer:'dispatchTuneBrandweer',ambulance:'dispatchTuneAmbulance',politie:'dispatchTunePolitie',lifeliner:'dispatchTuneLifeliner',knrm:'dispatchTuneKnrm'};
+    choice=String(state.settings[map[key]]||'inherit');
+  }
+  if(choice==='inherit')choice=String(state.settings.dispatchTuneDefault||'none');
+  return choice||'none';
+}
+function dispatchTuneVolume(jobVolume=100){const bv=Number(state.settings.dispatchTuneVolume??80),sv=Number(jobVolume);const base=Math.max(0,Math.min(100,Number.isFinite(bv)?bv:80));const speech=Math.max(0,Math.min(100,Number.isFinite(sv)?sv:100));return Math.round(base*(speech/100))}
+function stopCurrentTune(){const stop=state.currentTuneStop;state.currentTuneStop=null;if(stop){try{stop()}catch{}}}
+async function playBuiltinDispatchTune(choice,volume=80){
+  const AC=globalThis.AudioContext||globalThis.webkitAudioContext;if(!AC)return false;
+  let ctx;try{ctx=new AC();if(ctx.state==='suspended')await ctx.resume()}catch{return false}
+  const patterns={
+    'builtin:classic':[[780,150],[0,60],[980,210]],
+    'builtin:double':[[900,160],[0,85],[900,160]],
+    'builtin:rising':[[720,120],[900,120],[1120,180]],
+    'builtin:urgent':[[940,115],[1160,115],[1380,190]],
+  },pattern=patterns[choice];if(!pattern){try{await ctx.close()}catch{};return false}
+  const gain=ctx.createGain();{const vv=Number(volume);gain.gain.value=Math.max(0,Math.min(.24,(Number.isFinite(vv)?vv:80)/100*.18))};gain.connect(ctx.destination);
+  let t=ctx.currentTime+.03,total=0,settled=false,resolver=null;
+  const promise=new Promise(resolve=>{resolver=resolve});
+  for(const [freq,dur] of pattern){if(freq){const o=ctx.createOscillator();o.type='sine';o.frequency.value=freq;o.connect(gain);o.start(t);o.stop(t+dur/1000)}t+=dur/1000;total+=dur}
+  const timer=setTimeout(async()=>{if(settled)return;settled=true;state.currentTuneStop=null;try{await ctx.close()}catch{};resolver(true)},Math.max(100,total+90));
+  state.currentTuneStop=()=>{if(settled)return;settled=true;clearTimeout(timer);try{ctx.close()}catch{};resolver(false)};
+  return promise;
+}
+async function playYoutubeDispatchTune(volume=80){
+  const id=youtubeVideoId(state.settings.dispatchTuneYoutubeUrl);if(!id)return false;
+  const seconds=Math.max(1,Math.min(15,Number(state.settings.dispatchTuneYoutubeSeconds)||5));
+  let settled=false,resolver=null,iframe=document.createElement('iframe');const promise=new Promise(resolve=>{resolver=resolve});
+  iframe.title='P2000 YouTube-deuntje';iframe.setAttribute('aria-hidden','true');iframe.setAttribute('allow','autoplay; encrypted-media');iframe.tabIndex=-1;
+  iframe.style.cssText='position:absolute;width:1px;height:1px;left:-9999px;top:0;border:0;opacity:.01;pointer-events:none';
+  iframe.src=`https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&playsinline=1&enablejsapi=1&rel=0&modestbranding=1`;
+  const command=(func,args=[])=>{try{iframe.contentWindow?.postMessage(JSON.stringify({event:'command',func,args}),'https://www.youtube-nocookie.com')}catch{}};
+  const finish=(ok)=>{if(settled)return;settled=true;clearTimeout(timer);state.currentTuneStop=null;try{command('stopVideo')}catch{};try{iframe.remove()}catch{};resolver(ok)};
+  iframe.addEventListener('load',()=>{setTimeout(()=>{{const vv=Number(volume);command('setVolume',[Math.max(0,Math.min(100,Number.isFinite(vv)?vv:80))]);}command('playVideo')},100)},{once:true});
+  document.body.appendChild(iframe);const timer=setTimeout(()=>finish(true),seconds*1000);
+  state.currentTuneStop=()=>finish(false);return promise;
+}
+async function playCustomDispatchTune(volume=80){
+  await armAudioBus();const audio=$('#lightkrantSpeechAudio');if(!audio)return false;
+  stopCurrentTune();try{audio.pause()}catch{}
+  const src=`/api/tune/audio?v=${encodeURIComponent(Number(state.settings.dispatchTuneCustomVersion)||0)}`;
+  return new Promise(resolve=>{
+    let settled=false;const finish=(ok)=>{if(settled)return;settled=true;clearTimeout(timer);audio.onended=null;audio.onerror=null;audio.onplaying=null;try{audio.pause();audio.removeAttribute('src');audio.load()}catch{};if(state.currentTuneStop===stop)state.currentTuneStop=null;resolve(ok)};
+    const stop=()=>finish(false);state.currentTuneStop=stop;audio.preload='auto';{const vv=Number(volume);audio.volume=Math.max(0,Math.min(1,(Number.isFinite(vv)?vv:80)/100));}audio.playbackRate=1;audio.src=src;audio.load();audio.onended=()=>finish(true);audio.onerror=()=>finish(false);audio.onplaying=()=>{state.audioStats.unlocked=true};const timer=setTimeout(()=>finish(true),15000);
+    try{const p=audio.play();if(p&&typeof p.catch==='function')p.catch(()=>finish(false))}catch{finish(false)}
+  });
+}
+async function playDispatchTuneForJob(job){
+  const choice=dispatchTuneChoice(job?.cueService,!!job?.cueUrgent);if(choice==='none')return false;
+  const volume=dispatchTuneVolume(job?.volume);
+  try{
+    if(choice.startsWith('builtin:'))return await playBuiltinDispatchTune(choice,volume);
+    if(choice==='youtube')return await playYoutubeDispatchTune(volume);
+    if(choice==='custom')return await playCustomDispatchTune(volume);
+  }catch(e){console.warn('Deuntje afspelen mislukt',e)}
+  return false;
+}
 async function browserAttentionCue(service='',urgent=false,volume=100){
   const AC=globalThis.AudioContext||globalThis.webkitAudioContext;if(!AC)return false;
   let ctx=null;
@@ -851,7 +920,7 @@ async function fetchTtsBlob(text,timeoutMs=16000,cueService='',cueUrgent=false){
   const controller=typeof AbortController!=='undefined'?new AbortController():null;
   const timer=controller?setTimeout(()=>controller.abort(),timeoutMs):null;
   try{
-    const body={text,service:String(cueService||'brandweer'),urgent:!!cueUrgent,rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96))};
+    const body={text,service:String(cueService||'brandweer'),urgent:!!cueUrgent,attention:!!(cueService||cueUrgent),rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96))};
     const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store',signal:controller?.signal});
     if(!r.ok){let d={};try{d=await r.json()}catch{}throw new Error(d.error||`TTS HTTP ${r.status}`)}
     const blob=await r.blob();if(blob.size<100)throw new Error('lege TTS-audio');
@@ -920,7 +989,7 @@ function estimateSpeechMs(text){const words=String(text||'').trim().split(/\s+/)
 function clearSpeechTimer(){if(state.speechJobTimer!==null)clearTimeout(state.speechJobTimer);state.speechJobTimer=null}
 function finishSpeechJob(id){if(!state.speechCurrent||state.speechCurrent.id!==id)return;clearSpeechTimer();state.speechCurrent=null;startNextSpeechJob()}
 function stopSpeechPlayback({clearQueue=false}={}){
-  state.speechRequestSeq++;clearSpeechTimer();globalThis.speechSynthesis?.cancel?.();
+  state.speechRequestSeq++;clearSpeechTimer();stopCurrentTune();globalThis.speechSynthesis?.cancel?.();
   const current=state.currentSpeechAudio;
   if(current){try{current.finish?.(false)}catch{};cleanupSpeechAudio(current)}
   state.speechCurrent=null;if(clearQueue)state.speechQueue=[];return Promise.resolve(true);
@@ -939,7 +1008,11 @@ function startNextSpeechJob(){
   if(state.speechCurrent||!state.speechQueue.length)return;
   const job=state.speechQueue.shift();state.speechCurrent=job;const done=()=>finishSpeechJob(job.id);
   const seq=++state.speechRequestSeq;
-  onlineSpeakText(job.text,seq,job.volume,job.cueService,job.cueUrgent,job.deviceVolume).then(()=>{
+  (async()=>{
+    const tuned=await playDispatchTuneForJob(job);
+    if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return {mode:'cancelled',completed:true};
+    return onlineSpeakText(job.text,seq,job.volume,tuned?'':job.cueService,tuned?false:job.cueUrgent,job.deviceVolume);
+  })().then(()=>{
     if(state.speechCurrent?.id!==job.id)return;done();
   }).catch(e=>{
     if(isAudioLockedError(e)){
@@ -1414,6 +1487,9 @@ function handleTest(payload){
   }
   if(mode==='idle'){
     clearActiveMessages();state.testBlackoutUntil=0;state.testIdleUntil=Date.now()+Math.max(1000,Number(payload?.duration_ms)||15000);render();return;
+  }
+  if(mode==='tune-only'){
+    playDispatchTuneForJob({volume:100,cueService:String(payload?.service||'brandweer'),cueUrgent:!!payload?.urgent}).catch(e=>console.warn('Deuntjetest mislukt',e));return;
   }
   if(mode==='speech-only'){
     const explicit=String(payload?.speech_text||'').trim();

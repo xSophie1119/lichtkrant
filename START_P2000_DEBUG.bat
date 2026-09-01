@@ -4,7 +4,7 @@ cd /d "%~dp0"
 title P2000 Monitor - debug start
 
 echo ================================================================
-echo P2000 Monitor v4.1.1 - DEBUG START
+echo P2000 Monitor v4.2.0 - DEBUG START
 echo Dit venster blijft altijd open.
 echo ================================================================
 echo.
