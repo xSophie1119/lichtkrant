@@ -2,7 +2,9 @@
 
 ## Release of gewone push
 
-Vanaf v4.2.1 kan de monitor een complete Release-ZIP installeren én gewone pushes op de ingestelde branch volgen. Verhoog bij een programmaupdate altijd zowel het bestand `VERSION` als `APP_VERSION` boven in `backend/server.py`; daarna kan de monitor het GitHub branch-archief automatisch downloaden, valideren, back-uppen en installeren.
+Vanaf v4.2.1 kan de monitor een complete Release-ZIP installeren én gewone pushes op de ingestelde branch volgen. Vanaf v4.2.5 vergelijkt hij behalve `VERSION` ook de exacte commit-SHA. Daardoor wordt iedere nieuwe push op de gekozen branch herkend, zelfs wanneer het versienummer hetzelfde blijft. De geïnstalleerde SHA wordt lokaal bewaard zodat dezelfde commit niet opnieuw wordt geïnstalleerd.
+
+Verhoog `VERSION` en `APP_VERSION` nog steeds bij een echte uitgave: dat maakt versies voor gebruikers herkenbaar en zorgt dat oudere installaties de update ook kunnen herkennen. Kleine reparatiepushes binnen dezelfde versie werken vanaf v4.2.5 echter ook zonder versieverhoging.
 
 Vanaf v4.2.4 controleert de monitor circa tien seconden na het opstarten en daarna standaard iedere vijf minuten. Het minimale automatische interval is vijf minuten, zodat de openbare GitHub API niet onnodig wordt belast.
 

@@ -57,13 +57,37 @@ def test_central_settings_config_is_sanitized():
 
 
 def test_branch_update_metadata_uses_codeload():
-    original=server._github_file
-    server._github_file=lambda repo,path,branch:{'body':b'4.2.1\n','sha':'abc'}
+    original,original_head=server._github_file,server._github_branch_head
+    requested=[]
+    server._github_file=lambda repo,path,branch:(requested.append(branch) or {'body':b'4.2.1\n','sha':'abc'})
+    server._github_branch_head=lambda repo,branch:'a'*40
     try: x=server._github_latest_branch('owner/repo','main')
-    finally: server._github_file=original
+    finally: server._github_file,server._github_branch_head=original,original_head
     assert x['version']=='4.2.1'
     assert x['source_kind']=='branch'
+    assert x['revision']=='a'*40
+    assert requested==['a'*40]
     assert x['asset']['url'].startswith('https://codeload.github.com/owner/repo/')
+    assert x['asset']['url'].endswith('a'*40)
+
+
+def test_same_version_new_commit_is_an_update_once():
+    candidate={'repo':'owner/repo','version':'4.2.5','tag':'main','source_kind':'branch','revision':'b'*40}
+    available,reason=server._github_update_available(candidate,'4.2.5',{})
+    assert available and reason=='revision'
+    available,reason=server._github_update_available(candidate,'4.2.5',{'repo':'owner/repo','branch':'main','revision':'b'*40})
+    assert not available and reason==''
+
+
+def test_equal_version_prefers_branch_commit_over_release():
+    old_release,old_branch=server._github_latest_release,server._github_latest_branch
+    base={'repo':'owner/repo','version':'4.2.5','tag':'v4.2.5','asset':{'name':'release.zip','url':'https://github.com/a','size':1}}
+    server._github_latest_release=lambda repo:dict(base)
+    server._github_latest_branch=lambda repo,branch:{**base,'tag':branch,'source_kind':'branch','revision':'c'*40}
+    try: selected=server._github_latest_software('owner/repo','main',True)
+    finally: server._github_latest_release,server._github_latest_branch=old_release,old_branch
+    assert selected['source_kind']=='branch'
+    assert selected['revision']=='c'*40
 
 if __name__=='__main__':
     for name,fn in sorted(globals().items()):

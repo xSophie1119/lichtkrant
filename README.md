@@ -1,4 +1,13 @@
-# P2000 Monitor — Windows v4.2.4
+# P2000 Monitor — Windows v4.2.5
+
+## v4.2.5 – Brandbase en exacte GitHub-pushes
+
+- Brandbase is de primaire bron voor actuele roepnummers en voertuiggegevens van de geselecteerde brandweerregio's.
+- Alleen gekozen regio's worden op de achtergrond opgehaald, maximaal dagelijks en met de door Brandbase gevraagde wachttijd tussen verzoeken.
+- De bestaande regionale bron en Tomzulu10 blijven als fallback beschikbaar; de laatst goede cache blijft bruikbaar bij een tijdelijke bronstoring.
+- Handmatige roepnummercorrecties blijven altijd de hoogste prioriteit houden.
+- Gewone GitHub-pushes worden nu herkend aan de exacte commit-SHA, ook wanneer `VERSION` niet is verhoogd.
+- De geïnstalleerde commit wordt lokaal vastgelegd, zodat dezelfde push niet na iedere controle opnieuw wordt geïnstalleerd.
 
 ## v4.2.4 – snellere GitHub-updatecontrole
 
@@ -11,7 +20,7 @@
 - **Test omroep** en **Test gekozen deuntje** negeren tijdens de test bewust de aan/uit-hoofdschakelaar, wachten op een echte afspeelbevestiging van de lichtkrant en tonen een duidelijke fout als de monitor niet verbonden is of audio niet start.
 - De omroeptest speelt alleen spraak; hij start niet meer ongemerkt ook het ingestelde deuntje.
 - Handmatige roepnummercorrecties kunnen in Instellingen worden toegevoegd, aangepast en verwijderd. Ze hebben altijd voorrang op de regionale cache en blijven in `data/vehicles/overrides.json` behouden bij updates.
-- De online voertuigcache wordt voortaan dagelijks in plaats van wekelijks gecontroleerd. Hulpdienstvoertuigen.nl blijft de primaire structureel uitleesbare bron; Tomzulu10 blijft fallback.
+- De online voertuigcache wordt voortaan dagelijks in plaats van wekelijks gecontroleerd. Vanaf v4.2.5 is Brandbase primair; Hulpdienstvoertuigen.nl en Tomzulu10 blijven fallbacks.
 
 Een configureerbare P2000-lichtkrant voor **Windows 10/11**. De monitor is niet meer aan één plaats of veiligheidsregio gekoppeld: bij de eerste start stel je zelf de standplaats, gebruiker/organisatie, regio's en disciplines in.
 

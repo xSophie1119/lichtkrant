@@ -67,6 +67,7 @@ MAX_TUNE_BYTES = 12 * 1024 * 1024
 UPDATE_DIR = DATA_DIR / "updates"
 UPDATE_STATUS_PATH = UPDATE_DIR / "status.json"
 UPDATE_BACKUP_DIR = UPDATE_DIR / "backups"
+GITHUB_INSTALL_MARKER_PATH = UPDATE_DIR / "installed-github.json"
 GITHUB_SETTINGS_STATUS_PATH = DATA_DIR / "github-settings-status.json"
 GITHUB_API_BASE = "https://api.github.com"
 DEFAULT_GITHUB_REPO = "xSophie1119/lichtkrant"
@@ -75,7 +76,7 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.2.4"
+APP_VERSION = "4.2.5"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -109,9 +110,28 @@ FIRE_REGION_LABELS = {code: slug.replace("-", " ").title() for slug, code in FIR
 # without making live P2000 processing depend on a third-party website.
 FIRE_DB_REFRESH_SECONDS = 24 * 3600
 
-# Primary exact vehicle source. Hulpdienstvoertuigen publishes a paginated
-# regional vehicle table and is much less brittle than a published Google
-# workbook tab name.  The old Tomzulu workbook is retained only as fallback.
+# Primary exact vehicle source. Brandbase publishes a current public overview
+# per fire-service region. We fetch only selected regions, at most daily, and
+# honour its ten-second crawl delay. The older sources remain safe fallbacks.
+BRANDBASE_VEHICLES_BASE = "https://brandbase.hetbrandweerforum.nl/voertuigen/regio"
+BRANDBASE_REGION_SLUGS = {
+    "01":"01-brandweer-groningen", "02":"02-brandweer-fryslan", "03":"03-brandweer-drenthe",
+    "04":"04-brandweer-ijsselland", "05":"05-brandweer-twente",
+    "06":"06-brandweer-noord-en-oost-gelderland", "07":"07-brandweer-gelderland-midden",
+    "08":"08-brandweer-gelderland-zuid", "09":"09-brandweer-utrecht",
+    "10":"10-brandweer-noord-holland-noord", "11":"11-brandweer-zaanstreek-waterland",
+    "12":"12-brandweer-kennemerland", "13":"13-brandweer-amsterdam-amstelland",
+    "14":"14-brandweer-gooi-en-vechtstreek", "15":"15-brandweer-haaglanden",
+    "16":"16-brandweer-hollands-midden", "17":"17-brandweer-rotterdam-rijnmond",
+    "18":"18-brandweer-zuid-holland-zuid", "19":"19-brandweer-zeeland",
+    "20":"20-brandweer-midden-en-west-brabant", "21":"21-brandweer-brabant-noord",
+    "22":"22-brandweer-brabant-zuid-oost", "23":"23-brandweer-limburg-noord",
+    "24":"24-brandweer-zuid-limburg", "25":"25-brandweer-flevoland",
+}
+BRANDBASE_MIN_REQUEST_SECONDS = 10.0
+_BRANDBASE_REQUEST_LOCK = threading.Lock()
+_BRANDBASE_LAST_REQUEST_MONOTONIC = 0.0
+
 HULPDIENST_VEHICLES_BASE = "https://hulpdienstvoertuigen.nl/regio"
 HULPDIENST_REGION_SLUGS = {
     code: slug for slug, code in FIRE_REGION_CODES.items()
@@ -619,6 +639,73 @@ class _VehicleHtmlTableParser(HTMLParser):
                 self.rows.append(self._row)
             self._row = None
             self._cell = None
+
+
+class _BrandbaseRegionParser(HTMLParser):
+    """Read station headings and vehicle links from one Brandbase region page."""
+    def __init__(self, region_code: str):
+        super().__init__(convert_charrefs=True)
+        self.region_code = region_code
+        self.station = ""
+        self.vehicles: dict[str, dict] = {}
+        self._heading_parts: list[str] | None = None
+        self._link_parts: list[str] | None = None
+        self._link_href = ""
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag == "h3":
+            self._heading_parts = []
+        elif tag == "a":
+            href = dict(attrs).get("href", "")
+            parsed = urlparse(urljoin("https://brandbase.hetbrandweerforum.nl/", href))
+            if parsed.netloc.lower() == "brandbase.hetbrandweerforum.nl" and parsed.path.startswith("/voertuigen/") and not parsed.path.startswith("/voertuigen/regio/"):
+                self._link_href = parsed.geturl()
+                self._link_parts = []
+
+    def handle_data(self, data):
+        if self._heading_parts is not None:
+            self._heading_parts.append(data)
+        if self._link_parts is not None:
+            self._link_parts.append(data)
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag == "h3" and self._heading_parts is not None:
+            heading = normalize_space(" ".join(self._heading_parts))
+            self.station = normalize_space(re.sub(rf"^{re.escape(self.region_code)}-\d{{2}}\s*", "", heading))[:120]
+            self._heading_parts = None
+        elif tag == "a" and self._link_parts is not None:
+            text = normalize_space(" ".join(self._link_parts))
+            match = re.match(rf"^({re.escape(self.region_code)}(?:-\d{{2}})?-\d{{3,4}})\s+(.+)$", text)
+            if match:
+                digits = normalize_vehicle_digits(match.group(1))
+                if len(digits) in {6, 7} and digits.startswith(self.region_code):
+                    description = normalize_space(match.group(2))
+                    description = re.sub(r"\s+\([A-Z0-9-]{5,12}\)$", "", description, flags=re.I).strip()
+                    type_code, mapped_label = fire_vehicle_type(description, digits)
+                    display_type = type_code if type_code != "BRW" else mapped_label
+                    item = {
+                        "callsign": format_vehicle_callsign(digits),
+                        "type": type_code,
+                        "label": description or mapped_label,
+                        "station": self.station,
+                        "display": " ".join(x for x in (display_type, self.station) if x).strip() or description,
+                        "region": self.region_code,
+                        "source": "Brandbase",
+                        "source_url": self._link_href,
+                    }
+                    previous = self.vehicles.get(digits)
+                    if previous is None or len(item["label"]) < len(str(previous.get("label") or "")):
+                        self.vehicles[digits] = item
+            self._link_parts = None
+            self._link_href = ""
+
+
+def parse_brandbase_region_html(text: str, region_code: str) -> dict[str, dict]:
+    parser = _BrandbaseRegionParser(region_code)
+    parser.feed(text or "")
+    return parser.vehicles
 
 
 def parse_hulpdienst_vehicle_html(text: str, region_code: str) -> tuple[dict[str, dict], int]:
@@ -2447,7 +2534,7 @@ class AppState:
                 "selected_regions": selected_fire_region_codes(self.config),
                 "region_meta": metas,
                 "override_count": len(load_vehicle_overrides()),
-                "source": "handmatige overrides + lokale regionale cache + landelijke nummerplan-fallback",
+                "source": "handmatige overrides + Brandbase-regiocache + landelijke nummerplan-fallback",
             },
             "vehicles": vehicles,
         }
@@ -2549,6 +2636,37 @@ class AppState:
                 charset = ctype
         return raw.decode(charset, errors="replace")
 
+    def _fetch_brandbase_url(self, url: str, timeout: float = 15.0) -> str:
+        """Fetch politely: Brandbase asks generic crawlers for ten seconds delay."""
+        global _BRANDBASE_LAST_REQUEST_MONOTONIC
+        with _BRANDBASE_REQUEST_LOCK:
+            remaining = BRANDBASE_MIN_REQUEST_SECONDS - (time.monotonic() - _BRANDBASE_LAST_REQUEST_MONOTONIC)
+            if remaining > 0:
+                stop_event = getattr(self, "stop_event", None)
+                if stop_event is not None:
+                    if stop_event.wait(remaining):
+                        raise RuntimeError("voertuigsynchronisatie gestopt")
+                else:
+                    time.sleep(remaining)
+            _BRANDBASE_LAST_REQUEST_MONOTONIC = time.monotonic()
+            return self._fetch_vehicle_url(url, timeout=timeout)
+
+    def _sync_vehicle_region_brandbase(self, region_code: str) -> dict:
+        slug = BRANDBASE_REGION_SLUGS.get(region_code)
+        if not slug:
+            raise ValueError("geen Brandbase-regioslug")
+        url = f"{BRANDBASE_VEHICLES_BASE}/{quote(slug)}/"
+        text = self._fetch_brandbase_url(url, timeout=15.0)
+        vehicles = parse_brandbase_region_html(text, region_code)
+        if not vehicles:
+            raise ValueError("bron bevatte geen herkenbare brandweervoertuigen")
+        return {
+            "vehicles": vehicles,
+            "source": "Brandbase",
+            "endpoint": "regional-html",
+            "pages": 1,
+        }
+
     def _sync_vehicle_region_hulpdienst(self, region_code: str) -> dict:
         slug = HULPDIENST_REGION_SLUGS.get(region_code)
         if not slug:
@@ -2613,6 +2731,7 @@ class AppState:
         attempts: list[str] = []
         result = None
         for source_name, loader in (
+            ("Brandbase", self._sync_vehicle_region_brandbase),
             ("Hulpdienstvoertuigen.nl", self._sync_vehicle_region_hulpdienst),
             ("Tomzulu10 fallback", self._sync_vehicle_region_tomzulu),
         ):
@@ -4796,6 +4915,29 @@ def update_runtime_status() -> dict:
     return status
 
 
+def _read_installed_github_marker() -> dict:
+    try:
+        data = json.loads(GITHUB_INSTALL_MARKER_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _write_installed_github_marker(fields: dict) -> dict:
+    UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+    clean = {
+        "repo": normalize_github_repo(fields.get("repo", "")),
+        "branch": normalize_github_branch(fields.get("branch", DEFAULT_GITHUB_BRANCH)),
+        "revision": normalize_space(str(fields.get("revision") or ""))[:64].lower(),
+        "version": normalize_space(str(fields.get("version") or ""))[:80],
+        "installed_at": utcnow_iso(),
+    }
+    tmp = GITHUB_INSTALL_MARKER_PATH.with_name(f"{GITHUB_INSTALL_MARKER_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(clean, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(GITHUB_INSTALL_MARKER_PATH)
+    return clean
+
+
 def normalize_github_repo(value: str) -> str:
     raw = normalize_space(str(value or "")).strip().rstrip("/")
     if not raw:
@@ -4987,18 +5129,30 @@ def _github_file(repo: str, path: str, branch: str) -> dict:
     return {"body": body, "sha": str(data.get("sha") or ""), "html_url": data.get("html_url")}
 
 
+def _github_branch_head(repo: str, branch: str) -> str:
+    safe_branch = quote(branch, safe="")
+    data = _github_request_json(f"{GITHUB_API_BASE}/repos/{repo}/commits/{safe_branch}")
+    revision = normalize_space(str(data.get("sha") or "")).lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError(f"GitHub branch {branch} heeft geen geldige commit-SHA")
+    return revision
+
+
 def _github_latest_branch(repo: str, branch: str) -> dict:
-    version_file = _github_file(repo, "VERSION", branch)
+    # Resolve the head first, then read and download that immutable revision.
+    # This avoids a race where a push lands between VERSION and ZIP retrieval.
+    revision = _github_branch_head(repo, branch)
+    version_file = _github_file(repo, "VERSION", revision)
     version = normalize_space(version_file["body"].decode("utf-8", "replace"))[:80].lstrip("vV")
     if not version or not re.search(r"\d", version):
         raise ValueError("VERSION op de GitHub-branch bevat geen geldig versienummer")
-    safe_branch = quote(branch, safe="")
     return {
         "repo": repo, "version": version, "tag": branch,
+        "revision": revision,
         "name": f"GitHub branch {branch}", "published_at": None,
         "html_url": f"https://github.com/{repo}/tree/{quote(branch, safe='/')}",
         "body": "Automatische branch-update na een GitHub push.", "source_kind": "branch",
-        "asset": {"name": f"{repo.split('/', 1)[1]}-{branch}.zip", "url": f"https://codeload.github.com/{repo}/zip/refs/heads/{safe_branch}", "size": 0, "digest": ""},
+        "asset": {"name": f"{repo.split('/', 1)[1]}-{branch}-{revision[:7]}.zip", "url": f"https://codeload.github.com/{repo}/zip/{revision}", "size": 0, "digest": ""},
     }
 
 
@@ -5023,8 +5177,29 @@ def _github_latest_software(repo: str, branch: str, include_branch: bool) -> dic
             errors.append(f"Branch {branch}: {exc}")
     if not candidates:
         raise ValueError("Geen bruikbare GitHub Release of branch-update gevonden" + (f" ({'; '.join(errors)})" if errors else ""))
-    candidates.sort(key=lambda row: _version_key(row.get("version", "")), reverse=True)
+    # On equal versions the branch wins: it carries an exact commit SHA and can
+    # therefore detect a newer push even when VERSION was intentionally unchanged.
+    candidates.sort(key=lambda row: (_version_key(row.get("version", "")), row.get("source_kind") == "branch"), reverse=True)
     return candidates[0]
+
+
+def _github_update_available(candidate: dict, current_version: str = APP_VERSION, installed: dict | None = None) -> tuple[bool, str]:
+    if _is_newer_version(candidate.get("version", ""), current_version):
+        return True, "version"
+    if _version_key(candidate.get("version", "")) != _version_key(current_version):
+        return False, ""
+    if candidate.get("source_kind") != "branch":
+        return False, ""
+    revision = normalize_space(str(candidate.get("revision") or "")).lower()
+    marker = installed if isinstance(installed, dict) else _read_installed_github_marker()
+    same_source = (
+        normalize_github_repo(marker.get("repo", "")) == normalize_github_repo(candidate.get("repo", ""))
+        and normalize_github_branch(marker.get("branch", DEFAULT_GITHUB_BRANCH)) == normalize_github_branch(candidate.get("tag", DEFAULT_GITHUB_BRANCH))
+    )
+    installed_revision = normalize_space(str(marker.get("revision") or "")).lower() if same_source else ""
+    if re.fullmatch(r"[0-9a-f]{40}", revision) and revision != installed_revision:
+        return True, "revision"
+    return False, ""
 
 
 def _download_github_asset(release: dict) -> Path:
@@ -5116,23 +5291,28 @@ def github_check_and_maybe_install(state: "AppState", install: bool = False) -> 
         raise ValueError("Stel eerst een openbaar GitHub repository in")
     _write_update_status(state="checking", source="github", github_repo=repo, message="GitHub Releases en branch controleren", error="")
     release = _github_latest_software(repo, cfg.get("github_branch") or DEFAULT_GITHUB_BRANCH, bool(cfg.get("github_branch_updates")))
-    newer = _is_newer_version(release["version"], APP_VERSION)
+    installed_marker = _read_installed_github_marker()
+    available, update_reason = _github_update_available(release, APP_VERSION, installed_marker)
+    revision = normalize_space(str(release.get("revision") or "")).lower()
     base = {
         "source": "github", "source_kind": release.get("source_kind", "release"), "github_repo": repo, "latest_version": release["version"],
         "latest_tag": release["tag"], "release_url": release.get("html_url"),
+        "latest_revision": revision, "installed_revision": normalize_space(str(installed_marker.get("revision") or "")).lower(),
+        "update_reason": update_reason,
         "release_name": release.get("name"), "release_published_at": release.get("published_at"),
         "asset_name": release["asset"].get("name"), "asset_size": release["asset"].get("size"),
-        "available": newer, "target_version": "", "backup": "", "installed_version": "",
+        "available": available, "target_version": "", "backup": "", "installed_version": "",
     }
-    if not newer:
+    if not available:
         return _write_update_status(state="up-to-date", message="Je gebruikt de nieuwste versie", error="", **base)
+    available_message = f"Nieuwe push {revision[:7]} op {release['tag']} is beschikbaar" if update_reason == "revision" else f"Versie {release['version']} is beschikbaar"
     if not install:
-        return _write_update_status(state="available", message=f"Versie {release['version']} is beschikbaar", error="", **base)
+        return _write_update_status(state="available", message=available_message, error="", **base)
     if not _claim_update_slot():
         raise RuntimeError("Er wordt al een update geïnstalleerd")
     incoming = None
     try:
-        _write_update_status(state="downloading", message=f"Versie {release['version']} downloaden", **base)
+        _write_update_status(state="downloading", message=f"{available_message} — downloaden", **base)
         incoming = _download_github_asset(release)
         _write_update_status(state="validating", message="GitHub update controleren", **base)
         package_root, package_version = _validate_and_extract_update(incoming)
@@ -5140,7 +5320,11 @@ def github_check_and_maybe_install(state: "AppState", install: bool = False) -> 
         if _version_key(package_version) != _version_key(release["version"]):
             raise ValueError(f"ZIP-versie {package_version} komt niet overeen met GitHub-versie {release['version']}")
         _write_update_status(state="staged", target_version=package_version, message="GitHub update klaar voor installatie", **base)
-        threading.Thread(target=_apply_update_and_exec, args=(package_root, package_version), daemon=True, name="github-self-update").start()
+        install_meta = {
+            "repo": repo, "branch": release.get("tag"), "revision": revision,
+            "version": package_version, "source_kind": release.get("source_kind"),
+        }
+        threading.Thread(target=_apply_update_and_exec, args=(package_root, package_version, install_meta), daemon=True, name="github-self-update").start()
         return update_runtime_status()
     except Exception:
         if incoming is not None:
@@ -5357,13 +5541,16 @@ def _copy_update_into_place(package_root: Path):
         shutil.copy2(src, dst)
 
 
-def _apply_update_and_exec(package_root: Path, target_version: str):
+def _apply_update_and_exec(package_root: Path, target_version: str, install_meta: dict | None = None):
     try:
         time.sleep(1.1)  # give the browser time to receive the upload response
         _write_update_status(state="backup", target_version=target_version, message="Vorige versie veiligstellen")
         backup = _create_update_backup()
         _write_update_status(state="installing", target_version=target_version, backup=str(backup), message="Bestanden installeren")
         _copy_update_into_place(package_root)
+        if isinstance(install_meta, dict) and install_meta.get("source_kind") == "branch" and install_meta.get("revision"):
+            marker = _write_installed_github_marker(install_meta)
+            _write_update_status(installed_revision=marker.get("revision", ""))
         try:
             stage_dir = package_root if package_root.name.startswith("stage-") else (package_root.parent if package_root.parent.name.startswith("stage-") else None)
             if stage_dir is not None and (stage_dir.parent == UPDATE_DIR or UPDATE_DIR in stage_dir.parents):

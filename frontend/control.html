@@ -172,22 +172,22 @@
     </section>
 
     <section class="control-card wide" id="updatesCard">
-      <div class="panel-head compact"><div><span class="eyebrow">UPDATES</span><h3>Automatisch via GitHub Releases</h3></div><span id="updateStatusPill" class="status-pill">controleren…</span></div>
+      <div class="panel-head compact"><div><span class="eyebrow">UPDATES</span><h3>Automatisch via GitHub</h3></div><span id="updateStatusPill" class="status-pill">controleren…</span></div>
       <div class="three-col">
         <label class="field"><span>GitHub repository</span><input id="githubRepoInput" type="text" value="xSophie1119/lichtkrant" placeholder="owner/repository of https://github.com/owner/repository"></label>
         <label class="field"><span>Updatebranch</span><input id="githubBranchInput" type="text" value="main" placeholder="main"></label>
         <label class="field"><span>Controle-interval</span><select id="githubCheckMinutesInput"><option value="5">Elke 5 minuten</option><option value="15">Elke 15 minuten</option><option value="30">Elke 30 minuten</option><option value="60">Elk uur</option><option value="180">Elke 3 uur</option><option value="360">Elke 6 uur</option></select></label>
       </div>
       <label class="switch-row"><span><b>Automatisch controleren</b><small>Controleert circa 10 seconden na opstarten en standaard daarna iedere 5 minuten.</small></span><input id="githubAutoCheckInput" type="checkbox"></label>
-      <label class="switch-row"><span><b>Nieuwe versie automatisch installeren</b><small>Downloadt de Windows-ZIP uit de nieuwste release, maakt eerst een backup en herstart daarna de monitor.</small></span><input id="githubAutoInstallInput" type="checkbox"></label>
-      <label class="switch-row"><span><b>Ook gewone GitHub-pushes volgen</b><small>Controleert VERSION op de ingestelde branch. Zo werkt bijwerken ook zonder handmatig een Release aan te maken.</small></span><input id="githubBranchUpdatesInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Nieuwe versie automatisch installeren</b><small>Downloadt de nieuwste complete GitHub-versie, maakt eerst een backup en herstart daarna de monitor.</small></span><input id="githubAutoInstallInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Ook gewone GitHub-pushes volgen</b><small>Vergelijkt zowel VERSION als de exacte commit-SHA. Iedere nieuwe push op de ingestelde branch wordt daardoor herkend.</small></span><input id="githubBranchUpdatesInput" type="checkbox"></label>
       <div class="status-grid compact-grid">
         <div><dt>Geïnstalleerd</dt><dd id="updateCurrentVersion">—</dd></div>
         <div><dt>GitHub</dt><dd id="updateLatestVersion">—</dd></div>
         <div><dt>Bron</dt><dd id="updateRepoStatus">—</dd></div>
         <div><dt>Laatste status</dt><dd id="updateStateText">—</dd></div>
       </div>
-      <p id="updateDetail" class="hint">Vul één openbaar GitHub repository in. De monitor gebruikt de nieuwste Release of een nieuwere VERSION op de gekozen branch.</p>
+      <p id="updateDetail" class="hint">Vul één openbaar GitHub repository in. De monitor gebruikt de nieuwste Release of de nieuwste commit op de gekozen branch.</p>
       <div class="button-row"><button id="saveUpdateSettingsBtn" class="secondary-btn">Update-instellingen opslaan</button><button id="checkUpdateBtn" class="secondary-btn">Controleer nu</button><button id="installUpdateBtn" class="primary-btn" disabled>Update installeren</button><button id="rollbackUpdateBtn" class="secondary-btn">Vorige versie herstellen</button></div>
       <p class="hint">Config, database, achtergrondfoto en regionale caches worden niet overschreven. Er worden maximaal drie programmabackups bewaard in <code>data\updates\backups</code>. Publieke GitHub Releases hebben geen account/token nodig.</p>
     </section>
@@ -222,6 +222,6 @@
   </div>
 </main>
 <div id="pageFeedback" class="page-feedback" role="status" aria-live="polite" hidden></div>
-<script src="/control.js?v=4230" defer></script>
+<script src="/control.js?v=4250" defer></script>
 </body>
 </html>

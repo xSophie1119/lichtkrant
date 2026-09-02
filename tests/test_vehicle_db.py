@@ -62,7 +62,16 @@ with tempfile.TemporaryDirectory() as td:
     finally:
         mod.VEHICLE_DB_PATH,mod.VEHICLE_CACHE_DIR,mod.VEHICLE_OVERRIDES_PATH=old_seed,old_cache,old_overrides
 
-# Primary HTML source: pagination, discipline filter and exact station/type.
+# Primary Brandbase source: station heading, exact type and registration cleanup.
+brandbase_html='''<html><body><h3>20-94 Tilburg (Vossenberg)</h3><ul>
+<li><a href="/voertuigen/20-9432-tankautospuit/">20-9432 Tankautospuit (12-ABC-3)</a></li>
+<li><a href="/voertuigen/20-9451-hoogwerker/">20-9451 Hoogwerker</a></li></ul></body></html>'''
+bv=mod.parse_brandbase_region_html(brandbase_html,'20')
+check(set(bv)=={'209432','209451'},f'Brandbase parser keys failed: {bv}')
+check(bv['209432']['type']=='TS' and bv['209432']['station']=='Tilburg (Vossenberg)',f'Brandbase exact vehicle failed: {bv.get("209432")}')
+check(bv['209432']['label']=='Tankautospuit' and bv['209432']['source']=='Brandbase',f'Brandbase cleanup/source failed: {bv.get("209432")}')
+
+# First fallback source: pagination, discipline filter and exact station/type.
 html1='''<html><body><table><tr><th>ID</th><th>Discipline</th><th>Type</th><th>Omschrijving</th><th>Kazerne</th></tr>
 <tr><td>20-9432</td><td>Brandweer</td><td>Tankautospuit (TS)</td><td>1e Tankautospuit</td><td>Tilburg-Vossenberg</td></tr>
 <tr><td>20-101</td><td>Ambulance</td><td>Ambulance</td><td>Ambulance</td><td>Tilburg</td></tr></table><p>Pagina 1 van 2</p></body></html>'''
@@ -71,7 +80,7 @@ check(pages==2,f'html pagination failed: {pages}')
 check(set(hv)=={'209432'},f'html discipline filtering failed: {hv}')
 check(hv['209432']['type']=='TS' and hv['209432']['station']=='Tilburg-Vossenberg',f'html exact vehicle failed: {hv.get("209432")}')
 
-# End-to-end regional sync uses Hulpdienstvoertuigen first and follows pages.
+# End-to-end regional sync uses Brandbase first and writes a regional cache.
 with tempfile.TemporaryDirectory() as td:
     td=Path(td); old_cache=mod.VEHICLE_CACHE_DIR; mod.VEHICLE_CACHE_DIR=td
     old_urlopen=mod.urllib.request.urlopen
@@ -84,25 +93,44 @@ with tempfile.TemporaryDirectory() as td:
         def __enter__(self): return self
         def __exit__(self,*a): return False
         def read(self,n=-1): return self.body[:n] if n and n>0 else self.body
-    page1=html1.encode()
-    page2=b'''<html><body><table><tr><th>ID</th><th>Discipline</th><th>Type</th><th>Omschrijving</th><th>Kazerne</th></tr><tr><td>20-9451</td><td>Brandweer</td><td>Redmaterieel</td><td>Hoogwerker</td><td>Tilburg-Vossenberg</td></tr></table><p>Pagina 2 van 2</p></body></html>'''
     def fake_urlopen(req,timeout=0):
         calls.append((req.full_url,timeout))
-        return Resp(page2 if 'pagina=2' in req.full_url else page1)
+        return Resp(brandbase_html.encode())
     mod.urllib.request.urlopen=fake_urlopen
+    old_delay=mod.BRANDBASE_MIN_REQUEST_SECONDS;mod.BRANDBASE_MIN_REQUEST_SECONDS=0
     try:
         state=object.__new__(mod.AppState)
         result=state._sync_vehicle_region('20',True)
         cache,_=mod.load_cached_vehicle_region('20')
-        check(result.get('ok') and result.get('source')=='Hulpdienstvoertuigen.nl' and result.get('pages')==2,f'primary sync failed: {result}')
-        check(set(cache)=={'209432','209451'},f'pagination cache failed: {cache}')
+        check(result.get('ok') and result.get('source')=='Brandbase' and result.get('pages')==1,f'primary sync failed: {result}')
+        check(set(cache)=={'209432','209451'},f'Brandbase cache failed: {cache}')
+        check(len(calls)==1 and 'brandbase.hetbrandweerforum.nl' in calls[0][0],f'primary made wrong calls: {calls}')
     finally:
-        mod.urllib.request.urlopen=old_urlopen; mod.VEHICLE_CACHE_DIR=old_cache
+        mod.urllib.request.urlopen=old_urlopen; mod.VEHICLE_CACHE_DIR=old_cache;mod.BRANDBASE_MIN_REQUEST_SECONDS=old_delay
+
+# If Brandbase is unavailable, Hulpdienstvoertuigen remains the first fallback.
+with tempfile.TemporaryDirectory() as td:
+    td=Path(td);old_cache=mod.VEHICLE_CACHE_DIR;mod.VEHICLE_CACHE_DIR=td
+    old_urlopen=mod.urllib.request.urlopen;old_delay=mod.BRANDBASE_MIN_REQUEST_SECONDS;mod.BRANDBASE_MIN_REQUEST_SECONDS=0
+    calls=[]
+    page2=b'''<html><body><table><tr><th>ID</th><th>Discipline</th><th>Type</th><th>Omschrijving</th><th>Kazerne</th></tr><tr><td>20-9451</td><td>Brandweer</td><td>Redmaterieel</td><td>Hoogwerker</td><td>Tilburg-Vossenberg</td></tr></table><p>Pagina 2 van 2</p></body></html>'''
+    def fake_urlopen(req,timeout=0):
+        calls.append((req.full_url,timeout))
+        if 'brandbase.hetbrandweerforum.nl' in req.full_url:raise OSError('simulated Brandbase failure')
+        return Resp(page2 if 'pagina=2' in req.full_url else html1.encode())
+    mod.urllib.request.urlopen=fake_urlopen
+    try:
+        state=object.__new__(mod.AppState);result=state._sync_vehicle_region('20',True)
+        cache,_=mod.load_cached_vehicle_region('20')
+        check(result.get('ok') and result.get('source')=='Hulpdienstvoertuigen.nl' and result.get('pages')==2,f'first fallback failed: {result}')
+        check(set(cache)=={'209432','209451'},f'fallback pagination cache failed: {cache}')
+    finally:
+        mod.urllib.request.urlopen=old_urlopen;mod.VEHICLE_CACHE_DIR=old_cache;mod.BRANDBASE_MIN_REQUEST_SECONDS=old_delay
 
 # If the primary site is unavailable, the legacy Google source remains a fallback.
 with tempfile.TemporaryDirectory() as td:
     td=Path(td); old_cache=mod.VEHICLE_CACHE_DIR; mod.VEHICLE_CACHE_DIR=td
-    old_urlopen=mod.urllib.request.urlopen
+    old_urlopen=mod.urllib.request.urlopen;old_delay=mod.BRANDBASE_MIN_REQUEST_SECONDS;mod.BRANDBASE_MIN_REQUEST_SECONDS=0
     calls=[]
     class Headers:
         def get_content_charset(self): return 'utf-8'
@@ -114,7 +142,8 @@ with tempfile.TemporaryDirectory() as td:
         def read(self,n=-1): return self.body[:n] if n and n>0 else self.body
     def fake_urlopen(req,timeout=0):
         calls.append((req.full_url,timeout))
-        if 'hulpdienstvoertuigen.nl' in req.full_url: raise OSError('simulated primary failure')
+        if 'brandbase.hetbrandweerforum.nl' in req.full_url: raise OSError('simulated primary failure')
+        if 'hulpdienstvoertuigen.nl' in req.full_url: raise OSError('simulated first fallback failure')
         if 'gviz' in req.full_url: raise OSError('simulated gviz failure')
         return Resp(b'Standplaats,Roepnummer,Voertuig\nGroningen,01-1831,Tankautospuit\n')
     mod.urllib.request.urlopen=fake_urlopen
@@ -122,11 +151,11 @@ with tempfile.TemporaryDirectory() as td:
         state=object.__new__(mod.AppState)
         result=state._sync_vehicle_region('01',True)
         check(result.get('ok') and result.get('source')=='Tomzulu10' and result.get('endpoint')=='published-csv',f'fallback failed: {result}')
-        check(len(calls)==3,f'wrong fallback attempts: {calls}')
+        check(len(calls)==4,f'wrong fallback attempts: {calls}')
     finally:
-        mod.urllib.request.urlopen=old_urlopen; mod.VEHICLE_CACHE_DIR=old_cache
+        mod.urllib.request.urlopen=old_urlopen; mod.VEHICLE_CACHE_DIR=old_cache;mod.BRANDBASE_MIN_REQUEST_SECONDS=old_delay
 
-TOTAL=22
+TOTAL=27
 print({'tests':TOTAL,'failures':len(fails),'passed':TOTAL-len(fails)})
 for f in fails:print('FAIL',f)
 if fails:raise SystemExit(1)

@@ -70,7 +70,7 @@ async function vehicleDb(){
   try{
     const s=await api('/api/vehicles/status'),st=s.status||{},regions=st.selected_regions||[],cached=st.cached_regions||[];
     const rows=Object.entries(st.regions||{}),done=rows.filter(([,x])=>x?.ok).length;
-    setText('#vehicleCount',st.count??'—');setText('#vehicleVersion',st.version||'4.2.4');
+    setText('#vehicleCount',st.count??'—');setText('#vehicleVersion',st.version||'4.2.5');
     const busy=st.running||st.force_pending;
     setText('#vehicleRegionStatus',busy?`bijwerken… (${Math.max(done,cached.length)}/${regions.length})`:(regions.length?`${Math.max(done,cached.length)}/${regions.length} regio’s`:'geen BRW-regio'));
     const detail=$('#vehicleSyncDetail');
@@ -122,11 +122,11 @@ async function loadGithubUpdateSettings(){try{const d=await api('/api/update/git
 function renderUpdateStatus(st={}){
   githubUpdateStatus=st||{};
   setText('#updateCurrentVersion',st.current_version||'—');
-  setText('#updateLatestVersion',st.latest_version||'nog niet gecontroleerd');
+  setText('#updateLatestVersion',st.latest_version?`v${st.latest_version}${st.latest_revision?' • '+st.latest_revision.slice(0,7):''}`:'nog niet gecontroleerd');
   setText('#updateRepoStatus',st.github_repo||githubUpdateSettings.github_repo||'niet ingesteld');
   const state=String(st.state||'idle');setText('#updateStateText',state);
   const pill=$('#updateStatusPill');if(pill){const available=!!st.available,err=state==='error';pill.textContent=err?'fout':available?`v${st.latest_version} beschikbaar`:state==='up-to-date'||state==='ready'?'actueel':state;pill.className='status-pill '+(err?'error':available?'':'online')}
-  const detail=$('#updateDetail');if(detail){if(st.error){detail.textContent=`Updatefout: ${st.error}`;detail.dataset.kind='error'}else if(st.available){detail.textContent=`Nieuwe versie ${st.latest_version} beschikbaar${st.asset_name?' • '+st.asset_name:''}. ${st.message||''}`;detail.dataset.kind='ok'}else{detail.textContent=st.message||'GitHub Releases nog niet gecontroleerd.';detail.dataset.kind=''}}
+  const detail=$('#updateDetail');if(detail){if(st.error){detail.textContent=`Updatefout: ${st.error}`;detail.dataset.kind='error'}else if(st.available){detail.textContent=`${st.message||`Versie ${st.latest_version} beschikbaar`}${st.asset_name?' • '+st.asset_name:''}.`;detail.dataset.kind='ok'}else{detail.textContent=st.message||'GitHub nog niet gecontroleerd.';detail.dataset.kind=''}}
   const install=$('#installUpdateBtn');if(install)install.disabled=!st.available||['downloading','validating','backup','installing','restarting','rollback'].includes(state);
 }
 async function updateStatus(){try{const d=await api('/api/update/status');renderUpdateStatus(d)}catch(e){setText('#updateStatusPill','offline');setText('#updateDetail',e.message)}}
