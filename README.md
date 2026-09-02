@@ -1,4 +1,10 @@
-# P2000 Monitor — Windows v4.2.3
+# P2000 Monitor — Windows v4.2.4
+
+## v4.2.4 – snellere GitHub-updatecontrole
+
+- Controleert circa 10 seconden na het starten en daarna standaard iedere 5 minuten.
+- De instellingenpagina en configuratiewizard gebruiken nu minuten in plaats van uren.
+- Bestaande installaties met het oude urenveld migreren automatisch naar 5 minuten.
 
 ## v4.2.3 – audiotests en handmatige roepnummers
 

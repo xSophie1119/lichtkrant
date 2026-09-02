@@ -29,12 +29,23 @@ def test_asset_selection_prefers_windows_zip():
 
 
 def test_update_settings_auto_install_implies_check():
-    x=server.sanitize_github_update_payload({'github_repo':'owner/repo','github_auto_install':True,'github_auto_check':False,'github_check_hours':3,'github_branch_updates':True,'github_branch':'develop'})
+    x=server.sanitize_github_update_payload({'github_repo':'owner/repo','github_auto_install':True,'github_auto_check':False,'github_check_minutes':5,'github_branch_updates':True,'github_branch':'develop'})
     assert x['github_auto_install'] is True
     assert x['github_auto_check'] is True
-    assert x['github_check_hours']==3
+    assert x['github_check_minutes']==5
     assert x['github_branch_updates'] is True
     assert x['github_branch']=='develop'
+
+
+def test_update_interval_never_hammers_public_github_api():
+    x=server.sanitize_github_update_payload({'github_repo':'owner/repo','github_check_minutes':1})
+    assert x['github_check_minutes']==5
+
+
+def test_legacy_hourly_interval_migrates_to_five_minutes():
+    x=server.github_update_config({'github_repo':'owner/repo','github_check_hours':6})
+    assert x['github_check_minutes']==5
+    assert 'github_check_hours' not in x
 
 
 def test_central_settings_config_is_sanitized():

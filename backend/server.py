@@ -75,7 +75,7 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.2.3"
+APP_VERSION = "4.2.4"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -2244,7 +2244,7 @@ class AppState:
             github_repo=cfg.get("github_repo", ""),
             auto_check=cfg.get("github_auto_check", False),
             auto_install=cfg.get("github_auto_install", False),
-            check_hours=cfg.get("github_check_hours", 6),
+            check_minutes=cfg.get("github_check_minutes", 5),
             message="GitHub-updateinstellingen opgeslagen",
         )
         if cfg.get("github_repo") and cfg.get("github_auto_check"):
@@ -4824,7 +4824,10 @@ def github_update_config(config: dict) -> dict:
         "github_repo": repo,
         "github_auto_check": bool(config.get("github_auto_check", False)) and bool(repo),
         "github_auto_install": bool(config.get("github_auto_install", False)) and bool(repo),
-        "github_check_hours": bounded_int(config.get("github_check_hours", 6), 6, 1, 168),
+        # v4.2.4 deliberately migrates the old hourly setting to a five-minute
+        # default. Keeping the legacy six-hour value would make existing
+        # installations miss the faster update checks after upgrading.
+        "github_check_minutes": bounded_int(config.get("github_check_minutes", 5), 5, 5, 1440),
         "github_branch_updates": bool(config.get("github_branch_updates", True)) and bool(repo),
         "github_branch": normalize_github_branch(config.get("github_branch", DEFAULT_GITHUB_BRANCH)),
     }
@@ -4844,7 +4847,7 @@ def sanitize_github_update_payload(payload: dict, current: dict | None = None) -
         "github_repo": repo,
         "github_auto_check": auto_check,
         "github_auto_install": auto_install,
-        "github_check_hours": bounded_int(payload.get("github_check_hours", current.get("github_check_hours", 6)), 6, 1, 168),
+        "github_check_minutes": bounded_int(payload.get("github_check_minutes", current.get("github_check_minutes", 5)), 5, 5, 1440),
         "github_branch_updates": bool(payload.get("github_branch_updates", current.get("github_branch_updates", True))) and bool(repo),
         "github_branch": normalize_github_branch(payload.get("github_branch", current.get("github_branch", DEFAULT_GITHUB_BRANCH))),
     }
@@ -5159,8 +5162,8 @@ def github_update_worker(state: "AppState"):
                     return
             except Exception as exc:
                 _write_update_status(state="error", source="github", github_repo=cfg.get("github_repo", ""), error=str(exc), message="GitHub updatecontrole mislukt")
-        hours = max(1, int(cfg.get("github_check_hours") or 6))
-        if state.stop_event.wait(hours * 3600):
+        minutes = max(5, int(cfg.get("github_check_minutes") or 5))
+        if state.stop_event.wait(minutes * 60):
             return
 
 
@@ -6148,7 +6151,7 @@ def load_config() -> dict:
         "github_repo": DEFAULT_GITHUB_REPO,
         "github_auto_check": True,
         "github_auto_install": True,
-        "github_check_hours": 6,
+        "github_check_minutes": 5,
         "github_branch_updates": True,
         "github_branch": DEFAULT_GITHUB_BRANCH,
         "github_settings_auto_sync": False,
@@ -6176,6 +6179,9 @@ def load_config() -> dict:
     default["watchdog_stale_seconds"] = bounded_int(default.get("watchdog_stale_seconds"), 600, 180, 86_400)
     default["http_log"] = default.get("http_log") is True
     default.update(github_update_config(default))
+    # Drop the pre-v4.2.4 key so it cannot be written back to config.json and
+    # accidentally suggest that the updater still runs on an hourly interval.
+    default.pop("github_check_hours", None)
     default.update(github_settings_sync_config(default))
 
     raw_urls = default.get("feed_urls")

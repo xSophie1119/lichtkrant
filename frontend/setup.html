@@ -15,7 +15,7 @@
       <h1>P2000 Monitor <span>instellen</span></h1>
       <p>Geen RSS-links kopiëren en geen configbestanden aanpassen. Kies wie de monitor gebruikt, de standplaats, regio's en disciplines. De monitor bouwt de juiste feeds zelf.</p>
     </div>
-    <div class="version-badge">v4.2.3</div>
+    <div class="version-badge">v4.2.4</div>
   </header>
 
   <nav class="steps" aria-label="Installatiestappen">
@@ -119,7 +119,7 @@
       <div class="info-box"><b>Automatische updates via GitHub <em>optioneel</em></b><span>Deze monitor gebruikt standaard <b>xSophie1119/lichtkrant</b> voor automatische updates via GitHub Releases.</span></div>
       <div class="field-grid">
         <label class="field"><span>GitHub repository <em>optioneel</em></span><input id="githubRepo" maxlength="220" value="xSophie1119/lichtkrant" placeholder="owner/repository"></label>
-        <label class="field"><span>Updatecontrole</span><select id="githubCheckHours"><option value="3">Elke 3 uur</option><option value="6" selected>Elke 6 uur</option><option value="12">Elke 12 uur</option><option value="24">Dagelijks</option></select></label>
+        <label class="field"><span>Updatecontrole</span><select id="githubCheckMinutes"><option value="5" selected>Elke 5 minuten</option><option value="15">Elke 15 minuten</option><option value="30">Elke 30 minuten</option><option value="60">Elk uur</option></select></label>
       </div>
       <label class="choice-card compact-update-choice"><input id="githubAutoInstall" type="checkbox"><span><b>Nieuwe GitHub Release automatisch installeren</b><small>Maakt eerst een programmabackup. Config, database en achtergrond blijven behouden.</small></span></label>
       <div class="privacy-box"><b>Lokaal opgeslagen</b><span>Naam, bedrijfsnaam en configuratie worden alleen in <code>config/config.json</code> op deze pc bewaard. Ze worden niet naar Alarmeringen.nl of PDOK meegestuurd.</span></div>

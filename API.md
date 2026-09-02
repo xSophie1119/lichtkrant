@@ -52,7 +52,7 @@ Regionale caches staan onder `data/vehicles/<regiocode>.json` en worden standaar
 ## GitHub Releases updates (v4.2.0)
 
 - `GET /api/update/github/settings` — huidige GitHub update-instellingen.
-- `POST /api/update/github/settings` — `{github_repo, github_auto_check, github_auto_install, github_check_hours}`.
+- `POST /api/update/github/settings` — `{github_repo, github_auto_check, github_auto_install, github_check_minutes}`.
 - `GET /api/update/status` — huidige/laatste update-status, beschikbare versie en release-informatie.
 - `POST /api/update/github/check` — `{install:false}` controleert; `{install:true}` downloadt, valideert, back-upt en installeert de nieuwste release.
 - `POST /api/update/rollback` — herstelt de nieuwste lokale programmabackup en herstart de backend.

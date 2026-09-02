@@ -2,7 +2,9 @@
 
 ## Release of gewone push
 
-Vanaf v4.2.1 kan de monitor een complete Release-ZIP installeren én gewone pushes op de ingestelde branch volgen. Verhoog bij een programmaupdate altijd het bestand `VERSION`; daarna kan de monitor het GitHub branch-archief automatisch downloaden, valideren, back-uppen en installeren.
+Vanaf v4.2.1 kan de monitor een complete Release-ZIP installeren én gewone pushes op de ingestelde branch volgen. Verhoog bij een programmaupdate altijd zowel het bestand `VERSION` als `APP_VERSION` boven in `backend/server.py`; daarna kan de monitor het GitHub branch-archief automatisch downloaden, valideren, back-uppen en installeren.
+
+Vanaf v4.2.4 controleert de monitor circa tien seconden na het opstarten en daarna standaard iedere vijf minuten. Het minimale automatische interval is vijf minuten, zodat de openbare GitHub API niet onnodig wordt belast.
 
 ## Centrale instellingen
 

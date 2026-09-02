@@ -22,7 +22,7 @@
   "github_repo": "xSophie1119/lichtkrant",
   "github_auto_check": true,
   "github_auto_install": true,
-  "github_check_hours": 6,
+  "github_check_minutes": 5,
   "github_branch_updates": true,
   "github_branch": "main",
   "github_settings_auto_sync": false,
