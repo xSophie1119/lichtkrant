@@ -1,4 +1,16 @@
-# GitHub-updates publiceren
+# GitHub-updates en centrale instellingen publiceren
+
+## Release of gewone push
+
+Vanaf v4.2.1 kan de monitor een complete Release-ZIP installeren én gewone pushes op de ingestelde branch volgen. Verhoog bij een programmaupdate altijd het bestand `VERSION`; daarna kan de monitor het GitHub branch-archief automatisch downloaden, valideren, back-uppen en installeren.
+
+## Centrale instellingen
+
+1. Bewerk `p2000-settings.json` in de hoofdmap van de repository.
+2. Commit en push het bestand naar de ingestelde branch.
+3. Zet op iedere monitor bij **Instellingen → Centrale instellingen** de automatische synchronisatie aan.
+
+De monitor past alleen bekende velden onder `display_settings` toe. Onbekende velden worden genegeerd en waarden worden opnieuw server-side gevalideerd. Database, setup/regioselectie, lokale achtergrondfoto en geüploade audiobestanden blijven behouden. Zet geen wachtwoorden of tokens in dit openbare bestand.
 
 1. Zet de P2000 Monitor in een **openbaar GitHub repository**.
 2. Maak voor iedere uitgave een GitHub **Release**, bijvoorbeeld tag `v4.2.0`.

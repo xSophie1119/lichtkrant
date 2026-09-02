@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.2.0';
+const CLIENT_VERSION='4.2.3';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -805,8 +805,8 @@ function youtubeVideoId(url){
   const raw=String(url||'').trim();if(!raw)return '';
   try{const u=new URL(raw,location.href);if(/youtu\.be$/i.test(u.hostname))return String(u.pathname.split('/').filter(Boolean)[0]||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,20);if(/youtube\.com$/i.test(u.hostname)||/\.youtube\.com$/i.test(u.hostname)){if(u.pathname.startsWith('/shorts/'))return String(u.pathname.split('/')[2]||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,20);return String(u.searchParams.get('v')||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,20)}}catch{}return '';
 }
-function dispatchTuneChoice(service='',urgent=false){
-  if(state.settings.dispatchTuneEnabled===false)return 'none';
+function dispatchTuneChoice(service='',urgent=false,force=false){
+  if(!force&&state.settings.dispatchTuneEnabled===false)return 'none';
   let choice='inherit';
   if(urgent)choice=String(state.settings.dispatchTuneUrgent||'inherit');
   if(choice==='inherit'){
@@ -839,14 +839,18 @@ async function playBuiltinDispatchTune(choice,volume=80){
 async function playYoutubeDispatchTune(volume=80){
   const id=youtubeVideoId(state.settings.dispatchTuneYoutubeUrl);if(!id)return false;
   const seconds=Math.max(1,Math.min(15,Number(state.settings.dispatchTuneYoutubeSeconds)||5));
-  let settled=false,resolver=null,iframe=document.createElement('iframe');const promise=new Promise(resolve=>{resolver=resolve});
+  let settled=false,started=false,resolver=null,playTimer=null,startTimer=null,iframe=document.createElement('iframe');const promise=new Promise(resolve=>{resolver=resolve});
   iframe.title='P2000 YouTube-deuntje';iframe.setAttribute('aria-hidden','true');iframe.setAttribute('allow','autoplay; encrypted-media');iframe.tabIndex=-1;
   iframe.style.cssText='position:absolute;width:1px;height:1px;left:-9999px;top:0;border:0;opacity:.01;pointer-events:none';
-  iframe.src=`https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&playsinline=1&enablejsapi=1&rel=0&modestbranding=1`;
-  const command=(func,args=[])=>{try{iframe.contentWindow?.postMessage(JSON.stringify({event:'command',func,args}),'https://www.youtube-nocookie.com')}catch{}};
-  const finish=(ok)=>{if(settled)return;settled=true;clearTimeout(timer);state.currentTuneStop=null;try{command('stopVideo')}catch{};try{iframe.remove()}catch{};resolver(ok)};
-  iframe.addEventListener('load',()=>{setTimeout(()=>{{const vv=Number(volume);command('setVolume',[Math.max(0,Math.min(100,Number.isFinite(vv)?vv:80))]);}command('playVideo')},100)},{once:true});
-  document.body.appendChild(iframe);const timer=setTimeout(()=>finish(true),seconds*1000);
+  const playerId=`p2000-${Date.now()}`;
+  iframe.src=`https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}?autoplay=1&controls=0&playsinline=1&enablejsapi=1&rel=0&modestbranding=1&origin=${encodeURIComponent(location.origin)}`;
+  const command=(func,args=[])=>{try{iframe.contentWindow?.postMessage(JSON.stringify({event:'command',id:playerId,func,args}),'https://www.youtube-nocookie.com')}catch{}};
+  const finish=(ok)=>{if(settled)return;settled=true;clearTimeout(playTimer);clearTimeout(startTimer);window.removeEventListener('message',onMessage);state.currentTuneStop=null;try{command('stopVideo')}catch{};try{iframe.remove()}catch{};resolver(ok)};
+  const markPlaying=()=>{if(started)return;started=true;clearTimeout(startTimer);playTimer=setTimeout(()=>finish(true),seconds*1000)};
+  const onMessage=e=>{if(e.source!==iframe.contentWindow||!/youtube(?:-nocookie)?\.com$/i.test(String(e.origin||'')))return;let d=e.data;try{if(typeof d==='string')d=JSON.parse(d)}catch{return}if(!d||typeof d!=='object')return;if(d.event==='onReady'){const vv=Number(volume);command('setVolume',[Math.max(0,Math.min(100,Number.isFinite(vv)?vv:80))]);command('playVideo')}const playerState=Number(d.data??d.info?.playerState);if((d.event==='onStateChange'||d.event==='infoDelivery')&&playerState===1)markPlaying()};
+  window.addEventListener('message',onMessage);
+  iframe.addEventListener('load',()=>{setTimeout(()=>{try{iframe.contentWindow?.postMessage(JSON.stringify({event:'listening',id:playerId}),'https://www.youtube-nocookie.com')}catch{}const vv=Number(volume);command('setVolume',[Math.max(0,Math.min(100,Number.isFinite(vv)?vv:80))]);command('playVideo')},150)},{once:true});
+  document.body.appendChild(iframe);startTimer=setTimeout(()=>finish(false),6500);
   state.currentTuneStop=()=>finish(false);return promise;
 }
 async function playCustomDispatchTune(volume=80){
@@ -860,7 +864,7 @@ async function playCustomDispatchTune(volume=80){
   });
 }
 async function playDispatchTuneForJob(job){
-  const choice=dispatchTuneChoice(job?.cueService,!!job?.cueUrgent);if(choice==='none')return false;
+  const choice=String(job?.tuneChoice||dispatchTuneChoice(job?.cueService,!!job?.cueUrgent,!!job?.forceAudio));if(choice==='none')return false;
   const volume=dispatchTuneVolume(job?.volume);
   try{
     if(choice.startsWith('builtin:'))return await playBuiltinDispatchTune(choice,volume);
@@ -987,16 +991,16 @@ async function onlineSpeakText(text,requestSeq=++state.speechRequestSeq,volume=1
 }
 function estimateSpeechMs(text){const words=String(text||'').trim().split(/\s+/).filter(Boolean).length,rate=Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96));return Math.max(3500,Math.min(35000,Math.round((words/(2.2*rate))*1000+2200)))}
 function clearSpeechTimer(){if(state.speechJobTimer!==null)clearTimeout(state.speechJobTimer);state.speechJobTimer=null}
-function finishSpeechJob(id){if(!state.speechCurrent||state.speechCurrent.id!==id)return;clearSpeechTimer();state.speechCurrent=null;startNextSpeechJob()}
+function finishSpeechJob(id,result={ok:true,detail:'Omroep afgespeeld'}){if(!state.speechCurrent||state.speechCurrent.id!==id)return;const job=state.speechCurrent;clearSpeechTimer();state.speechCurrent=null;try{job.onResult?.(result)}catch{};startNextSpeechJob()}
 function stopSpeechPlayback({clearQueue=false}={}){
   state.speechRequestSeq++;clearSpeechTimer();stopCurrentTune();globalThis.speechSynthesis?.cancel?.();
   const current=state.currentSpeechAudio;
   if(current){try{current.finish?.(false)}catch{};cleanupSpeechAudio(current)}
-  state.speechCurrent=null;if(clearQueue)state.speechQueue=[];return Promise.resolve(true);
+  const job=state.speechCurrent;state.speechCurrent=null;try{job?.onResult?.({ok:false,detail:'Omroep gestopt'})}catch{};if(clearQueue){for(const queued of state.speechQueue){try{queued.onResult?.({ok:false,detail:'Omroep geannuleerd'})}catch{}}state.speechQueue=[]}return Promise.resolve(true);
 }
-function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',key='',cueService='',cueUrgent=false}={}){
+function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',key='',cueService='',cueUrgent=false,forceAudio=false,skipTune=false,onResult=null}={}){
   text=String(text||'').trim();if(!text)return false;
-  const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:Math.max(0,Math.min(100,Number(volume)||72)),deviceVolume:deviceVolume===null?null:Math.max(5,Math.min(100,Number(deviceVolume)||38)),kind,key,cueService,cueUrgent:!!cueUrgent,queuedAt:Date.now(),retries:0};
+  const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:Math.max(0,Math.min(100,Number(volume)||72)),deviceVolume:deviceVolume===null?null:Math.max(5,Math.min(100,Number(deviceVolume)||38)),kind,key,cueService,cueUrgent:!!cueUrgent,forceAudio:!!forceAudio,skipTune:!!skipTune,onResult:typeof onResult==='function'?onResult:null,queuedAt:Date.now(),retries:0};
   if(key&&(state.speechCurrent?.key===key||state.speechQueue.some(x=>x.key===key)))return false;
   const cur=state.speechCurrent;
   if(cur&&job.priority>=80&&job.priority>cur.priority){
@@ -1006,14 +1010,14 @@ function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',
 }
 function startNextSpeechJob(){
   if(state.speechCurrent||!state.speechQueue.length)return;
-  const job=state.speechQueue.shift();state.speechCurrent=job;const done=()=>finishSpeechJob(job.id);
+  const job=state.speechQueue.shift();state.speechCurrent=job;const done=(ok=true,detail='Omroep afgespeeld')=>finishSpeechJob(job.id,{ok,detail});
   const seq=++state.speechRequestSeq;
   (async()=>{
-    const tuned=await playDispatchTuneForJob(job);
+    const tuned=job.skipTune?false:await playDispatchTuneForJob(job);
     if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return {mode:'cancelled',completed:true};
     return onlineSpeakText(job.text,seq,job.volume,tuned?'':job.cueService,tuned?false:job.cueUrgent,job.deviceVolume);
-  })().then(()=>{
-    if(state.speechCurrent?.id!==job.id)return;done();
+  })().then(result=>{
+    if(state.speechCurrent?.id!==job.id)return;done(true,result?.mode||'Omroep afgespeeld');
   }).catch(e=>{
     if(isAudioLockedError(e)){
       noteAudioFailure(e,'autoplay-locked');
@@ -1027,7 +1031,7 @@ function startNextSpeechJob(){
       setTimeout(()=>{state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob()},1500);
       startNextSpeechJob();return;
     }
-    done();
+    done(false,String(e?.message||e||'Omroep afspelen mislukt'));
   });
 }
 function maybeSpeakMessage(m,{force=false}={}){
@@ -1476,6 +1480,7 @@ function tick(){
   syncDisplayPower();render()
 }
 function fullscreen(){if(!document.fullscreenElement)document.documentElement.requestFullscreen?.();else document.exitFullscreen?.()}
+async function reportTestResult(payload,ok,detail){const token=String(payload?.token||'').trim();if(!token)return;try{await fetch('/api/test-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,ok:!!ok,detail:String(detail||'').slice(0,240)}),cache:'no-store'})}catch{}}
 function handleTest(payload){
   const token=payload?.token||payload?.at||null;if(token&&token===state.lastTestToken)return;if(token)state.lastTestToken=token;
   const mode=String(payload?.mode||'message');
@@ -1489,13 +1494,14 @@ function handleTest(payload){
     clearActiveMessages();state.testBlackoutUntil=0;state.testIdleUntil=Date.now()+Math.max(1000,Number(payload?.duration_ms)||15000);render();return;
   }
   if(mode==='tune-only'){
-    playDispatchTuneForJob({volume:100,cueService:String(payload?.service||'brandweer'),cueUrgent:!!payload?.urgent}).catch(e=>console.warn('Deuntjetest mislukt',e));return;
+    (async()=>{try{const choice=String(payload?.tune_choice||dispatchTuneChoice(String(payload?.service||'brandweer'),!!payload?.urgent,true));if(choice==='none'){await reportTestResult(payload,false,'Er is geen deuntje gekozen');return}const played=await playDispatchTuneForJob({volume:100,cueService:String(payload?.service||'brandweer'),cueUrgent:!!payload?.urgent,forceAudio:true,tuneChoice:choice});await reportTestResult(payload,played,played?`Deuntje afgespeeld (${choice})`:`Deuntje kon niet worden afgespeeld (${choice})`)}catch(e){console.warn('Deuntjetest mislukt',e);await reportTestResult(payload,false,e?.message||'Deuntjetest mislukt')}})();return;
   }
   if(mode==='speech-only'){
     const explicit=String(payload?.speech_text||'').trim();
-    if(explicit&&state.settings.speechEnabled!==false){
-      queueSpeech(explicit,{priority:100,volume:100,kind:'test',key:`speech-only:${token||Date.now()}`,cueService:String(payload?.service||'brandweer'),cueUrgent:false});
-    }
+    if(!explicit){reportTestResult(payload,false,'Geen omroeptekst ontvangen');return}
+    if(state.settings.speechEnabled===false&&!payload?.force_audio){reportTestResult(payload,false,'P2000 voorlezen staat uit');return}
+    const accepted=queueSpeech(explicit,{priority:100,volume:100,kind:'test',key:`speech-only:${token||Date.now()}`,cueService:String(payload?.service||'brandweer'),cueUrgent:false,forceAudio:!!payload?.force_audio,skipTune:true,onResult:r=>reportTestResult(payload,!!r?.ok,r?.detail||'Omroeptest afgerond')});
+    if(!accepted)reportTestResult(payload,false,'Omroeptest kon niet aan de wachtrij worden toegevoegd');
     return;
   }
   state.testBlackoutUntil=0;state.testIdleUntil=0;
@@ -1519,7 +1525,7 @@ async function unlockTabAudio(){
 }
 const audioUnlockBtn=$('#audioUnlockBtn');if(audioUnlockBtn)audioUnlockBtn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();unlockTabAudio()});
 document.addEventListener('mousemove',showControls,{passive:true});document.addEventListener('pointerdown',()=>{if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio()},{passive:true});document.addEventListener('touchstart',e=>{showControls();if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio()},{passive:true});
-document.addEventListener('keydown',e=>{if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio();showControls();if(e.key.toLowerCase()==='f')fullscreen();if(e.key.toLowerCase()==='l')replayLast()});
+document.addEventListener('keydown',e=>{if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio();showControls();if(e.key.toLowerCase()==='f')fullscreen();if(e.key.toLowerCase()==='l')replayLast();if(e.key.toLowerCase()==='i')location.assign('/control.html')});
 window.addEventListener('resize',resizeCanvas);
 window.addEventListener('storage',e=>{if(e.key==='p2000MonitorSettingsV4'){state.settings=loadSettings();syncBackgroundPhoto();invalidateIdleStatic();syncDisplayPower();render()}if(e.key==='p2000TestMessage'&&e.newValue){try{handleTest(JSON.parse(e.newValue))}catch{handleTest({})}}});
 try{const bc=new BroadcastChannel('p2000-monitor');bc.onmessage=e=>{if(e.data?.type==='test')handleTest(e.data)}}catch{}

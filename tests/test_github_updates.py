@@ -29,10 +29,30 @@ def test_asset_selection_prefers_windows_zip():
 
 
 def test_update_settings_auto_install_implies_check():
-    x=server.sanitize_github_update_payload({'github_repo':'owner/repo','github_auto_install':True,'github_auto_check':False,'github_check_hours':3})
+    x=server.sanitize_github_update_payload({'github_repo':'owner/repo','github_auto_install':True,'github_auto_check':False,'github_check_hours':3,'github_branch_updates':True,'github_branch':'develop'})
     assert x['github_auto_install'] is True
     assert x['github_auto_check'] is True
     assert x['github_check_hours']==3
+    assert x['github_branch_updates'] is True
+    assert x['github_branch']=='develop'
+
+
+def test_central_settings_config_is_sanitized():
+    x=server.sanitize_github_settings_sync_payload({'github_repo':'owner/repo','github_settings_auto_sync':True,'github_settings_path':'config/monitor.json','github_settings_branch':'main','github_settings_minutes':1})
+    assert x['github_settings_auto_sync'] is True
+    assert x['github_settings_path']=='config/monitor.json'
+    assert x['github_settings_branch']=='main'
+    assert x['github_settings_minutes']==1
+
+
+def test_branch_update_metadata_uses_codeload():
+    original=server._github_file
+    server._github_file=lambda repo,path,branch:{'body':b'4.2.1\n','sha':'abc'}
+    try: x=server._github_latest_branch('owner/repo','main')
+    finally: server._github_file=original
+    assert x['version']=='4.2.1'
+    assert x['source_kind']=='branch'
+    assert x['asset']['url'].startswith('https://codeload.github.com/owner/repo/')
 
 if __name__=='__main__':
     for name,fn in sorted(globals().items()):

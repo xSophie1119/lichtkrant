@@ -1,6 +1,22 @@
-# P2000 Monitor — Windows v4.2.0
+# P2000 Monitor — Windows v4.2.3
+
+## v4.2.3 – audiotests en handmatige roepnummers
+
+- **Test omroep** en **Test gekozen deuntje** negeren tijdens de test bewust de aan/uit-hoofdschakelaar, wachten op een echte afspeelbevestiging van de lichtkrant en tonen een duidelijke fout als de monitor niet verbonden is of audio niet start.
+- De omroeptest speelt alleen spraak; hij start niet meer ongemerkt ook het ingestelde deuntje.
+- Handmatige roepnummercorrecties kunnen in Instellingen worden toegevoegd, aangepast en verwijderd. Ze hebben altijd voorrang op de regionale cache en blijven in `data/vehicles/overrides.json` behouden bij updates.
+- De online voertuigcache wordt voortaan dagelijks in plaats van wekelijks gecontroleerd. Hulpdienstvoertuigen.nl blijft de primaire structureel uitleesbare bron; Tomzulu10 blijft fallback.
 
 Een configureerbare P2000-lichtkrant voor **Windows 10/11**. De monitor is niet meer aan één plaats of veiligheidsregio gekoppeld: bij de eerste start stel je zelf de standplaats, gebruiker/organisatie, regio's en disciplines in.
+
+## v4.2.1 – GitHub pushes en centrale instellingen
+
+- Automatische updates volgen nu zowel GitHub Releases als gewone pushes met een hogere versie in `VERSION`.
+- De GitHub API-header is hersteld; updatecontroles geven niet langer door die header HTTP 400.
+- `p2000-settings.json` kan optioneel iedere 1–60 minuten automatisch op alle monitoren worden toegepast.
+- De instellingenpagina heeft weer complete kaart-, kolom-, status- en mobiele styling.
+- Opslaan geeft een zichtbare melding bovenin en de instellingenknop op de lichtkrant opent betrouwbaar via `/control.html` of sneltoets `I`.
+- Alle deuntjes en eigen MP3/WAV/OGG-functionaliteit uit v4.2.0 blijven behouden.
 
 ## v4.2.0 – automatische GitHub Releases-updater
 
@@ -104,7 +120,7 @@ Politie-incidentnummers worden bewust niet als brandweervoertuig behandeld.
 
 ## Landelijke brandweervoertuigen
 
-De voertuiglaag is bewust gesplitst om de lichtkrant snel te houden. `frontend/vehicles.json` bevat alleen een kleine **offline seed**. Na het instellen van het profiel synchroniseert de backend op de achtergrond de actuele brandweer-/veiligheidsregiovoertuigen voor uitsluitend de gekozen veiligheidsregio’s. Primair worden de gepagineerde regionale tabellen van **Hulpdienstvoertuigen.nl** gebruikt; de oudere Tomzulu10/Google-publicatie blijft alleen als noodfallback bestaan. De regionale shards worden compact opgeslagen onder `data\vehicles\<regiocode>.json` en maximaal eens per 7 dagen automatisch ververst.
+De voertuiglaag is bewust gesplitst om de lichtkrant snel te houden. `frontend/vehicles.json` bevat alleen een kleine **offline seed**. Na het instellen van het profiel synchroniseert de backend op de achtergrond de actuele brandweer-/veiligheidsregiovoertuigen voor uitsluitend de gekozen veiligheidsregio’s. Primair worden de gepagineerde regionale tabellen van **Hulpdienstvoertuigen.nl** gebruikt; de oudere Tomzulu10/Google-publicatie blijft alleen als noodfallback bestaan. De regionale shards worden compact opgeslagen onder `data\vehicles\<regiocode>.json` en dagelijks automatisch gecontroleerd. Eigen correcties staan apart in `data\vehicles\overrides.json` en winnen altijd van beide online bronnen.
 
 Bij **Heel Nederland: Brandweer** mogen alle 25 shards lokaal bestaan, maar in geheugen worden ze samengevoegd tot één dictionary. Het opzoeken van een roepnummer blijft daardoor een directe O(1)-lookup; er wordt niet bij iedere melding door duizenden voertuigen geloopt en er vindt tijdens het renderen geen netwerkrequest plaats. De downloads draaien bovendien in maximaal vier achtergrondworkers.
 

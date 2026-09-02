@@ -48,6 +48,20 @@ with tempfile.TemporaryDirectory() as td:
     finally:
         mod.VEHICLE_DB_PATH,mod.VEHICLE_CACHE_DIR=old_seed,old_cache
 
+# Manual overrides are sanitized, persisted and applied after every cache/seed.
+with tempfile.TemporaryDirectory() as td:
+    td=Path(td); old_seed,old_cache,old_overrides=mod.VEHICLE_DB_PATH,mod.VEHICLE_CACHE_DIR,mod.VEHICLE_OVERRIDES_PATH
+    mod.VEHICLE_CACHE_DIR=td/'vehicles';mod.VEHICLE_OVERRIDES_PATH=mod.VEHICLE_CACHE_DIR/'overrides.json';mod.VEHICLE_DB_PATH=td/'seed.json'
+    mod.VEHICLE_DB_PATH.write_text(json.dumps({'vehicles':{'203161':{'callsign':'20-3161','type':'WT','station':'Fout'}}}),encoding='utf-8')
+    try:
+        digits,item=mod.sanitize_vehicle_override({'callsign':'20-3161','type':'WTW-M','station':'Breda','display':'Watertankwagen met monitor Breda'})
+        check(digits=='203161' and item['manual'] and item['callsign']=='20-3161',f'override sanitize failed: {digits} {item}')
+        mod.write_vehicle_overrides({digits:item})
+        cat,_=mod.load_vehicle_catalog({'region_disciplines':{'midden-en-west-brabant':['brandweer']}})
+        check(cat['203161']['display']=='Watertankwagen met monitor Breda' and cat['203161']['source']=='handmatige override',f'override priority failed: {cat.get("203161")}')
+    finally:
+        mod.VEHICLE_DB_PATH,mod.VEHICLE_CACHE_DIR,mod.VEHICLE_OVERRIDES_PATH=old_seed,old_cache,old_overrides
+
 # Primary HTML source: pagination, discipline filter and exact station/type.
 html1='''<html><body><table><tr><th>ID</th><th>Discipline</th><th>Type</th><th>Omschrijving</th><th>Kazerne</th></tr>
 <tr><td>20-9432</td><td>Brandweer</td><td>Tankautospuit (TS)</td><td>1e Tankautospuit</td><td>Tilburg-Vossenberg</td></tr>
@@ -112,7 +126,7 @@ with tempfile.TemporaryDirectory() as td:
     finally:
         mod.urllib.request.urlopen=old_urlopen; mod.VEHICLE_CACHE_DIR=old_cache
 
-TOTAL=20
+TOTAL=22
 print({'tests':TOTAL,'failures':len(fails),'passed':TOTAL-len(fails)})
 for f in fails:print('FAIL',f)
 if fails:raise SystemExit(1)

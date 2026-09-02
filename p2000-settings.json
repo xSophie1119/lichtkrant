@@ -1,0 +1,31 @@
+{
+  "revision": 1,
+  "description": "Centrale instellingen voor alle P2000 Monitor-installaties die GitHub-synchronisatie hebben ingeschakeld.",
+  "display_settings": {
+    "name": "P2000 Monitor",
+    "services": [
+      "brandweer",
+      "politie",
+      "lifeliner",
+      "knrm",
+      "overig"
+    ],
+    "speechEnabled": true,
+    "speechCities": [],
+    "dispatchTuneEnabled": true,
+    "dispatchTuneDefault": "youtube",
+    "dispatchTuneUrgent": "youtube",
+    "dispatchTuneYoutubeUrl": "https://www.youtube.com/watch?v=VleijwaD_-U",
+    "dispatchTuneYoutubeSeconds": 5,
+    "dispatchTuneVolume": 80,
+    "messageMinutes": 3,
+    "maxAgeMinutes": 5,
+    "mapEnabled": true,
+    "vehicleHeader": true,
+    "nightMode": true,
+    "nightStart": "23:00",
+    "nightEnd": "07:00",
+    "backgroundStyle": "black",
+    "kioskMonitor": "primary"
+  }
+}

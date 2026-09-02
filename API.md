@@ -24,6 +24,8 @@ De backend luistert standaard op `http://127.0.0.1:8765` en dient ook de lichtkr
 - `POST /api/parser/debug` met `{"raw":"..."}` — test één ruwe P2000-regel met de landelijke parser.
 - `GET /api/geocode?city=...&location=...` — PDOK/BGT-geocoding voor de kaart.
 - `POST /api/test-message` — stuur een testmelding, omroeptest of stop-opdracht naar het lichtkrant-tabblad.
+- `GET /api/test-status?token=...` — vraag de echte afspeelbevestiging of fout van een eerder verzonden audio-/omroeptest op.
+- `POST /api/test-result` — interne terugmelding van het lichtkrant-tabblad voor een testopdracht.
 - `POST /api/tts` met tekst/service/snelheid — render Nederlandse omroepaudio; geeft WAV terug wanneer lokale Windows-TTS beschikbaar is en gebruikt de ingebouwde Nederlandse fallbackroute waar nodig.
 - `GET /api/tts/status` — status van Nederlandse TTS-rendering en gebruikte stem/engine.
 
@@ -34,8 +36,11 @@ De backend luistert standaard op `http://127.0.0.1:8765` en dient ook de lichtkr
 - `GET /api/vehicles/status` — status, geselecteerde regiocodes, aantallen, laatste refresh en eventuele bronfout.
 - `POST /api/vehicles/sync` met `{"force":true}` — start een geforceerde **achtergrond**sync. De HTTP-call wacht niet op alle regio-downloads.
 - `GET /api/unknown-vehicles` — nog niet exact bekende landelijke brandweerroepnummers die tijdens gebruik zijn gezien.
+- `GET /api/vehicle-overrides` — alle persistente handmatige roepnummercorrecties.
+- `POST /api/vehicle-overrides/upsert` — voeg een correctie toe of wijzig deze (`callsign`, `type`, `station`, `display`, `label`).
+- `POST /api/vehicle-overrides/delete` — verwijder een correctie met `digits` of `callsign`.
 
-Regionale caches staan onder `data/vehicles/<regiocode>.json` en worden standaard maximaal eens per 7 dagen ververst. Een netwerk- of bronfout laat de RSS/SSE-verwerking ongemoeid: de laatst bekende cache blijft bruikbaar en onbekende voertuigen worden onmiddellijk via het landelijke nummerplan weergegeven.
+Regionale caches staan onder `data/vehicles/<regiocode>.json` en worden standaard dagelijks gecontroleerd. Een netwerk- of bronfout laat de RSS/SSE-verwerking ongemoeid: de laatst bekende cache blijft bruikbaar en onbekende voertuigen worden onmiddellijk via het landelijke nummerplan weergegeven. Handmatige correcties staan apart in `data/vehicles/overrides.json` en worden altijd als laatste toegepast.
 
 
 ## Achtergrondfoto

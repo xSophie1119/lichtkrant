@@ -13,6 +13,7 @@ This project is intended as an informational monitor, not an emergency service.
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import hashlib
 import html
@@ -56,6 +57,7 @@ DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "p2000.sqlite3"
 VEHICLE_DB_PATH = FRONTEND_DIR / "vehicles.json"
 VEHICLE_CACHE_DIR = DATA_DIR / "vehicles"
+VEHICLE_OVERRIDES_PATH = VEHICLE_CACHE_DIR / "overrides.json"
 VENDOR_DIR = ROOT / "vendor"
 TTS_CACHE_DIR = DATA_DIR / "tts-cache"
 BACKGROUND_DIR = DATA_DIR / "background"
@@ -65,12 +67,15 @@ MAX_TUNE_BYTES = 12 * 1024 * 1024
 UPDATE_DIR = DATA_DIR / "updates"
 UPDATE_STATUS_PATH = UPDATE_DIR / "status.json"
 UPDATE_BACKUP_DIR = UPDATE_DIR / "backups"
+GITHUB_SETTINGS_STATUS_PATH = DATA_DIR / "github-settings-status.json"
 GITHUB_API_BASE = "https://api.github.com"
 DEFAULT_GITHUB_REPO = "xSophie1119/lichtkrant"
+DEFAULT_GITHUB_BRANCH = "main"
+DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.2.0"
+APP_VERSION = "4.2.3"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -100,7 +105,9 @@ FIRE_REGION_SHEETS = {
     "23":"23 Limburg-Noord", "24":"24 Zuid-Limburg", "25":"25 Flevoland",
 }
 FIRE_REGION_LABELS = {code: slug.replace("-", " ").title() for slug, code in FIRE_REGION_CODES.items()}
-FIRE_DB_REFRESH_SECONDS = 7 * 24 * 3600
+# A daily background refresh keeps changing roepnummers substantially fresher
+# without making live P2000 processing depend on a third-party website.
+FIRE_DB_REFRESH_SECONDS = 24 * 3600
 
 # Primary exact vehicle source. Hulpdienstvoertuigen publishes a paginated
 # regional vehicle table and is much less brittle than a published Google
@@ -419,6 +426,75 @@ def vehicle_cache_path(region_code: str) -> Path:
     return VEHICLE_CACHE_DIR / f"{region_code}.json"
 
 
+def format_vehicle_callsign(digits: str) -> str:
+    digits = normalize_vehicle_digits(digits)
+    if len(digits) == 7:
+        return f"{digits[:2]}-{digits[2:4]}-{digits[4:]}"
+    if len(digits) == 6:
+        return f"{digits[:2]}-{digits[2:]}"
+    return ""
+
+
+def sanitize_vehicle_override(payload: dict) -> tuple[str, dict]:
+    if not isinstance(payload, dict):
+        raise ValueError("Ongeldige voertuiggegevens")
+    digits = normalize_vehicle_digits(str(payload.get("digits") or payload.get("callsign") or ""))
+    if len(digits) not in {6, 7}:
+        raise ValueError("Gebruik een brandweerroepnummer zoals 20-3161 of 01-18-849")
+    type_text = normalize_space(str(payload.get("type") or ""))[:32].upper()
+    type_text = re.sub(r"[^A-Z0-9/+-]", "", type_text)
+    station = normalize_space(str(payload.get("station") or ""))[:120]
+    label = normalize_space(str(payload.get("label") or ""))[:180]
+    display = normalize_space(str(payload.get("display") or ""))[:180]
+    if not type_text:
+        type_text = fire_vehicle_type(label or display, digits)[0]
+    if not label:
+        label = display or fire_vehicle_type(type_text, digits)[1]
+    if not display:
+        display = " ".join(x for x in (type_text, station) if x).strip() or label
+    if not display:
+        raise ValueError("Vul een type, standplaats of weergavenaam in")
+    return digits, {
+        "callsign": format_vehicle_callsign(digits),
+        "type": type_text or "BRW",
+        "label": label or display,
+        "station": station,
+        "display": display,
+        "region": digits[:2],
+        "source": "handmatige override",
+        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "manual": True,
+    }
+
+
+def load_vehicle_overrides() -> dict[str, dict]:
+    try:
+        data = json.loads(VEHICLE_OVERRIDES_PATH.read_text(encoding="utf-8"))
+        rows = data.get("vehicles", {}) if isinstance(data, dict) else {}
+        clean: dict[str, dict] = {}
+        for key, value in rows.items():
+            if not isinstance(value, dict):
+                continue
+            try:
+                digits, item = sanitize_vehicle_override({**value, "digits": key})
+                # Preserve the original edit timestamp when it is valid text.
+                item["updated_at"] = normalize_space(str(value.get("updated_at") or item["updated_at"]))[:40]
+                clean[digits] = item
+            except ValueError:
+                continue
+        return clean
+    except Exception:
+        return {}
+
+
+def write_vehicle_overrides(vehicles: dict[str, dict]) -> None:
+    VEHICLE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"version": 1, "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "vehicles": vehicles}
+    tmp = VEHICLE_OVERRIDES_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(VEHICLE_OVERRIDES_PATH)
+
+
 def load_vehicle_seed() -> dict[str, dict]:
     try:
         data = json.loads(VEHICLE_DB_PATH.read_text(encoding="utf-8"))
@@ -477,6 +553,9 @@ def load_vehicle_catalog(config: dict | None = None) -> tuple[dict[str, dict], d
             catalog.update(vehicles)
         if meta:
             metas[code] = meta
+    # User corrections are deliberately applied last and therefore always win
+    # over both online sources and the bundled seed.
+    catalog.update(load_vehicle_overrides())
     return catalog, metas
 
 
@@ -1976,6 +2055,7 @@ class AppState:
         self.vehicle_catalog, self.vehicle_region_meta = load_vehicle_catalog(self.config)
         self.known_vehicle_keys: set[str] = set(self.vehicle_catalog)
         self.vehicle_catalog_lock = threading.RLock()
+        self.vehicle_overrides_lock = threading.RLock()
         self.vehicle_sync_lock = threading.Lock()
         self.vehicle_sync_force_pending = False
         self.vehicle_sync_status: dict = {
@@ -1992,6 +2072,8 @@ class AppState:
         self.last_fallback_action: str | None = None
         self.client_health: dict = {}
         self.client_health_lock = threading.Lock()
+        self.test_results: dict[str, dict] = {}
+        self.test_results_lock = threading.Lock()
         # One background BGT street-index warmup per town at a time.  This lets
         # normal incidents resolve immediately via PDOK while the monitor quietly
         # learns the official local street/public-space names for later offline use.
@@ -2175,6 +2257,21 @@ class AppState:
             threading.Thread(target=immediate_check, daemon=True, name="github-update-config-check").start()
         return self.github_update_view()
 
+    def github_settings_sync_view(self) -> dict:
+        return github_settings_sync_config(self.config)
+
+    def save_github_settings_sync_config(self, payload: dict) -> dict:
+        cfg = sanitize_github_settings_sync_payload(payload, current=self.config)
+        with self.config_lock:
+            self.config.update(cfg)
+            self._persist_config()
+        if cfg.get("github_settings_auto_sync"):
+            threading.Thread(
+                target=_delayed_github_settings_pull,
+                args=(self,), daemon=True, name="github-settings-config-pull",
+            ).start()
+        return self.github_settings_sync_view()
+
     def setup_view(self) -> dict:
         return {
             "setup_complete": self.config.get("setup_complete") is True,
@@ -2349,7 +2446,8 @@ class AppState:
                 "count": len(vehicles),
                 "selected_regions": selected_fire_region_codes(self.config),
                 "region_meta": metas,
-                "source": "lokale regionale cache + landelijke nummerplan-fallback",
+                "override_count": len(load_vehicle_overrides()),
+                "source": "handmatige overrides + lokale regionale cache + landelijke nummerplan-fallback",
             },
             "vehicles": vehicles,
         }
@@ -2363,7 +2461,70 @@ class AppState:
             status["cached_regions"] = sorted(self.vehicle_region_meta)
             status["region_meta"] = dict(self.vehicle_region_meta)
             status["force_pending"] = bool(self.vehicle_sync_force_pending)
+            status["override_count"] = len(load_vehicle_overrides())
         return status
+
+    def vehicle_overrides_view(self) -> dict:
+        with self.vehicle_overrides_lock:
+            rows = load_vehicle_overrides()
+        return {
+            "count": len(rows),
+            "path": "data/vehicles/overrides.json",
+            "vehicles": rows,
+        }
+
+    def upsert_vehicle_override(self, payload: dict) -> dict:
+        digits, item = sanitize_vehicle_override(payload)
+        with self.vehicle_overrides_lock:
+            rows = load_vehicle_overrides()
+            rows[digits] = item
+            write_vehicle_overrides(rows)
+            self._refresh_vehicle_catalog()
+        self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
+        return {"ok": True, "digits": digits, "vehicle": item, "overrides": self.vehicle_overrides_view()}
+
+    def delete_vehicle_override(self, payload: dict) -> dict:
+        digits = normalize_vehicle_digits(str(payload.get("digits") or payload.get("callsign") or ""))
+        if len(digits) not in {6, 7}:
+            raise ValueError("Ongeldig roepnummer")
+        with self.vehicle_overrides_lock:
+            rows = load_vehicle_overrides()
+            existed = rows.pop(digits, None) is not None
+            write_vehicle_overrides(rows)
+            self._refresh_vehicle_catalog()
+        self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
+        return {"ok": True, "deleted": existed, "digits": digits, "overrides": self.vehicle_overrides_view()}
+
+    def begin_test_command(self, token: str, mode: str, subscribers: int) -> dict:
+        now = utcnow_iso()
+        row = {"token": token, "mode": mode, "status": "pending", "ok": None, "detail": "Wachten op lichtkrant", "created_at": now, "updated_at": now, "subscribers": subscribers}
+        with self.test_results_lock:
+            self.test_results[token] = row
+            if len(self.test_results) > 100:
+                for old_token in list(self.test_results)[:-80]:
+                    self.test_results.pop(old_token, None)
+        return dict(row)
+
+    def finish_test_command(self, payload: dict) -> dict:
+        token = normalize_space(str(payload.get("token") or ""))[:120]
+        if not token:
+            raise ValueError("Testtoken ontbreekt")
+        with self.test_results_lock:
+            row = self.test_results.get(token)
+            if not row:
+                raise ValueError("Onbekende of verlopen test")
+            row.update({
+                "status": "completed" if bool(payload.get("ok")) else "error",
+                "ok": bool(payload.get("ok")),
+                "detail": normalize_space(str(payload.get("detail") or ("afgespeeld" if payload.get("ok") else "afspelen mislukt")))[:240],
+                "updated_at": utcnow_iso(),
+            })
+            return dict(row)
+
+    def test_command_view(self, token: str) -> dict | None:
+        with self.test_results_lock:
+            row = self.test_results.get(token)
+            return dict(row) if row else None
 
     def _refresh_vehicle_catalog(self):
         catalog, metas = load_vehicle_catalog(self.config)
@@ -3444,7 +3605,7 @@ class AppState:
             self.broadcast({"type": "message", "message": payload})
         return inserted
 
-    def broadcast(self, payload: dict):
+    def broadcast(self, payload: dict) -> int:
         dead = []
         with self.sub_lock:
             for q in self.subscribers:
@@ -3455,6 +3616,11 @@ class AppState:
             for q in dead:
                 if q in self.subscribers:
                     self.subscribers.remove(q)
+            return max(0, len(self.subscribers))
+
+    def subscriber_count(self) -> int:
+        with self.sub_lock:
+            return len(self.subscribers)
 
     def record_feed_metrics(self, url: str, source_latency_seconds: float | None, fetch_ms: float | None):
         if source_latency_seconds is not None:
@@ -4581,6 +4747,7 @@ MAX_UPDATE_UNPACKED_BYTES = 220 * 1024 * 1024
 MAX_UPDATE_FILES = 3500
 _UPDATE_STATE_LOCK = threading.Lock()
 _UPDATE_STATUS_LOCK = threading.Lock()
+_GITHUB_SETTINGS_STATUS_LOCK = threading.Lock()
 _UPDATE_ACTIVE = False
 
 
@@ -4658,6 +4825,8 @@ def github_update_config(config: dict) -> dict:
         "github_auto_check": bool(config.get("github_auto_check", False)) and bool(repo),
         "github_auto_install": bool(config.get("github_auto_install", False)) and bool(repo),
         "github_check_hours": bounded_int(config.get("github_check_hours", 6), 6, 1, 168),
+        "github_branch_updates": bool(config.get("github_branch_updates", True)) and bool(repo),
+        "github_branch": normalize_github_branch(config.get("github_branch", DEFAULT_GITHUB_BRANCH)),
     }
 
 
@@ -4676,6 +4845,54 @@ def sanitize_github_update_payload(payload: dict, current: dict | None = None) -
         "github_auto_check": auto_check,
         "github_auto_install": auto_install,
         "github_check_hours": bounded_int(payload.get("github_check_hours", current.get("github_check_hours", 6)), 6, 1, 168),
+        "github_branch_updates": bool(payload.get("github_branch_updates", current.get("github_branch_updates", True))) and bool(repo),
+        "github_branch": normalize_github_branch(payload.get("github_branch", current.get("github_branch", DEFAULT_GITHUB_BRANCH))),
+    }
+
+
+def normalize_github_branch(value: str) -> str:
+    branch = normalize_space(str(value or DEFAULT_GITHUB_BRANCH)).strip().strip("/")
+    if not branch or len(branch) > 120 or branch.startswith("-") or ".." in branch:
+        return DEFAULT_GITHUB_BRANCH
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+", branch):
+        return DEFAULT_GITHUB_BRANCH
+    return branch
+
+
+def normalize_github_settings_path(value: str) -> str:
+    raw = normalize_space(str(value or DEFAULT_GITHUB_SETTINGS_PATH)).replace("\\", "/").strip("/")
+    parts = [part for part in raw.split("/") if part]
+    if not parts or ".." in parts or len(raw) > 240:
+        return DEFAULT_GITHUB_SETTINGS_PATH
+    if not all(re.fullmatch(r"[A-Za-z0-9._ -]+", part) for part in parts):
+        return DEFAULT_GITHUB_SETTINGS_PATH
+    if not raw.lower().endswith(".json"):
+        return DEFAULT_GITHUB_SETTINGS_PATH
+    return "/".join(parts)
+
+
+def github_settings_sync_config(config: dict) -> dict:
+    repo = normalize_github_repo(config.get("github_repo", "") or DEFAULT_GITHUB_REPO)
+    return {
+        "github_repo": repo,
+        "github_settings_auto_sync": bool(config.get("github_settings_auto_sync", False)) and bool(repo),
+        "github_settings_path": normalize_github_settings_path(config.get("github_settings_path", DEFAULT_GITHUB_SETTINGS_PATH)),
+        "github_settings_branch": normalize_github_branch(config.get("github_settings_branch", config.get("github_branch", DEFAULT_GITHUB_BRANCH))),
+        "github_settings_minutes": bounded_int(config.get("github_settings_minutes", 5), 5, 1, 1440),
+    }
+
+
+def sanitize_github_settings_sync_payload(payload: dict, current: dict | None = None) -> dict:
+    current = current or {}
+    repo_raw = payload.get("github_repo", current.get("github_repo", DEFAULT_GITHUB_REPO))
+    repo = normalize_github_repo(repo_raw)
+    if normalize_space(str(repo_raw or "")) and not repo:
+        raise ValueError("Gebruik owner/repository of https://github.com/owner/repository")
+    return {
+        "github_settings_auto_sync": bool(payload.get("github_settings_auto_sync", current.get("github_settings_auto_sync", False))) and bool(repo),
+        "github_settings_path": normalize_github_settings_path(payload.get("github_settings_path", current.get("github_settings_path", DEFAULT_GITHUB_SETTINGS_PATH))),
+        "github_settings_branch": normalize_github_branch(payload.get("github_settings_branch", current.get("github_settings_branch", current.get("github_branch", DEFAULT_GITHUB_BRANCH)))),
+        "github_settings_minutes": bounded_int(payload.get("github_settings_minutes", current.get("github_settings_minutes", 5)), 5, 1, 1440),
     }
 
 
@@ -4695,7 +4912,7 @@ def _github_request_json(url: str, timeout: int = 12) -> dict:
     req = urllib.request.Request(url, headers={
         "User-Agent": USER_AGENT,
         "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2026-03-10",
+        "X-GitHub-Api-Version": "2022-11-28",
     })
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         if int(getattr(resp, "status", 200)) != 200:
@@ -4713,7 +4930,7 @@ def _select_github_release_asset(release: dict) -> dict:
         points = 0
         if "p2000" in name: points += 8
         if "monitor" in name: points += 5
-        if "windows" in name: points += 8
+        if "windows" in name or "multiplatform" in name: points += 8
         if APP_VERSION.lower() in name: points -= 1
         if "source" in name: points -= 10
         return points
@@ -4752,12 +4969,73 @@ def _github_latest_release(repo: str) -> dict:
     }
 
 
+def _github_file(repo: str, path: str, branch: str) -> dict:
+    safe_path = quote(path, safe="/")
+    safe_branch = quote(branch, safe="")
+    data = _github_request_json(f"{GITHUB_API_BASE}/repos/{repo}/contents/{safe_path}?ref={safe_branch}")
+    if data.get("type") != "file" or not isinstance(data.get("content"), str):
+        raise ValueError(f"GitHub-bestand {path} is niet leesbaar")
+    try:
+        body = base64.b64decode(data["content"], validate=False)
+    except Exception as exc:
+        raise ValueError(f"GitHub-bestand {path} bevat ongeldige inhoud") from exc
+    if len(body) > 2_000_000:
+        raise ValueError(f"GitHub-bestand {path} is te groot")
+    return {"body": body, "sha": str(data.get("sha") or ""), "html_url": data.get("html_url")}
+
+
+def _github_latest_branch(repo: str, branch: str) -> dict:
+    version_file = _github_file(repo, "VERSION", branch)
+    version = normalize_space(version_file["body"].decode("utf-8", "replace"))[:80].lstrip("vV")
+    if not version or not re.search(r"\d", version):
+        raise ValueError("VERSION op de GitHub-branch bevat geen geldig versienummer")
+    safe_branch = quote(branch, safe="")
+    return {
+        "repo": repo, "version": version, "tag": branch,
+        "name": f"GitHub branch {branch}", "published_at": None,
+        "html_url": f"https://github.com/{repo}/tree/{quote(branch, safe='/')}",
+        "body": "Automatische branch-update na een GitHub push.", "source_kind": "branch",
+        "asset": {"name": f"{repo.split('/', 1)[1]}-{branch}.zip", "url": f"https://codeload.github.com/{repo}/zip/refs/heads/{safe_branch}", "size": 0, "digest": ""},
+    }
+
+
+def _github_latest_software(repo: str, branch: str, include_branch: bool) -> dict:
+    candidates: list[dict] = []
+    errors: list[str] = []
+    try:
+        release = _github_latest_release(repo)
+        release["source_kind"] = "release"
+        candidates.append(release)
+    except urllib.error.HTTPError as exc:
+        if int(getattr(exc, "code", 0) or 0) != 404:
+            errors.append(f"Release: HTTP {getattr(exc, 'code', '?')}")
+    except Exception as exc:
+        errors.append(f"Release: {exc}")
+    if include_branch:
+        try:
+            candidates.append(_github_latest_branch(repo, branch))
+        except urllib.error.HTTPError as exc:
+            errors.append(f"Branch {branch}: HTTP {getattr(exc, 'code', '?')}")
+        except Exception as exc:
+            errors.append(f"Branch {branch}: {exc}")
+    if not candidates:
+        raise ValueError("Geen bruikbare GitHub Release of branch-update gevonden" + (f" ({'; '.join(errors)})" if errors else ""))
+    candidates.sort(key=lambda row: _version_key(row.get("version", "")), reverse=True)
+    return candidates[0]
+
+
 def _download_github_asset(release: dict) -> Path:
     asset = release.get("asset") or {}
     size = int(asset.get("size") or 0)
     if size and size > MAX_UPDATE_BYTES:
         raise ValueError("GitHub update is groter dan 64 MB")
     url = str(asset.get("url") or "")
+    try:
+        host = urlparse(url).netloc.lower()
+    except Exception:
+        host = ""
+    if host not in {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com", "codeload.github.com"}:
+        raise ValueError("GitHub-update heeft een onverwacht downloadadres")
     UPDATE_DIR.mkdir(parents=True, exist_ok=True)
     target = UPDATE_DIR / f"github-{int(time.time())}-{Path(str(asset.get('name') or 'update.zip')).name}"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/octet-stream"})
@@ -4833,24 +5111,15 @@ def github_check_and_maybe_install(state: "AppState", install: bool = False) -> 
     repo = cfg.get("github_repo") or ""
     if not repo:
         raise ValueError("Stel eerst een openbaar GitHub repository in")
-    _write_update_status(state="checking", source="github", github_repo=repo, message="GitHub Releases controleren", error="")
-    try:
-        release = _github_latest_release(repo)
-    except urllib.error.HTTPError as exc:
-        if int(getattr(exc, "code", 0) or 0) == 404:
-            return _write_update_status(
-                state="no-release", source="github", github_repo=repo, available=False,
-                latest_version="", latest_tag="", asset_name="", error="",
-                message="Repository bereikbaar, maar er is nog geen gepubliceerde GitHub Release."
-            )
-        raise
+    _write_update_status(state="checking", source="github", github_repo=repo, message="GitHub Releases en branch controleren", error="")
+    release = _github_latest_software(repo, cfg.get("github_branch") or DEFAULT_GITHUB_BRANCH, bool(cfg.get("github_branch_updates")))
     newer = _is_newer_version(release["version"], APP_VERSION)
     base = {
-        "source": "github", "github_repo": repo, "latest_version": release["version"],
+        "source": "github", "source_kind": release.get("source_kind", "release"), "github_repo": repo, "latest_version": release["version"],
         "latest_tag": release["tag"], "release_url": release.get("html_url"),
         "release_name": release.get("name"), "release_published_at": release.get("published_at"),
         "asset_name": release["asset"].get("name"), "asset_size": release["asset"].get("size"),
-        "available": newer,
+        "available": newer, "target_version": "", "backup": "", "installed_version": "",
     }
     if not newer:
         return _write_update_status(state="up-to-date", message="Je gebruikt de nieuwste versie", error="", **base)
@@ -4866,7 +5135,7 @@ def github_check_and_maybe_install(state: "AppState", install: bool = False) -> 
         package_root, package_version = _validate_and_extract_update(incoming)
         incoming.unlink(missing_ok=True); incoming = None
         if _version_key(package_version) != _version_key(release["version"]):
-            raise ValueError(f"ZIP-versie {package_version} komt niet overeen met GitHub Release {release['version']}")
+            raise ValueError(f"ZIP-versie {package_version} komt niet overeen met GitHub-versie {release['version']}")
         _write_update_status(state="staged", target_version=package_version, message="GitHub update klaar voor installatie", **base)
         threading.Thread(target=_apply_update_and_exec, args=(package_root, package_version), daemon=True, name="github-self-update").start()
         return update_runtime_status()
@@ -4893,6 +5162,72 @@ def github_update_worker(state: "AppState"):
         hours = max(1, int(cfg.get("github_check_hours") or 6))
         if state.stop_event.wait(hours * 3600):
             return
+
+
+def _write_github_settings_status(**fields) -> dict:
+    with _GITHUB_SETTINGS_STATUS_LOCK:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        current = {}
+        if GITHUB_SETTINGS_STATUS_PATH.exists():
+            try: current = json.loads(GITHUB_SETTINGS_STATUS_PATH.read_text(encoding="utf-8"))
+            except Exception: current = {}
+        current.update(fields); current["updated_at"] = utcnow_iso()
+        tmp = GITHUB_SETTINGS_STATUS_PATH.with_name(f"{GITHUB_SETTINGS_STATUS_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"); tmp.replace(GITHUB_SETTINGS_STATUS_PATH)
+        return current
+
+
+def github_settings_sync_status() -> dict:
+    status = {"state": "idle", "last_sha": "", "changed": False, "error": ""}
+    if GITHUB_SETTINGS_STATUS_PATH.exists():
+        try:
+            loaded = json.loads(GITHUB_SETTINGS_STATUS_PATH.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict): status.update(loaded)
+        except Exception: pass
+    return status
+
+
+def github_pull_settings(state: "AppState", force: bool = False) -> dict:
+    cfg = github_settings_sync_config(state.config); repo = cfg.get("github_repo") or ""
+    if not repo: raise ValueError("Stel eerst een openbaar GitHub repository in")
+    branch, path = cfg["github_settings_branch"], cfg["github_settings_path"]
+    _write_github_settings_status(state="checking", repo=repo, branch=branch, path=path, changed=False, error="", message="Instellingen op GitHub controleren")
+    try:
+        remote = _github_file(repo, path, branch); doc = json.loads(remote["body"].decode("utf-8", "replace"))
+        if not isinstance(doc, dict): raise ValueError("Het instellingenbestand moet een JSON-object bevatten")
+        incoming = doc.get("display_settings", doc.get("settings"))
+        if incoming is None: incoming = {k:v for k,v in doc.items() if k not in {"revision","description","updated_at"}}
+        if not isinstance(incoming, dict) or not incoming: raise ValueError("Geen display_settings of settings in het GitHub-bestand gevonden")
+        previous = github_settings_sync_status(); sha = remote.get("sha") or hashlib.sha256(remote["body"]).hexdigest()
+        if not force and sha and sha == previous.get("last_sha"):
+            return _write_github_settings_status(state="up-to-date", repo=repo, branch=branch, path=path, changed=False, error="", message="GitHub-instellingen zijn al actueel")
+        merged = state.get_display_settings()
+        merged.update(incoming)
+        applied = state.save_display_settings(merged)
+        return _write_github_settings_status(state="applied", repo=repo, branch=branch, path=path, last_sha=sha, revision=doc.get("revision", ""), applied_keys=sorted(applied), changed=True, error="", message=f"{len(applied)} instellingen vanaf GitHub toegepast")
+    except urllib.error.HTTPError as exc:
+        message = f"{path} bestaat niet op branch {branch}" if int(getattr(exc,"code",0) or 0)==404 else f"GitHub HTTP {getattr(exc,'code','?')}"
+        _write_github_settings_status(state="error", repo=repo, branch=branch, path=path, changed=False, error=message, message=message)
+        raise ValueError(message) from exc
+    except Exception as exc:
+        _write_github_settings_status(state="error", repo=repo, branch=branch, path=path, changed=False, error=str(exc), message="Instellingen synchroniseren mislukt")
+        raise
+
+
+def _delayed_github_settings_pull(state: "AppState"):
+    time.sleep(.6)
+    try: github_pull_settings(state, force=True)
+    except Exception: pass
+
+
+def github_settings_worker(state: "AppState"):
+    time.sleep(6)
+    while not state.stop_event.is_set():
+        cfg = github_settings_sync_config(state.config)
+        if cfg.get("github_settings_auto_sync"):
+            try: github_pull_settings(state, force=False)
+            except Exception: pass
+        if state.stop_event.wait(max(1, int(cfg.get("github_settings_minutes") or 5))*60): return
 
 
 def _safe_update_client(ip: str) -> bool:
@@ -5343,6 +5678,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "settings": self.state.save_github_update_config(payload)})
             except ValueError as exc:
                 return self.send_json({"ok": False, "error": str(exc)}, 400)
+        if parsed.path == "/api/github/settings-sync/config":
+            try: return self.send_json({"ok": True, "config": self.state.save_github_settings_sync_config(payload)})
+            except ValueError as exc: return self.send_json({"ok": False, "error": str(exc)}, 400)
+        if parsed.path == "/api/github/settings-sync/pull":
+            try:
+                status = github_pull_settings(self.state, force=True)
+                return self.send_json({"ok": True, "status": status, "settings": self.state.get_display_settings()})
+            except Exception as exc:
+                return self.send_json({"ok": False, "error": str(exc), "status": github_settings_sync_status()}, 500)
         if parsed.path == "/api/update/github/check":
             install = bool(payload.get("install", False))
             try:
@@ -5448,6 +5792,20 @@ class Handler(BaseHTTPRequestHandler):
             force = bool(payload.get("force", True))
             self.state.start_vehicle_sync(force=force)
             return self.send_json({"ok": True, "status": self.state.vehicle_sync_view()})
+        if parsed.path == "/api/vehicle-overrides/upsert":
+            try:
+                return self.send_json(self.state.upsert_vehicle_override(payload))
+            except ValueError as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 400)
+            except Exception as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 500)
+        if parsed.path == "/api/vehicle-overrides/delete":
+            try:
+                return self.send_json(self.state.delete_vehicle_override(payload))
+            except ValueError as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 400)
+            except Exception as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 500)
         if parsed.path == "/api/feed-config":
             try:
                 return self.send_json({"ok": True, "config": self.state.save_feed_config(payload)})
@@ -5484,11 +5842,26 @@ class Handler(BaseHTTPRequestHandler):
                 "duration_ms": bounded_int(payload.get("duration_ms", 60000), 60000, 0, 15 * 60 * 1000),
                 # Every test/speech request is broadcast to the lightkrant client.
                 "speak": bool(requested_speak),
+                "force_audio": bool(payload.get("force_audio", False)),
+                "tune_choice": str(payload.get("tune_choice") or "")[:40] if str(payload.get("tune_choice") or "") in {"none", "builtin:classic", "builtin:double", "builtin:rising", "builtin:urgent", "youtube", "custom"} else "",
             }
-            self.state.broadcast({"type": "test", "payload": test_payload})
+            connected = self.state.subscriber_count()
+            self.state.begin_test_command(test_payload["token"], test_payload["mode"], connected)
+            delivered = self.state.broadcast({"type": "test", "payload": test_payload})
             if test_payload["mode"] == "stop-speech":
                 stop_host_tts()
-            return self.send_json({"ok": True, "test": test_payload, "speech_target": "lightkrant-tab"})
+            if delivered < 1:
+                with self.state.test_results_lock:
+                    row = self.state.test_results.get(test_payload["token"])
+                    if row:
+                        row.update({"status": "error", "ok": False, "detail": "Geen lichtkrant-tabblad verbonden", "updated_at": utcnow_iso()})
+                return self.send_json({"ok": False, "error": "Geen lichtkrant-tabblad verbonden. Start of open eerst de monitor.", "test": test_payload}, 409)
+            return self.send_json({"ok": True, "test": test_payload, "speech_target": "lightkrant-tab", "connected_clients": delivered})
+        if parsed.path == "/api/test-result":
+            try:
+                return self.send_json({"ok": True, "result": self.state.finish_test_command(payload)})
+            except ValueError as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 404)
         if parsed.path == "/api/system/restart":
             self.send_json({"ok": True, "message": "Backend herstart"})
             schedule_self_restart()
@@ -5535,6 +5908,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(tts_runtime_status())
         if parsed.path == "/api/update/github/settings":
             return self.send_json({"ok": True, "settings": self.state.github_update_view()})
+        if parsed.path == "/api/github/settings-sync/config":
+            return self.send_json({"ok": True, "config": self.state.github_settings_sync_view()})
+        if parsed.path == "/api/github/settings-sync/status":
+            return self.send_json({"ok": True, "status": github_settings_sync_status()})
         if parsed.path == "/api/update/status":
             allowed = _safe_update_client(self.client_address[0] if self.client_address else "")
             data = update_runtime_status()
@@ -5556,6 +5933,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(self.state.vehicle_catalog_payload())
         if parsed.path == "/api/vehicles/status":
             return self.send_json({"ok": True, "status": self.state.vehicle_sync_view()})
+        if parsed.path == "/api/vehicle-overrides":
+            return self.send_json({"ok": True, "overrides": self.state.vehicle_overrides_view()})
+        if parsed.path == "/api/test-status":
+            token = normalize_space(str(qs.get("token", [""])[0]))[:120]
+            row = self.state.test_command_view(token) if token else None
+            if not row:
+                return self.send_json({"ok": False, "error": "Onbekende of verlopen test"}, 404)
+            return self.send_json({"ok": True, "result": row})
         if parsed.path == "/api/feed-catalog":
             rows=[]
             for slug, meta in REGION_CATALOG.items():
@@ -5764,6 +6149,12 @@ def load_config() -> dict:
         "github_auto_check": True,
         "github_auto_install": True,
         "github_check_hours": 6,
+        "github_branch_updates": True,
+        "github_branch": DEFAULT_GITHUB_BRANCH,
+        "github_settings_auto_sync": False,
+        "github_settings_path": DEFAULT_GITHUB_SETTINGS_PATH,
+        "github_settings_branch": DEFAULT_GITHUB_BRANCH,
+        "github_settings_minutes": 5,
     }
     if CONFIG_PATH.exists():
         try:
@@ -5785,6 +6176,7 @@ def load_config() -> dict:
     default["watchdog_stale_seconds"] = bounded_int(default.get("watchdog_stale_seconds"), 600, 180, 86_400)
     default["http_log"] = default.get("http_log") is True
     default.update(github_update_config(default))
+    default.update(github_settings_sync_config(default))
 
     raw_urls = default.get("feed_urls")
     if not isinstance(raw_urls, list):
@@ -5876,6 +6268,7 @@ def main():
     # labels are refreshed quietly in the background.
     state.start_vehicle_sync(force=False)
     threading.Thread(target=github_update_worker, args=(state,), daemon=True, name="github-update-worker").start()
+    threading.Thread(target=github_settings_worker, args=(state,), daemon=True, name="github-settings-worker").start()
 
     print(f"P2000 Monitor {APP_VERSION} running on http://{config['bind']}:{config['port']}")
     print(f"Lichtkrant: http://localhost:{config['port']}/")

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>P2000 Monitor</title>
-  <link rel="stylesheet" href="/lightkrant.css?v=4200">
+  <link rel="stylesheet" href="/lightkrant.css?v=4230">
   <link rel="manifest" href="/manifest.webmanifest">
 </head>
 <body>
@@ -35,7 +35,7 @@
     </aside>
     <div class="hover-controls" aria-label="bediening">
       <button id="lastBtn" title="Laatste melding nogmaals (L)">↺</button>
-      <a href="/control" title="Instellingen">⚙</a>
+      <a id="settingsBtn" class="settings-control" href="/control.html" title="Instellingen openen (I)" aria-label="Instellingen openen"><span aria-hidden="true">⚙</span><b>Instellingen</b></a>
       <button id="fullscreenBtn" title="Volledig scherm (F)">⛶</button>
     </div>
   </main>
@@ -45,7 +45,7 @@
       const r=await fetch('/api/setup',{cache:'no-store'}),d=await r.json();
       if(!d?.setup?.setup_complete){location.replace('/setup.html');return;}
     }catch(e){console.warn('Setupcontrole mislukt; monitor probeert normaal te starten.',e)}
-    const script=document.createElement('script');script.src='/app.js?v=4200';script.defer=true;document.body.appendChild(script);
+    const script=document.createElement('script');script.src='/app.js?v=4230';script.defer=true;document.body.appendChild(script);
   })();
 </script>
 </body>
