@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.12';
+const CLIENT_VERSION='4.4.13';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -130,7 +130,7 @@ function drawBackgroundPhoto(c,w,h){if(!backgroundPhotoWanted()||!backgroundPhot
 function drawMonitorBackground(c,w,h){c.fillStyle=monitorBackgroundColor();c.fillRect(0,0,w,h);if(backgroundPhotoWanted()){syncBackgroundPhoto();drawBackgroundPhoto(c,w,h)}}
 function mapEnabled(){return state.settings.mapEnabled!==false}
 function mapCanRender(){return mapEnabled()&&Math.max(Number(globalThis.innerWidth)||0,document.documentElement?.clientWidth||0)>920}
-function mapPanelElements(){return {panel:$('#incidentMapPanel'),frame:$('#incidentMapFrame'),title:$('#incidentMapTitle'),meta:$('#incidentMapMeta'),loading:$('#incidentMapLoading')}}
+function mapPanelElements(){return {panel:$('#incidentMapPanel'),frame:$('#incidentMapFrame'),title:$('#incidentMapTitle'),city:$('#incidentMapCity'),meta:$('#incidentMapMeta'),loading:$('#incidentMapLoading'),route:$('#incidentMapRoute'),routeFrom:$('#incidentMapRouteFrom'),routeDistance:$('#incidentMapRouteDistance'),routeLink:$('#incidentMapRouteLink')}}
 function hideIncidentMap(){
   const els=mapPanelElements(); if(!els.panel)return;
   els.panel.hidden=true; els.panel.classList.remove('visible');
@@ -158,7 +158,9 @@ function showMapLoading(q,message='Kaart laden…'){
   const firstShow=!state.mapVisible||state.currentMapKey!==q.key;
   els.panel.hidden=false;els.panel.classList.add('visible');
   els.title.textContent=q.location||q.city||'Locatie';
-  els.meta.textContent=q.city||'';
+  if(els.city)els.city.textContent=q.city||'';
+  els.meta.textContent='Incidentlocatie bepalen…';
+  if(els.route)els.route.hidden=true;
   if(els.loading){els.loading.hidden=false;els.loading.textContent=message;els.loading.classList.remove('error')}
   if(els.frame){els.frame.hidden=true}
   state.mapVisible=true;state.currentMapKey=q.key;
@@ -174,11 +176,33 @@ function showMapError(q,message){
   if(els.loading){els.loading.hidden=false;els.loading.classList.add('error');els.loading.textContent='Kaart niet beschikbaar'}
   els.meta.textContent=`${q.city||''}${message?` • ${String(message).slice(0,110)}`:''}`;
 }
+function routeHomeQuery(){
+  const label=String(state.setupProfile?.standplaats||'').trim(),city=String(state.setupProfile?.standplaats_city||'').trim();
+  if(!label&&!city)return null;
+  const same=label&&city&&normalizeLocationKey(label)===normalizeLocationKey(city);
+  return {label:label||city,city:city||label,location:same?'':label,key:`home:${normalizeLocationKey(city||label)}|${normalizeLocationKey(same?'':label)}`};
+}
+function crowDistanceKm(a,b){
+  const toRad=x=>Number(x)*Math.PI/180,lat1=toRad(a?.lat),lat2=toRad(b?.lat),dLat=lat2-lat1,dLon=toRad(Number(b?.lon)-Number(a?.lon));
+  const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+  return 6371*2*Math.atan2(Math.sqrt(Math.max(0,h)),Math.sqrt(Math.max(0,1-h)));
+}
+function routeMapData(map,home){
+  if(!map||!home||!Number.isFinite(Number(home.lat))||!Number.isFinite(Number(home.lon)))return map;
+  const distance=crowDistanceKm(home,map),label=routeHomeQuery()?.label||home.display_name||'standplaats';
+  const navigationUrl=`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(`${home.lat},${home.lon}`)}&destination=${encodeURIComponent(`${map.lat},${map.lon}`)}&travelmode=driving`;
+  let embedUrl=map.embed_url;
+  try{const u=new URL(embedUrl,location.origin);u.searchParams.set('originLat',String(home.lat));u.searchParams.set('originLon',String(home.lon));u.searchParams.set('originLabel',label);embedUrl=`${u.pathname}${u.search}`}catch{}
+  return {...map,embed_url:embedUrl,route:{origin_label:label,origin_lat:Number(home.lat),origin_lon:Number(home.lon),distance_km:distance,navigation_url:navigationUrl}};
+}
 function applyMapData(q,map){
   const els=mapPanelElements(); if(!els.panel||!map||!map.embed_url)return;
   const wasVisible=state.mapVisible,changed=state.currentMapKey!==q.key||state.currentMapUrl!==map.embed_url;
   els.title.textContent=q.location||map.display_name||q.city||'Locatie';
-  els.meta.textContent=`${q.city||''}${map.cached?' • cache':''}${map.source?' • '+map.source:''}`.replace(/^ • /,'');
+  if(els.city)els.city.textContent=q.city||'';
+  els.meta.textContent='Marker: incident • blauwe stip: standplaats';
+  const route=map.route||null;
+  if(els.route){els.route.hidden=!route;if(route){if(els.routeFrom)els.routeFrom.textContent=`Vanaf ${route.origin_label}`;if(els.routeDistance)els.routeDistance.textContent=`± ${route.distance_km<10?route.distance_km.toFixed(1):Math.round(route.distance_km)} km hemelsbreed`;if(els.routeLink){els.routeLink.href=route.navigation_url;els.routeLink.hidden=!route.navigation_url;}}}
   if(els.loading){els.loading.hidden=true;els.loading.classList.remove('error')}
   if(els.frame){els.frame.hidden=false;if(els.frame.dataset.src!==map.embed_url){els.frame.src=map.embed_url; els.frame.dataset.src=map.embed_url;}}
   els.panel.hidden=false; els.panel.classList.add('visible');
@@ -196,8 +220,12 @@ async function syncIncidentMap(){
   showMapLoading(q);
   state.mapFetchKey=q.key;
   try{
-    const d=await json(`/api/geocode?city=${encodeURIComponent(q.city)}&location=${encodeURIComponent(q.location)}&zoom=${encodeURIComponent(q.zoom)}`);
-    if(d?.map){state.mapFailureCache.delete(q.key);state.mapCache.set(q.key,d.map);if(state.mapCache.size>250){const first=state.mapCache.keys().next().value;if(first)state.mapCache.delete(first)} if((currentMapQuery()||{}).key===q.key)applyMapData(q,d.map);}
+    const homeQ=routeHomeQuery(),homeCached=homeQ?state.mapCache.get(homeQ.key):null;
+    const incidentPromise=json(`/api/geocode?city=${encodeURIComponent(q.city)}&location=${encodeURIComponent(q.location)}&zoom=${encodeURIComponent(q.zoom)}`);
+    const homePromise=!homeQ?Promise.resolve(null):homeCached?Promise.resolve({map:homeCached}):json(`/api/geocode?city=${encodeURIComponent(homeQ.city)}&location=${encodeURIComponent(homeQ.location)}&zoom=14`).catch(()=>null);
+    const [d,homeData]=await Promise.all([incidentPromise,homePromise]);
+    if(homeQ&&homeData?.map&&!homeCached)state.mapCache.set(homeQ.key,homeData.map);
+    if(d?.map){const map=routeMapData(d.map,homeData?.map||homeCached);state.mapFailureCache.delete(q.key);state.mapCache.set(q.key,map);if(state.mapCache.size>250){const first=state.mapCache.keys().next().value;if(first)state.mapCache.delete(first)} if((currentMapQuery()||{}).key===q.key)applyMapData(q,map);}
     else{rememberMapFailure(q.key,'geen kaartresultaat');if((currentMapQuery()||{}).key===q.key)showMapError(q,'geen kaartresultaat');}
   }catch(e){
     console.warn('Locatiekaart laden mislukt',e);
@@ -239,6 +267,19 @@ function cleanedCore(m){const title=cleanCandidate(m.title,m);const summary=clea
 function rawScore(value){const s=norm(value||'');if(!s)return -999;let score=0;if(/^(?:P\s*[123]|A[012]|B[12])\b/.test(s))score+=8;if(/\b(?:B[A-Z]{2}-\d+|DIA|RIT\s*:|DIRECTE INZET|BR\s|OMS\s|MELDKAMER|OC\s|GRIP\s*[1-5])\b/.test(s))score+=5;if(/\b(?:\d{6,8}|\d{5,6})\b/.test(s))score+=3;if(/\b(?:TS|HV|HW|AL|RV|OVD|HOVD|AGS|VEBS|WTS?|WTH|MMT|AMBU?)?[- ]?\d{5,6}\b/.test(s))score+=2;if(/\b(?:MET SPOED NAAR|GEALARMEERD VOOR INCIDENT|ONGEVAL MET LETSEL OP|BRAND OP)\b/.test(s))score-=7;if(/^(?:AMBULANCE|BRANDWEER|TRAUMAHELI) MET SPOED/.test(s))score-=8;return score}
 function rawDisplayText(v){return String(v??'').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim()}
 function originalMessage(m){const title=rawDisplayText(m?.title||''),summary=rawDisplayText(m?.summary||''),titleNorm=norm(title),summaryNorm=norm(summary);if(/^(?:P\s*[1-5]|PRIO\s*[1-5]|A[012]|B[12])\b/i.test(title))return title;const ts=rawScore(titleNorm),ss=rawScore(summaryNorm);if(ss>ts)return summary;if(ts>ss)return title;if(summary&&summary!==title&&summary.length>title.length*1.25)return summary;return title||summary||rawDisplayText(m?.city||'MELDING')}
+function displayMessageText(m){
+  let s=rawDisplayText(originalMessage(m));
+  s=s.replace(/https?:\/\/\S+/gi,' ')
+    .replace(/\b(?:RIT|BON|RUN|MELDING|INCIDENT)(?:NUMMER|NR)?\s*:?\s*[A-Z0-9-]{4,}\b/gi,' ')
+    .replace(/\(\s*DIA\s*:\s*(?:JA|NEE)\s*\)/gi,' ')
+    .replace(/\bDIA\s*:?\s*(?:JA|NEE)?\b/gi,' ')
+    .replace(/\b\d{4}\s*[A-Z]{2}\b/g,' ')
+    .replace(/(?<!\d)\d{6,8}(?!\d)/g,' ');
+  s=stripCallsignsForSpeech(s,m)
+    .replace(/\s*[-|•;,]+\s*(?:BRON|RSS|P2000)\s*:?\s*$/i,' ')
+    .replace(/\s+([,.;:])/g,'$1').replace(/\s+/g,' ').trim();
+  return s||cleanedCore(m)||String(m?.city||'Melding');
+}
 
 // De meegeleverde JSON is slechts een optionele seed-cache. Onbekende landelijke
 // brandweerroepnummers blijven generiek leesbaar en worden in Diagnose verzameld,
@@ -411,7 +452,7 @@ function detectOvdHeader(hay){
   return '';
 }
 function priorityRank(p){return {P3:1,P2:2,P1:3,B2:1,B1:2,A2:2,A1:3,A0:4}[norm(p)]||0}
-function bodyFor(m){return originalMessage(m)}
+function bodyFor(m){return displayMessageText(m)}
 
 function escapeRegex(v){return String(v??'').replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}
 function speechScale(m){
@@ -627,12 +668,14 @@ function nightSpeechFactor(now=new Date()){
 }
 function speechVolumeForTime(m,baseVolume,now=new Date()){
   const master=Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)))/100;
-  const base=Math.round(Math.max(0,Math.min(100,Number(baseVolume)||0))*master);
-  if(nightSpeechExempt(m))return base;
+  const base=Math.max(0,Math.min(100,Number.isFinite(Number(baseVolume))?Number(baseVolume):0));
+  if(master<=0)return 0;
+  if(nightSpeechExempt(m))return Math.round(base*master);
   const factor=nightSpeechFactor(now);
-  if(factor>=.999)return base;
+  if(factor>=.999)return Math.round(base*master);
   // Keep a normal low-priority dispatch audible even at the quietest point.
-  return Math.max(38,Math.min(base,Math.round(base*factor)));
+  const nightAdjusted=Math.max(38,Math.min(base,Math.round(base*factor)));
+  return Math.round(nightAdjusted*master);
 }
 function speechDeviceVolumeForTime(){
   // Laat de globale OS-volumemixer ongemoeid. Alleen het volume van het
@@ -664,7 +707,7 @@ function priorityModeEligible(m){
   return /\b(?:MIDDEL|GROTE|ZEER\s+GROTE)\s+(?:BR|BRAND)\b|\bGRIP\s*[1-5]\b|SCHIET|STEEK|BR\s+(?:NATUUR|BOS|INDUSTRIE)|ONGEVAL\s+WEGVERVOER|ASS\.?\s*POL/i.test(raw);
 }
 function shouldSpeakMessage(m,now=new Date()){
-  if(!state.settings.speechEnabled||!speechCity(m))return false;
+  if(!state.settings.speechEnabled||Number(state.settings.masterVolume??100)<=0||!speechCity(m))return false;
   const mode=String(state.settings.speechMode||'normal').toLowerCase();
   if(mode==='mute')return false;
   if(mode==='priority'&&!priorityModeEligible(m))return false;
@@ -872,7 +915,7 @@ function dispatchTuneChoice(service='',urgent=false,force=false){
   if(choice==='inherit')choice=String(state.settings.dispatchTuneDefault||'none');
   return choice||'none';
 }
-function dispatchTuneVolume(jobVolume=100){const bv=Number(state.settings.dispatchTuneVolume??80),sv=Number(jobVolume),mv=Number(state.settings.masterVolume??100);const base=Math.max(0,Math.min(100,Number.isFinite(bv)?bv:80));const speech=Math.max(0,Math.min(100,Number.isFinite(sv)?sv:100));const master=Math.max(0,Math.min(100,Number.isFinite(mv)?mv:100));return Math.round(base*(speech/100)*(master/100))}
+function dispatchTuneVolume(jobVolume=100){const bv=Number(state.settings.dispatchTuneVolume??80),sv=Number(jobVolume);const base=Math.max(0,Math.min(100,Number.isFinite(bv)?bv:80));const speech=Math.max(0,Math.min(100,Number.isFinite(sv)?sv:100));return Math.round(base*(speech/100))}
 function stopCurrentTune(){const stop=state.currentTuneStop;state.currentTuneStop=null;if(stop){try{stop()}catch{}}}
 async function playBuiltinDispatchTune(choice,volume=80){
   const AC=globalThis.AudioContext||globalThis.webkitAudioContext;if(!AC)return false;
@@ -935,7 +978,9 @@ async function browserAttentionCue(service='',urgent=false,volume=100){
     ctx=new AC();if(ctx.state==='suspended')await ctx.resume();
     const serviceKey=String(service||'').toLowerCase();
     const tones=urgent?[[950,115],[1150,115],[1350,165]]:serviceKey==='ambulance'?[[880,115],[1050,145]]:(serviceKey==='politie'||serviceKey==='lifeliner')?[[1000,105],[1250,145]]:[[820,115],[1030,145]];
-    const gain=ctx.createGain();gain.gain.value=Math.max(.015,Math.min(.18,(Number(volume)||72)/100*.13));gain.connect(ctx.destination);
+    const numericVolume=Number(volume),safeVolume=Math.max(0,Math.min(100,Number.isFinite(numericVolume)?numericVolume:72));
+    if(safeVolume<=0)return false;
+    const gain=ctx.createGain();gain.gain.value=Math.min(.18,safeVolume/100*.13);gain.connect(ctx.destination);
     let t=ctx.currentTime+.02;
     for(const [freq,dur] of tones){const o=ctx.createOscillator();o.frequency.value=freq;o.type='sine';o.connect(gain);o.start(t);o.stop(t+dur/1000);t+=dur/1000+.045}
     await waitMs(Math.max(120,Math.round((t-ctx.currentTime)*1000)+30));
@@ -967,7 +1012,8 @@ async function browserSpeakPromise(text,volume=100){
     let settled=false,watchdog=null;
     const finish=(ok,error=null)=>{if(settled)return;settled=true;if(watchdog)clearTimeout(watchdog);ok?resolve({mode:'browser-voice',completed:true}):reject(error||new Error('browserstem gestopt'))};
     try{
-      const u=new Utterance(text);u.lang='nl-NL';u.rate=Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96));u.pitch=Math.max(.75,Math.min(1.3,Number(state.settings.speechPitch)||1));u.volume=Math.max(0,Math.min(1,Number(volume||100)/100));
+      const numericVolume=Number(volume),safeVolume=Math.max(0,Math.min(100,Number.isFinite(numericVolume)?numericVolume:100));
+      const u=new Utterance(text);u.lang='nl-NL';u.rate=Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96));u.pitch=Math.max(.75,Math.min(1.3,Number(state.settings.speechPitch)||1));u.volume=safeVolume/100;
       u.voice=voice;
       u.onstart=()=>{state.audioStats.unlocked=true};u.onend=()=>finish(true);u.onerror=e=>finish(false,new Error(`browserstem: ${e?.error||'afspeelfout'}`));
       synth.cancel();synth.resume?.();synth.speak(u);
@@ -988,7 +1034,8 @@ async function fetchTtsBlob(text,timeoutMs=16000,cueService='',cueUrgent=false){
   finally{if(timer)clearTimeout(timer)}
 }
 async function tryPlayMediaElement(audio,url,entry,volume,rate){
-  audio.preload='auto';audio.volume=Math.max(0,Math.min(1,(Number(volume)||100)/100));audio.playbackRate=rate;
+  const numericVolume=Number(volume),safeVolume=Math.max(0,Math.min(100,Number.isFinite(numericVolume)?numericVolume:100));
+  audio.preload='auto';audio.volume=safeVolume/100;entry.outputVolume=safeVolume;entry.masterAtStart=Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)));audio.playbackRate=rate;
   try{audio.preservesPitch=true;audio.mozPreservesPitch=true;audio.webkitPreservesPitch=true}catch{}
   audio.src=url;audio.load();
   return await new Promise((resolve,reject)=>{
@@ -1055,7 +1102,9 @@ function stopSpeechPlayback({clearQueue=false}={}){
 }
 function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',key='',groupKey='',cueService='',cueUrgent=false,forceAudio=false,skipTune=false,onResult=null}={}){
   text=String(text||'').trim();if(!text)return false;
-  const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:Math.max(0,Math.min(100,Number(volume)||72)),deviceVolume:deviceVolume===null?null:Math.max(5,Math.min(100,Number(deviceVolume)||38)),kind,key,groupKey,cueService,cueUrgent:!!cueUrgent,forceAudio:!!forceAudio,skipTune:!!skipTune,onResult:typeof onResult==='function'?onResult:null,queuedAt:Date.now(),retries:0};
+  const numericVolume=Number(volume),safeVolume=Math.max(0,Math.min(100,Number.isFinite(numericVolume)?numericVolume:72));
+  const numericDeviceVolume=Number(deviceVolume),safeDeviceVolume=deviceVolume===null?null:Math.max(5,Math.min(100,Number.isFinite(numericDeviceVolume)?numericDeviceVolume:38));
+  const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:safeVolume,deviceVolume:safeDeviceVolume,kind,key,groupKey,cueService,cueUrgent:!!cueUrgent,forceAudio:!!forceAudio,skipTune:!!skipTune,onResult:typeof onResult==='function'?onResult:null,queuedAt:Date.now(),retries:0};
   if(key&&(state.speechCurrent?.key===key||state.speechQueue.some(x=>x.key===key)))return false;
   if(groupKey){state.speechQueue=state.speechQueue.filter(x=>!(x.groupKey===groupKey&&job.priority>=x.priority));}
   const cur=state.speechCurrent;
@@ -1213,9 +1262,9 @@ function drawActiveSolid(w,h){
   // By default the lightkrant shows the actual pager row prominently. Parsed
   // fields remain underneath for readability, but the source message is not
   // rewritten into a synthetic headline.
-  const rawDisplayMode=String(state.settings.messageDisplayMode||'raw')!=='parsed',rawOriginal=rawDisplayText(originalMessage(m));
+  const rawDisplayMode=String(state.settings.messageDisplayMode||'raw')!=='parsed',rawOriginal=displayMessageText(m);
   if(rawDisplayMode){
-    const labelY=h*.205;ctx.textAlign='left';ctx.font=`900 ${Math.max(16,Math.min(25,w*.013))}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentStrong;ctx.fillText('ORIGINELE P2000-MELDING',left,labelY);
+    const labelY=h*.205;ctx.textAlign='left';ctx.font=`900 ${Math.max(16,Math.min(25,w*.013))}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentStrong;ctx.fillText('P2000-MELDING',left,labelY);
     let rawSize=Math.max(28,Math.min(47,w*.0245)),lines=[];for(;rawSize>=27;rawSize-=2){const font=`780 ${rawSize}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;lines=canvasWrappedLines(rawOriginal,contentW,3,font);if(lines.length<=2||rawSize<=31){ctx.font=font;break}}
     const startY=h*.285,lh=rawSize*1.28;ctx.fillStyle='#f7fbfc';ctx.shadowColor='rgba(0,0,0,.72)';ctx.shadowBlur=8;lines.forEach((line,i)=>ctx.fillText(line,left,startY+i*lh));ctx.shadowBlur=0;
     const parsed=[String(info?.type||'P2000-melding'),loc.location,loc.city].filter(Boolean).join('  •  ');ctx.font=`750 ${Math.max(16,Math.min(25,w*.013))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(207,225,232,.68)';ctx.fillText(parsed,left,h*.505);
@@ -1245,7 +1294,7 @@ function drawActiveSolid(w,h){
   // De bronregel is alleen nog een compacte referentie. De incidentsoort en
   // locatie staan hierboven al groot; dezelfde tekst nogmaals pagineren was
   // vooral visuele ruis en kon op 1080p tegen de footer aanlopen.
-  const raw=String(originalMessage(m)||'').trim();
+  const raw=String(displayMessageText(m)||'').trim();
   if(raw&&!rawDisplayMode){
     const rawY=Math.min(h*.855,Math.max(afterUnits+h*.025,h*.72));
     ctx.font=`650 ${Math.max(13,Math.min(18,w*.0092))}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='rgba(183,201,209,.46)';
@@ -1448,15 +1497,19 @@ function activateMessage(m,{force=false,durationMs=null,appendLive=true}={}){
   else if(!addActiveMessage(m,{showNow:true}))return false;
   rememberMessage(m);syncDisplayPower();render();return true
 }
-function considerLatestAtStartup(){
-  const recent=filteredMessages().filter(m=>isFresh(m)&&messageAgeMs(m)<=visibleMs()).sort((a,b)=>-compareMessageNewest(a,b));
-  if(!recent.length){const latest=latestMessage();if(latest&&isFresh(latest))activateMessage(latest,{force:true});return}
-  recent.forEach((m,i)=>{if(!m.__monitorArrivalSeq)Object.defineProperty(m,'__monitorArrivalSeq',{value:++state.arrivalSeq,writable:true,configurable:true,enumerable:false});addActiveMessage(m,{showNow:i===recent.length-1});rememberMessage(m)});
-  pruneExpiredActiveMessages();state.lastMessageSwitch=Date.now();syncDisplayPower();render();
+function isNewSinceMonitorStart(m){const at=ingestedMs(m),bootSecond=Math.floor(Number(state.bootAt||0)/1000)*1000;return at>0&&at>=bootSecond}
+function finishStartupBaseline(){
+  // Database rows are history, even when their P2000 timestamp is only seconds
+  // old. Seed duplicate/incident memory, but never show or speak them after a
+  // browser, backend or machine restart. Only rows ingested after this page
+  // started may enter through processNew().
+  const ordered=[...(state.messages||[])].sort((a,b)=>-compareMessageNewest(a,b));
+  ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m)});
+  clearActiveMessages();state.started=true;pruneKnownIds();syncDisplayPower();render();
 }
 function replayLast(){const m=state.lastDisplayedMessage||latestMessage();if(m)activateMessage(m,{force:true,durationMs:REPLAY_MS,appendLive:false})}
 function shouldDisplayIncoming(m){return !!m&&filterMessage(m)&&isFresh(m)&&isLiveMessageActive(m)}
-function processNew(m){if(!m||state.knownIds.has(m.id))return;state.knownIds.add(m.id);pruneKnownIds();if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)}
+function processNew(m){if(!m||state.knownIds.has(m.id))return;state.knownIds.add(m.id);pruneKnownIds();if(!isNewSinceMonitorStart(m)){rememberMessage(m);return}if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)}
 
 function runtimeIdentity(status){return status&&status.server_instance?`${status.version||''}:${status.server_instance}`:''}
 function runtimeReloadReason(status,currentIdentity=null){
@@ -1525,14 +1578,16 @@ async function reportClientHealth(){
 function watchMonitorRuntime(){if(monitorRuntimePromise)return monitorRuntimePromise;monitorRuntimePromise=(async()=>{try{const d=await json(`/api/runtime?_=${Date.now()}`,{timeoutMs:5000});monitorRuntimeFailures=0;observeMonitorRuntime(d);return true}catch{monitorRuntimeFailures++;if(monitorRuntimeFailures<8)scheduleRuntimeWatch(Math.min(5000,750*monitorRuntimeFailures));return false}})().finally(()=>{monitorRuntimePromise=null});return monitorRuntimePromise}
 let sharedSettingsSignature='';
 function settingsSignature(settings){try{return JSON.stringify(settings||{})}catch{return''}}
-function applySharedSettings(settings){const incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);merged.speechEngine='online';merged.speechMode=['normal','priority','mute'].includes(String(merged.speechMode))?String(merged.speechMode):'normal';merged.masterVolume=Math.max(0,Math.min(100,Number(merged.masterVolume??100)));sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&merged.speechMode!=='mute'&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false||merged.speechMode==='mute'){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
+function syncLiveAudioVolume(previousMaster,nextMaster){const entry=state.currentSpeechAudio,audio=entry?.audio;if(!audio)return;const old=Math.max(0,Math.min(100,Number(previousMaster??100))),next=Math.max(0,Math.min(100,Number(nextMaster??100)));if(old>0&&Number.isFinite(Number(entry.outputVolume))){entry.outputVolume=Math.max(0,Math.min(100,Number(entry.outputVolume)*next/old));entry.masterAtStart=next;try{audio.volume=entry.outputVolume/100}catch{}}else if(next<=0){try{audio.volume=0}catch{}}}
+function renderMonitorAudioControls(){const value=Math.round(Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)))),mode=String(state.settings.speechMode||'normal');const label=$('#monitorVolumeLabel'),mute=$('#monitorMuteBtn');if(label)label.textContent=`${value}%`;if(mute){mute.textContent=mode==='mute'||value===0?'🔇':'🔊';mute.title=mode==='mute'?'Geluid inschakelen (M)':'Geluid dempen (M)';mute.classList.toggle('active',mode==='mute'||value===0)}}
+function applySharedSettings(settings){const previousMaster=Number(state.settings?.masterVolume??100),incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);merged.speechEngine='online';merged.speechMode=['normal','priority','mute'].includes(String(merged.speechMode))?String(merged.speechMode):'normal';merged.masterVolume=Math.max(0,Math.min(100,Number(merged.masterVolume??100)));sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;syncLiveAudioVolume(previousMaster,merged.masterVolume);renderMonitorAudioControls();syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&merged.speechMode!=='mute'&&merged.masterVolume>0&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false||merged.speechMode==='mute'||merged.masterVolume<=0){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
 async function loadSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};if(Object.keys(remote).length){applySharedSettings(remote);return}const local=loadSettings();applySharedSettings(local);const saved=await json('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(local)});applySharedSettings(saved.settings||local)}catch{state.settings=loadSettings()}}
 async function pollSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};const sig=settingsSignature(remote);if(Object.keys(remote).length&&sig!==sharedSettingsSignature)applySharedSettings(remote)}catch{}}
 async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.displaySleep)return;if(!force&&state.lastPowerWanted===wanted)return;state.lastPowerWanted=wanted;try{const r=await json('/api/display/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:wanted})});if(!r?.ok)state.lastPowerWanted=null;else if(r?.held){const retry=Math.max(1,Number(r.retry_after)||5)*1000;setTimeout(()=>{if(state.lastPowerWanted===wanted){state.lastPowerWanted=null;syncDisplayPower()}},retry+250)}}catch{state.lastPowerWanted=null}}
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
-function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){const ordered=[...state.messages].sort((a,b)=>-compareMessageNewest(a,b));ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m)});state.started=true;considerLatestAtStartup()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds();freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(m=>{if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)})}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
+function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){finishStartupBaseline()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(processNew);state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds()}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
 function incoming(m){if(!m||state.knownIds.has(m.id))return;state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
-function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'){handleTest(p.payload||{})}else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
+function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'){handleTest(p.payload||{})}else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
 function tick(){
   const now=Date.now();
@@ -1594,6 +1649,11 @@ function handleTest(payload){
 }
 let controlsTimer=null;function showControls(){const room=$('#room');room.classList.add('show-controls');clearTimeout(controlsTimer);controlsTimer=setTimeout(()=>room.classList.remove('show-controls'),2200)}
 $('#fullscreenBtn').addEventListener('click',fullscreen);$('#lastBtn').addEventListener('click',replayLast);
+let monitorVolumeSerial=0,monitorPreviousVolume=50;
+async function monitorQuickAction(action,payload={}){const serial=++monitorVolumeSerial;try{const d=await json('/api/quick-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload}),timeoutMs:8000});if(serial===monitorVolumeSerial&&d?.settings)applySharedSettings(d.settings);return d}catch(e){console.warn('Geluidsbediening mislukt',e);return null}}
+async function adjustMonitorVolume(delta){const current=Math.round(Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)))),next=Math.max(0,Math.min(100,current+Number(delta||0)));if(next>0)monitorPreviousVolume=next;if(String(state.settings.speechMode||'normal')==='mute'&&next>0)await monitorQuickAction('speech-normal');await monitorQuickAction('volume',{value:next})}
+async function toggleMonitorMute(){const mode=String(state.settings.speechMode||'normal'),volume=Math.round(Math.max(0,Math.min(100,Number(state.settings.masterVolume??100))));if(mode==='mute'||volume<=0){const restored=volume>0?volume:Math.max(10,monitorPreviousVolume);if(volume<=0)await monitorQuickAction('volume',{value:restored});await monitorQuickAction('speech-normal')}else{monitorPreviousVolume=volume;await monitorQuickAction('speech-mute')}}
+$('#volumeDownBtn')?.addEventListener('click',()=>adjustMonitorVolume(-10));$('#monitorMuteBtn')?.addEventListener('click',toggleMonitorMute);$('#volumeUpBtn')?.addEventListener('click',()=>adjustMonitorVolume(10));renderMonitorAudioControls();
 async function unlockTabAudio(){
   try{globalThis.speechSynthesis?.resume?.()}catch{}
   if(state.audioBus.armed){state.audioStats.unlocked=true;return true}
@@ -1601,7 +1661,7 @@ async function unlockTabAudio(){
 }
 const audioUnlockBtn=$('#audioUnlockBtn');if(audioUnlockBtn)audioUnlockBtn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();unlockTabAudio()});
 document.addEventListener('mousemove',showControls,{passive:true});document.addEventListener('pointerdown',()=>{if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio()},{passive:true});document.addEventListener('touchstart',e=>{showControls();if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio()},{passive:true});
-document.addEventListener('keydown',e=>{if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio();showControls();if(e.key.toLowerCase()==='f')fullscreen();if(e.key.toLowerCase()==='l')replayLast();if(e.key.toLowerCase()==='i')location.assign('/control.html')});
+document.addEventListener('keydown',e=>{if(state.audioBus.locked||!state.audioBus.armed)unlockTabAudio();showControls();if(e.key.toLowerCase()==='f')fullscreen();if(e.key.toLowerCase()==='l')replayLast();if(e.key.toLowerCase()==='m')toggleMonitorMute();if(e.key.toLowerCase()==='i')location.assign('/control.html')});
 window.addEventListener('resize',resizeCanvas);
 window.addEventListener('storage',e=>{if(e.key==='p2000MonitorSettingsV4'){state.settings=loadSettings();syncBackgroundPhoto();invalidateIdleStatic();syncDisplayPower();render()}if(e.key==='p2000TestMessage'&&e.newValue){try{handleTest(JSON.parse(e.newValue))}catch{handleTest({})}}});
 try{const bc=new BroadcastChannel('p2000-monitor');bc.onmessage=e=>{if(e.data?.type==='test')handleTest(e.data)}}catch{}

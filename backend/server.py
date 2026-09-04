@@ -111,7 +111,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.4.12"
+APP_VERSION = "4.4.13"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()

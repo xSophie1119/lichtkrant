@@ -45,7 +45,7 @@ checks['cross_source_dedupe']=id_a==id_b and id_a!=id_c
 app=(ROOT/'frontend'/'app.js').read_text(encoding='utf-8')
 control=(ROOT/'frontend'/'control.html').read_text(encoding='utf-8')
 index=(ROOT/'frontend'/'index.html').read_text(encoding='utf-8')
-checks['raw_display_default']="messageDisplayMode:'raw'" in app and 'ORIGINELE P2000-MELDING' in app
+checks['raw_display_default']="messageDisplayMode:'raw'" in app and "ctx.fillText('P2000-MELDING'" in app and 'displayMessageText(m)' in app
 checks['idle_builder']='idleLayoutInput' in control and 'idleBuilderPreview' in control and 'idleClockScaleInput' in control
 checks['112nu_control']='feed112nuInput' in control
 checks['112nu_attribution']='href="https://112-nu.nl/"' in index and 'sourceAttribution' in index

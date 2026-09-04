@@ -481,6 +481,19 @@ def stop_kiosk(rundir_path: str = "") -> int:
     return stopped
 
 
+def kiosk_status(rundir_path: str = "") -> dict:
+    """Return only dedicated kiosk processes; control/wizard windows do not count."""
+    rd = runtime_dir(rundir_path)
+    rows = dict(_proc_cmdlines())
+    pids = sorted(pid for pid, cmd in rows.items() if _is_p2000_kiosk_cmd(cmd))
+    if pids:
+        try:
+            (rd / "browser.pid").write_text(str(pids[-1]), encoding="utf-8")
+        except Exception:
+            pass
+    return {"running": bool(pids), "pids": pids}
+
+
 def probe() -> dict:
     candidates = discover() if IS_LINUX else []
     return {
@@ -512,12 +525,17 @@ def main() -> int:
     p.add_argument("--rundir", default="")
     p = sub.add_parser("stop-kiosk")
     p.add_argument("--rundir", default="")
+    p = sub.add_parser("kiosk-status")
+    p.add_argument("--rundir", default="")
     sub.add_parser("probe")
     a = ap.parse_args()
     if a.cmd == "probe":
         print(json.dumps(probe(), ensure_ascii=False, indent=2)); return 0
     if a.cmd == "stop-kiosk":
         print(stop_kiosk(a.rundir)); return 0
+    if a.cmd == "kiosk-status":
+        status = kiosk_status(a.rundir)
+        print(json.dumps(status, ensure_ascii=False)); return 0 if status["running"] else 1
     if a.cmd == "kiosk":
         ok, detail = open_browser(a.url, True, a.position, a.size, a.probe_seconds, a.rundir, a.prefer_x11)
     else:

@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
 STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'; LOCKFILE=DATA/'supervisor.lock'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.12'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.13'
 LOG=DATA/'supervisor.log'
 _explicit_runtime=os.environ.get('P2000_RUNTIME_DIR')
 _runtime_env=os.environ.get('XDG_RUNTIME_DIR')
@@ -197,6 +197,28 @@ def start_kiosk():
         subprocess.Popen(cmd,cwd=ROOT,env=env,stdin=subprocess.DEVNULL,stdout=out,stderr=subprocess.STDOUT,creationflags=flags,start_new_session=(os.name!='nt'))
     return True
 
+def kiosk_process_alive():
+    """Return True/False when the dedicated kiosk process can be identified."""
+    if os.name=='nt':
+        ps=("$p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { "
+            "$_.CommandLine -and $_.CommandLine -like '*127.0.0.1:8765*' -and "
+            "($_.CommandLine -like '*P2000-Monitor\\BrowserProfile*' -or $_.CommandLine -like '*p2000-monitor*browser-profile*') }; "
+            "if($p){[Console]::Out.Write('1')}")
+        try:
+            cp=subprocess.run(['powershell.exe','-NoLogo','-NoProfile','-NonInteractive','-Command',ps],stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,timeout=8,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            return cp.returncode==0 and cp.stdout.strip()=='1'
+        except Exception:return None
+    helper=ROOT/'tools'/'linux_desktop.py'
+    if not helper.exists():return None
+    try:
+        cp=subprocess.run([sys.executable,str(helper),'kiosk-status','--rundir',str(RUNDIR)],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=8)
+        return cp.returncode==0
+    except Exception:return None
+
+def restart_budget_available(history,now,limit=3,window_seconds=900):
+    history[:]=[x for x in history if now-x<window_seconds]
+    return len(history)<limit
+
 def rollback_if_pending():
     if not PENDING.exists():return False
     meta=read_json(PENDING,{})
@@ -245,19 +267,19 @@ def main():
     old=old or claim_pidfile()
     if old:
         print(f'P2000 supervisor draait al'+(f' (PID {old}).' if old>0 else ' of wordt al gestart.'));return 0
-    counters={'backend_restarts':0,'kiosk_restarts':0,'rollbacks':0};state='starting';last_action='';last_error='';backend_failures=0;kiosk_stale_hits=0;last_selector='';last_connected=None;last_geometry=None;geometry_candidate=None;geometry_hits=0;last_kiosk_restart=0.0;setup_was_incomplete=False;setup_completed_grace_until=0.0
-    health={};health_checked=0.0;setup_row={};setup_checked=0.0;disp={};display_checked=0.0
+    counters={'backend_restarts':0,'kiosk_restarts':0,'rollbacks':0};state='starting';last_action='';last_error='';backend_failures=0;backend_unhealthy_since=0.0;backend_restart_times=[];kiosk_stale_hits=0;kiosk_missing_hits=0;kiosk_stale_episode_restarted=False;last_display_report='';kiosk_restart_times=[];last_selector='';last_connected=None;last_geometry=None;geometry_candidate=None;geometry_hits=0;last_kiosk_restart=0.0;kiosk_grace_until=STARTED+150;setup_was_incomplete=False;setup_completed_grace_until=0.0
+    health={};health_checked=0.0;setup_row={};setup_checked=0.0;disp={};display_checked=0.0;kiosk_alive=None;kiosk_checked=0.0
     log(f'P2000 supervisor v{VERSION} gestart (PID {os.getpid()}).')
     try:
         while True:
             cmd=consume_command()
             if cmd=='restart-backend':
-                last_action='Backend handmatig herstart';log(last_action);terminate_backend();time.sleep(.4);start_backend();counters['backend_restarts']+=1;backend_failures=0
+                last_action='Backend handmatig herstart';log(last_action);terminate_backend();time.sleep(.4);start_backend();counters['backend_restarts']+=1;backend_failures=0;backend_unhealthy_since=0.0
             elif cmd=='restart-kiosk' and not a.no_kiosk:
-                last_action='Kiosk handmatig herstart';log(last_action);kill_kiosk();time.sleep(.4);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic()
+                last_action='Kiosk handmatig herstart';log(last_action);kill_kiosk();time.sleep(.4);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_grace_until=last_kiosk_restart+150;kiosk_stale_episode_restarted=False;kiosk_stale_hits=0;kiosk_missing_hits=0
 
             loop_now=time.monotonic()
-            runtime=api('/api/runtime',.8)
+            runtime=api('/api/runtime',2.0)
             backend_ok=bool(runtime and runtime.get('app')=='P2000 Monitor' and str(runtime.get('version'))==VERSION and str(runtime.get('install_id') or '')==INSTALL_ID)
             # /api/health scans cache/database/process metrics and used to run every
             # five seconds. Cache it at supervisor level; runtime is the cheap
@@ -266,17 +288,22 @@ def main():
                 fresh=api('/api/health',1.2)
                 if fresh:
                     health=fresh;health_checked=loop_now
-            if backend_ok:backend_failures=0;state='healthy';last_error=''
+            if backend_ok:backend_failures=0;backend_unhealthy_since=0.0;state='healthy';last_error=''
             else:
-                backend_failures+=1;state='backend-unhealthy';last_error=f'Backend runtimecheck mislukt ({backend_failures}/3)'
-            if backend_failures>=3:
-                rolled=rollback_if_pending()
-                if rolled:counters['rollbacks']+=1
-                terminate_backend();time.sleep(.5)
-                ok=start_backend();counters['backend_restarts']+=1
-                last_action='Rollback + backend herstart' if rolled else 'Backend automatisch herstart'
-                log(f'{last_action}: {"OK" if ok else "MISLUKT"}')
-                backend_failures=0;backend_ok=ok
+                backend_failures+=1
+                if not backend_unhealthy_since:backend_unhealthy_since=loop_now
+                unhealthy_for=max(0,loop_now-backend_unhealthy_since);state='backend-unhealthy';last_error=f'Backend runtimecheck mislukt ({backend_failures}/5, {unhealthy_for:.0f}s)'
+            if backend_failures>=5 and loop_now-backend_unhealthy_since>=20:
+                if restart_budget_available(backend_restart_times,loop_now,3,600):
+                    rolled=rollback_if_pending()
+                    if rolled:counters['rollbacks']+=1
+                    terminate_backend();time.sleep(.5)
+                    ok=start_backend();backend_restart_times.append(time.monotonic());counters['backend_restarts']+=1
+                    last_action='Rollback + backend herstart' if rolled else 'Backend automatisch herstart'
+                    log(f'{last_action}: {"OK" if ok else "MISLUKT"}')
+                    backend_failures=0;backend_unhealthy_since=0.0;backend_ok=ok
+                else:
+                    state='backend-restart-paused';last_error='Automatische backendherstart gepauzeerd: 3 pogingen in 10 minuten';backend_failures=4
 
             kiosk_age=10**9;selector='';display_connected=False;geometry=(0,0,0,0)
             if backend_ok:
@@ -294,49 +321,68 @@ def main():
                 else:
                     if setup_was_incomplete:
                         setup_was_incomplete=False
-                        setup_completed_grace_until=time.monotonic()+90
+                        setup_completed_grace_until=time.monotonic()+150
                         kiosk_stale_hits=0
-                        last_action='Configuratiewizard afgerond; kiosk krijgt 90s opstartgrace'
+                        last_action='Configuratiewizard afgerond; kiosk krijgt 150s opstartgrace'
                         log(last_action)
                     h=(health or {}).get('health') or {}
-                    kiosk_age=iso_age((h.get('display_client') or {}).get('reported_at'))
+                    display_report=str((h.get('display_client') or {}).get('reported_at') or '')
+                    kiosk_age=iso_age(display_report)
+                    if display_report and display_report!=last_display_report:
+                        last_display_report=display_report
+                        if kiosk_age<75:kiosk_stale_episode_restarted=False;kiosk_stale_hits=0;kiosk_missing_hits=0
                     # Monitor enumeration can spawn xrandr/wlr-randr/PowerShell.
                     # Fifteen seconds is responsive enough for reconnects without
                     # continuously hammering the desktop stack.
                     if not disp or loop_now-display_checked>=15:
                         disp=api('/api/display/info',1.5) or disp or {}
                         display_checked=loop_now
+                    if kiosk_alive is None or loop_now-kiosk_checked>=15:
+                        kiosk_alive=kiosk_process_alive();kiosk_checked=loop_now
                     selector,display_connected,geometry=selected_display_state(disp)
                     # Explicit screen changes already enqueue restart-kiosk from
                     # the backend. Never infer a screen change from focus/order/
                     # fingerprint changes: that caused Linux monitor ping-pong.
                     if selector and last_selector and selector==last_selector:
                         if last_connected is False and display_connected and not a.no_kiosk and time.monotonic()-last_kiosk_restart>20:
-                            last_action='Geselecteerd scherm opnieuw aangesloten; kiosk teruggeplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic()
+                            now=time.monotonic()
+                            if restart_budget_available(kiosk_restart_times,now):
+                                last_action='Geselecteerd scherm opnieuw aangesloten; kiosk teruggeplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_restart_times.append(last_kiosk_restart);kiosk_grace_until=last_kiosk_restart+150;kiosk_alive=None
                         if display_connected and last_geometry and geometry!=last_geometry:
                             if geometry_candidate==geometry: geometry_hits+=1
                             else: geometry_candidate=geometry;geometry_hits=1
                             if geometry_hits>=2 and not a.no_kiosk and time.monotonic()-last_kiosk_restart>30:
-                                last_action='Geometrie van geselecteerd scherm stabiel gewijzigd; kiosk opnieuw geplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();geometry_hits=0
+                                now=time.monotonic()
+                                if restart_budget_available(kiosk_restart_times,now):
+                                    last_action='Geometrie van geselecteerd scherm stabiel gewijzigd; kiosk opnieuw geplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_restart_times.append(last_kiosk_restart);kiosk_grace_until=last_kiosk_restart+150;kiosk_alive=None
+                                last_geometry=geometry;geometry_candidate=None;geometry_hits=0
                         else:
                             geometry_candidate=None;geometry_hits=0
                     else:
                         geometry_candidate=None;geometry_hits=0
                     if selector:last_selector=selector
                     last_connected=display_connected
-                    if display_connected:last_geometry=geometry
-                    # Give browser 90s boot grace and another 90s after setup.
-                    grace=max(STARTED+90,setup_completed_grace_until)
+                    if display_connected and last_geometry is None:last_geometry=geometry
+                    # Give slow Linux/Snap/Flatpak browser starts enough time and
+                    # restart at most once per unchanged stale-heartbeat episode.
+                    grace=max(kiosk_grace_until,setup_completed_grace_until)
                     # If the locked monitor is unplugged, restarting the browser
                     # cannot help and may make the compositor move it to primary.
-                    stale=display_connected and kiosk_age>75 and time.monotonic()>grace
+                    stale=display_connected and kiosk_age>150 and time.monotonic()>grace
                     kiosk_stale_hits=(kiosk_stale_hits+1) if stale else 0
-                    if kiosk_stale_hits>=2 and not a.no_kiosk and time.monotonic()-last_kiosk_restart>60:
-                        last_action='Kiosk-heartbeat verlopen; browser automatisch herstart';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_stale_hits=0
+                    kiosk_missing_hits=(kiosk_missing_hits+1) if stale and kiosk_alive is False else 0
+                    should_restart=(kiosk_missing_hits>=2) or (kiosk_stale_hits>=3 and not kiosk_stale_episode_restarted)
+                    if should_restart and not a.no_kiosk and time.monotonic()-last_kiosk_restart>90:
+                        now=time.monotonic()
+                        if restart_budget_available(kiosk_restart_times,now):
+                            reason='Kioskproces ontbreekt; browser automatisch herstart' if kiosk_missing_hits>=2 else 'Kiosk-heartbeat verlopen; eenmalige browserherstart'
+                            last_action=reason;log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_restart_times.append(last_kiosk_restart);kiosk_grace_until=last_kiosk_restart+150;kiosk_stale_episode_restarted=True;kiosk_stale_hits=0;kiosk_missing_hits=0;kiosk_alive=None
+                        else:
+                            state='kiosk-restart-paused';last_error='Automatische kioskherstart gepauzeerd: 3 pogingen in 15 minuten';kiosk_stale_episode_restarted=True;kiosk_stale_hits=0;kiosk_missing_hits=0
 
             write_json(STATUS,{
                 'version':VERSION,'pid':os.getpid(),'heartbeat_at':now_iso(),'state':state,'backend_ok':backend_ok,
-                'kiosk_heartbeat_age_seconds':None if kiosk_age>=10**8 else round(kiosk_age,1),'display_selector':selector or last_selector,'display_connected':display_connected,
+                'kiosk_heartbeat_age_seconds':None if kiosk_age>=10**8 else round(kiosk_age,1),'kiosk_process_alive':kiosk_alive,'display_selector':selector or last_selector,'display_connected':display_connected,
                 **counters,'last_action':last_action,'last_error':last_error,
             })
             if a.once:return 0 if backend_ok else 2

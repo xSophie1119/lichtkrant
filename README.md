@@ -1,8 +1,16 @@
-# P2000 Monitor — MultiPlatform v4.4.12
+# P2000 Monitor — MultiPlatform v4.4.13
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+
+## Nieuw in v4.4.13 — alleen-live, rustige Linux-watchdog, route en geluid
+
+- Na iedere start wordt databasehistorie alleen als baseline ingelezen; uitsluitend daarna ontvangen meldingen worden getoond en uitgesproken.
+- De Linux/Windows-supervisor wacht langer op trage processen, herstart één keer per stale-heartbeatepisode en begrenst automatische herstartpogingen.
+- Alle zichtbare P2000-regels worden ontdaan van ritnummers, capcodes, postcodes, URL- en RSS-ruis.
+- De incidentkaart toont incident én ingestelde standplaats, hemelsbrede afstand en een knop voor de autoroute.
+- Volume `0` is werkelijk stil; mastervolume werkt lineair en is rechtstreeks vanaf het meldingsscherm te bedienen.
 
 ## Nieuw in v4.4.12 — Windows/Linux vastloopherstel
 
@@ -217,7 +225,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.12.zip
+P2000_Monitor_MultiPlatform_v4.4.13.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.
