@@ -1,8 +1,18 @@
-# P2000 Monitor — MultiPlatform v4.4.14
+# P2000 Monitor — MultiPlatform v4.4.15
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+
+## Nieuw in v4.4.15 — kiosk-herstartlus en Linux-browserherstel
+
+- Gewone en herhaalde starts zijn op Windows én Linux idempotent: een gezonde kiosk wordt niet meer vooraf afgesloten.
+- De supervisor mag een kiosk pas herstellen nadat drie werkelijk losse procescontroles bevestigen dat de browser ontbreekt.
+- Een recente browserheartbeat of actieve SSE-verbinding blokkeert altijd een automatische kioskstop.
+- Tijdelijke monitor-, DPI-, focus-, connector- en slaap/waakvariaties zijn alleen diagnostisch en sluiten de kiosk niet meer.
+- Een oude supervisor wordt na een software-update beëindigd en vervangen door de supervisor uit de actuele versie.
+- Linux ontdekt geïnstalleerde Snap-browsers ook wanneer `/snap/bin` ontbreekt in de autostartomgeving.
+- Snap en Flatpak krijgen voldoende tijd voor hun browserhandoff; een startfout noemt voortaan ook het concrete browserdetail en logbestand.
 
 ## Nieuw in v4.4.14 — GitHub 403-herstel
 
@@ -233,7 +243,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.14.zip
+P2000_Monitor_MultiPlatform_v4.4.15.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.

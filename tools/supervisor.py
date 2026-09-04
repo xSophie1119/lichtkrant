@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
 STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'; LOCKFILE=DATA/'supervisor.lock'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.14'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.15'
 LOG=DATA/'supervisor.log'
 _explicit_runtime=os.environ.get('P2000_RUNTIME_DIR')
 _runtime_env=os.environ.get('XDG_RUNTIME_DIR')
@@ -219,6 +219,15 @@ def restart_budget_available(history,now,limit=3,window_seconds=900):
     history[:]=[x for x in history if now-x<window_seconds]
     return len(history)<limit
 
+def kiosk_missing_evidence(missing_hits,probe_fresh,process_alive,heartbeat_age,sse_clients=0,required_probes=3):
+    """Count only independent probes and never kill a kiosk with live evidence."""
+    if heartbeat_age < 90 or int(sse_clients or 0) > 0:
+        return 0,False
+    if not probe_fresh:
+        return missing_hits,False
+    missing_hits=(missing_hits+1) if process_alive is False else 0
+    return missing_hits,missing_hits>=required_probes
+
 def rollback_if_pending():
     if not PENDING.exists():return False
     meta=read_json(PENDING,{})
@@ -263,7 +272,10 @@ def main():
         try:os.chmod(RUNDIR,0o700)
         except OSError:pass
     old=existing_supervisor()
-    if a.status:return 0 if old else 1
+    if a.status:
+        if not old:return 1
+        row=read_json(STATUS,{})
+        return 0 if str(row.get('version') or '')==VERSION else 2
     old=old or claim_pidfile()
     if old:
         print(f'P2000 supervisor draait al'+(f' (PID {old}).' if old>0 else ' of wordt al gestart.'));return 0
@@ -334,48 +346,38 @@ def main():
                     # Monitor enumeration can spawn xrandr/wlr-randr/PowerShell.
                     # Fifteen seconds is responsive enough for reconnects without
                     # continuously hammering the desktop stack.
+                    display_probe_fresh=False
                     if not disp or loop_now-display_checked>=15:
                         disp=api('/api/display/info',1.5) or disp or {}
                         display_checked=loop_now
+                        display_probe_fresh=True
+                    kiosk_probe_fresh=False
                     if kiosk_alive is None or loop_now-kiosk_checked>=15:
                         kiosk_alive=kiosk_process_alive();kiosk_checked=loop_now
+                        kiosk_probe_fresh=True
                     selector,display_connected,geometry=selected_display_state(disp)
-                    # Explicit screen changes already enqueue restart-kiosk from
-                    # the backend. Never infer a screen change from focus/order/
-                    # fingerprint changes: that caused Linux monitor ping-pong.
-                    if selector and last_selector and selector==last_selector:
-                        if last_connected is False and display_connected and not a.no_kiosk and time.monotonic()-last_kiosk_restart>20:
-                            now=time.monotonic()
-                            if restart_budget_available(kiosk_restart_times,now):
-                                last_action='Geselecteerd scherm opnieuw aangesloten; kiosk teruggeplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_restart_times.append(last_kiosk_restart);kiosk_grace_until=last_kiosk_restart+150;kiosk_alive=None
-                        if display_connected and last_geometry and geometry!=last_geometry:
-                            if geometry_candidate==geometry: geometry_hits+=1
-                            else: geometry_candidate=geometry;geometry_hits=1
-                            if geometry_hits>=2 and not a.no_kiosk and time.monotonic()-last_kiosk_restart>30:
-                                now=time.monotonic()
-                                if restart_budget_available(kiosk_restart_times,now):
-                                    last_action='Geometrie van geselecteerd scherm stabiel gewijzigd; kiosk opnieuw geplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_restart_times.append(last_kiosk_restart);kiosk_grace_until=last_kiosk_restart+150;kiosk_alive=None
-                                last_geometry=geometry;geometry_candidate=None;geometry_hits=0
-                        else:
-                            geometry_candidate=None;geometry_hits=0
-                    else:
-                        geometry_candidate=None;geometry_hits=0
-                    if selector:last_selector=selector
-                    last_connected=display_connected
-                    if display_connected and last_geometry is None:last_geometry=geometry
-                    # Give slow Linux/Snap/Flatpak browser starts enough time and
-                    # restart at most once per unchanged stale-heartbeat episode.
+                    # Display enumeration is diagnostic only. A transient DPI,
+                    # connector, focus or sleep/wake change must never close a
+                    # healthy kiosk. Explicit display selection already queues a
+                    # supervised restart with the requested geometry.
+                    if display_probe_fresh:
+                        if selector:last_selector=selector
+                        last_connected=display_connected
+                        if display_connected:last_geometry=geometry
+                    # Give slow Linux/Snap/Flatpak/Windows browser starts enough
+                    # time. A stale heartbeat by itself is not proof that a kiosk
+                    # died: browsers throttle background tabs and POSTs can fail.
+                    # Restart only after three distinct process probes agree the
+                    # process is missing and there is no live SSE/heartbeat proof.
                     grace=max(kiosk_grace_until,setup_completed_grace_until)
-                    # If the locked monitor is unplugged, restarting the browser
-                    # cannot help and may make the compositor move it to primary.
-                    stale=display_connected and kiosk_age>150 and time.monotonic()>grace
-                    kiosk_stale_hits=(kiosk_stale_hits+1) if stale else 0
-                    kiosk_missing_hits=(kiosk_missing_hits+1) if stale and kiosk_alive is False else 0
-                    should_restart=(kiosk_missing_hits>=2) or (kiosk_stale_hits>=3 and not kiosk_stale_episode_restarted)
+                    h=(health or {}).get('health') or {}
+                    sse_clients=int(h.get('sse_clients') or 0)
+                    eligible=display_connected and time.monotonic()>grace
+                    kiosk_missing_hits,should_restart=kiosk_missing_evidence(kiosk_missing_hits,kiosk_probe_fresh and eligible,kiosk_alive,kiosk_age,sse_clients)
                     if should_restart and not a.no_kiosk and time.monotonic()-last_kiosk_restart>90:
                         now=time.monotonic()
                         if restart_budget_available(kiosk_restart_times,now):
-                            reason='Kioskproces ontbreekt; browser automatisch herstart' if kiosk_missing_hits>=2 else 'Kiosk-heartbeat verlopen; eenmalige browserherstart'
+                            reason='Kioskproces ontbreekt volgens 3 losse controles; browser automatisch herstart'
                             last_action=reason;log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_restart_times.append(last_kiosk_restart);kiosk_grace_until=last_kiosk_restart+150;kiosk_stale_episode_restarted=True;kiosk_stale_hits=0;kiosk_missing_hits=0;kiosk_alive=None
                         else:
                             state='kiosk-restart-paused';last_error='Automatische kioskherstart gepauzeerd: 3 pogingen in 15 minuten';kiosk_stale_episode_restarted=True;kiosk_stale_hits=0;kiosk_missing_hits=0

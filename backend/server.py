@@ -111,7 +111,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.4.14"
+APP_VERSION = "4.4.15"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -7373,13 +7373,18 @@ def supervisor_status() -> dict:
 def ensure_supervisor_running(timeout: float = 3.5) -> dict:
     """Make backend display actions independent of how the app was started."""
     status=supervisor_status()
-    if status.get("running"):
+    if status.get("running") and str(status.get("version") or "") == APP_VERSION:
         return status
     script=ROOT / "tools" / "supervisor.py"
     if not script.exists():
         return {"running":False,"state":"missing","error":"supervisor.py ontbreekt"}
     try:
         flags=getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0
+        if status.get("running"):
+            # A self-update replaces the file but cannot mutate already-loaded
+            # supervisor code. Stop that old process before starting this build.
+            subprocess.run([sys.executable,str(script),"--stop"],cwd=ROOT,stdin=subprocess.DEVNULL,
+                           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=8,creationflags=flags)
         subprocess.Popen([sys.executable,str(script)],cwd=ROOT,env=os.environ.copy(),stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags,
                          start_new_session=(os.name!="nt"))
@@ -7389,7 +7394,7 @@ def ensure_supervisor_running(timeout: float = 3.5) -> dict:
     while time.monotonic()<end:
         time.sleep(.15)
         status=supervisor_status()
-        if status.get("running"):
+        if status.get("running") and str(status.get("version") or "") == APP_VERSION:
             return status
     return supervisor_status()
 

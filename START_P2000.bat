@@ -8,7 +8,7 @@ if not exist "%~dp0backend\server.py" goto :fatal_extract
 if not exist "%~dp0frontend\index.html" goto :fatal_extract
 if not exist "%~dp0ENSURE_PYTHON.bat" goto :fatal_extract
 title P2000 Monitor - starten
-set "P2000_VERSION=4.4.14"
+set "P2000_VERSION=4.4.15"
 if exist "%~dp0VERSION" set /p P2000_VERSION=<"%~dp0VERSION"
 set "P2000_LOGDIR=%LOCALAPPDATA%\P2000-Monitor\Logs"
 if not exist "%P2000_LOGDIR%" mkdir "%P2000_LOGDIR%" >nul 2>&1
@@ -24,7 +24,10 @@ echo [3/4] Backend is bereikbaar op http://127.0.0.1:8765/
 
 if /I not "%P2000_SUPERVISED%"=="1" (
   "%P2000_PYTHON%" "%~dp0tools\supervisor.py" --status >nul 2>&1
-  if errorlevel 1 start "P2000 Supervisor" /min "%P2000_PYTHON%" "%~dp0tools\supervisor.py"
+  if errorlevel 1 (
+    "%P2000_PYTHON%" "%~dp0tools\supervisor.py" --stop >nul 2>&1
+    start "P2000 Supervisor" /min "%P2000_PYTHON%" "%~dp0tools\supervisor.py"
+  )
 )
 
 echo [4/4] Lichtkrant openen...
@@ -41,10 +44,11 @@ set "EDGE_X64=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
 set "CHROME_X64=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
 set "CHROME_X86=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
 
-if /I not "%P2000_SUPERVISED%"=="1" (
-  echo [P2000] Bestaande lichtkrant-kiosk veilig vernieuwen...
-  call :close_all_kiosks
-  timeout /t 1 /nobreak >nul
+call :any_kiosk_running
+if not errorlevel 1 (
+  echo [P2000] Bestaande lichtkrant-kiosk draait al; niets afgesloten.
+  timeout /t 2 /nobreak >nul
+  exit /b 0
 )
 
 if /I "%P2000_BROWSER%"=="chrome" (
@@ -124,6 +128,11 @@ exit /b 0
 set "P2000_CHECK_PROFILE=%~1"
 where powershell.exe >nul 2>&1 || exit /b 0
 powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$profile=[IO.Path]::GetFullPath($env:P2000_CHECK_PROFILE); $p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like ('*'+$profile+'*') -and $_.CommandLine -like '*127.0.0.1:8765*' }; if($p){exit 0}else{exit 1}" >nul 2>&1
+exit /b %errorlevel%
+
+:any_kiosk_running
+where powershell.exe >nul 2>&1 || exit /b 1
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like '*127.0.0.1:8765*' -and $_.CommandLine -like '*P2000-Monitor\BrowserProfile-*' }; if($p){exit 0}else{exit 1}" >nul 2>&1
 exit /b %errorlevel%
 
 :ensure_backend

@@ -243,7 +243,7 @@ autostart = (ROOT / "START_P2000_AUTOSTART.sh").read_text(encoding="utf-8")
 
 check("AbortController" in app and "timeoutMs=12000" in app and "monitorRuntimePromise" in app and "refreshPromise" in app, "kiosk HTTP calls are bounded and deduplicated")
 check("AbortController" in control and "timeoutMs=12000" in control and "timeoutMs:install?120000:45000" in control, "control HTTP calls have bounded operation-specific timeouts")
-check(start_win.count(":ensure_backend") >= 2 and "--wait 18" in start_win and ":close_all_kiosks" in start_win, "Windows launcher retries backend and refreshes kiosk")
+check(start_win.count(":ensure_backend") >= 2 and "--wait 18" in start_win and ":any_kiosk_running" in start_win, "Windows launcher retries backend without replacing a healthy kiosk")
 check("supervisor.py\" --stop" in stop_win and "Stop-Process -Id $id" not in stop_win, "Windows stop rejects stale supervisor PID files")
 check('kill "$spid"' not in stop_linux and "control-browser.pid" not in stop_linux, "Linux stop rejects stale/control PID files")
 loop = autostart[autostart.index("for ((waited="):autostart.index("sleep \"${P2000_AUTOSTART_DELAY")]

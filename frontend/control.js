@@ -139,7 +139,7 @@ async function vehicleDb(){
     const s=await api('/api/vehicles/status'),st=s.status||{},regions=st.selected_regions||[],cached=(st.cached_regions||[]).filter(x=>x!=='sw-api');
     const sw=st.sw_api||{};renderSwApiStatus(sw);
     const rows=Object.entries(st.regions||{}),done=rows.filter(([,x])=>x?.ok).length;
-    setText('#vehicleCount',st.count??'—');setText('#vehicleVersion',st.version||'4.4.14');
+    setText('#vehicleCount',st.count??'—');setText('#vehicleVersion',st.version||'4.4.15');
     const busy=st.running||st.force_pending;
     setText('#vehicleRegionStatus',busy?`bijwerken… (${Math.max(done,cached.length)}/${regions.length})`:(regions.length?`${Math.max(done,cached.length)}/${regions.length} regio’s`:'geen BRW-regio'));
     const detail=$('#vehicleSyncDetail');

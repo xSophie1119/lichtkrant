@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# P2000 Monitor Linux launcher - v4.4.14
+# P2000 Monitor Linux launcher - v4.4.15
 set -u
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.14')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.15')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
 BASE_RUNTIME="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/p2000-monitor/runtime}"
 if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" || ! -x "$BASE_RUNTIME" ]]; then
@@ -100,6 +100,9 @@ if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --wait 10 >/dev
 fi
 if [[ "${P2000_SUPERVISED:-0}" != "1" ]]; then
   if ! "$P2000_PYTHON" tools/supervisor.py --status >/dev/null 2>&1; then
+    # A supervisor from an older installed version must not keep fighting the
+    # current backend after an update.
+    "$P2000_PYTHON" tools/supervisor.py --stop >/dev/null 2>&1 || true
     nohup "$P2000_PYTHON" "$ROOT/tools/supervisor.py" >>"$LOGROOT/supervisor.log" 2>&1 </dev/null &
   fi
 fi
@@ -112,10 +115,9 @@ if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
 fi
 KIOSK_EXTRA=()
 if [[ "${P2000_DISPLAY_PRIMARY:-1}" == "0" ]]; then KIOSK_EXTRA+=(--prefer-x11); fi
-# A manual start after an installer/update must never reuse an old renderer.
-# Stop only our dedicated kiosk profile; control/wizard browser windows are untouched.
-"$P2000_PYTHON" "$ROOT/tools/linux_desktop.py" stop-kiosk --rundir "$RUNDIR" >>"$START_LOG" 2>&1 || true
-sleep 0.25
+# Launching is deliberately idempotent. Updates and explicit display changes
+# request a supervised restart themselves; an ordinary/autostart invocation
+# must never close a healthy kiosk.
 DETAIL="$("$P2000_PYTHON" "$ROOT/tools/linux_desktop.py" kiosk \
   --url 'http://127.0.0.1:8765/' \
   --position "${P2000_WINDOW_POSITION:-0,0}" \
@@ -124,7 +126,7 @@ DETAIL="$("$P2000_PYTHON" "$ROOT/tools/linux_desktop.py" kiosk \
 RC=$?
 if [[ $RC -ne 0 ]]; then
   tail -n 80 "$BROWSER_LOG" 2>/dev/null | tee -a "$START_LOG" >&2 || true
-  die 6 "Geen browser kon de lichtkrant openen. Voer ./LINUX_CHECK.sh uit."
+  die 6 "Geen browser kon de lichtkrant openen: ${DETAIL:-geen browserkandidaat gevonden}. Zie $BROWSER_LOG en voer ./LINUX_CHECK.sh uit."
 fi
 log "Kiosk gestart via ${DETAIL:-browser}."
 exit 0

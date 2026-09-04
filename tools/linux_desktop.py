@@ -104,11 +104,11 @@ def discover() -> list[Candidate]:
         if not path:
             continue
         real = str(Path(path).resolve()) if Path(path).exists() else path
-        key = f"native:{real}"
+        snap_pkg = _snap_package_for(path)
+        key = f"snap:{snap_pkg}" if snap_pkg else f"native:{real}"
         if key in seen:
             continue
         seen.add(key)
-        snap_pkg = _snap_package_for(path)
         rows.append(Candidate(
             ident=path,
             family=_family_for_name(Path(path).name),
@@ -120,6 +120,25 @@ def discover() -> list[Candidate]:
         if wanted and wanted.lower() != "auto":
             # An explicit browser is tried first, but keep fallbacks as well.
             wanted = "auto"
+    # GUI login/autostart environments sometimes omit /snap/bin from PATH even
+    # though the browser is installed. Discover installed snaps through the snap
+    # command itself so a working Chromium/Firefox is not reported as missing.
+    snap = shutil.which("snap")
+    if snap:
+        cp = _run([snap, "list"], 5)
+        installed = set()
+        if cp and cp.returncode == 0:
+            installed = {line.split(None, 1)[0] for line in cp.stdout.splitlines()[1:] if line.strip()}
+        for pkg, family, label in (
+            ("chromium", "chromium", "Chromium (Snap)"),
+            ("firefox", "firefox", "Firefox (Snap)"),
+            ("brave", "chromium", "Brave (Snap)"),
+        ):
+            key = f"snap:{pkg}"
+            if pkg not in installed or key in seen:
+                continue
+            seen.add(key)
+            rows.append(Candidate(pkg, family, label, [snap, "run", pkg], "snap", snap_package=pkg))
     flatpak = shutil.which("flatpak")
     if flatpak:
         for appid, family, label in FLATPAKS:
@@ -375,6 +394,8 @@ def _launch(c: Candidate, profile: Path, url: str, kiosk: bool, position: str,
             continue
         if mode == "x11" and not os.environ.get("DISPLAY"):
             continue
+        if matching_pids(profile, url):
+            return True, f"{c.label} draait al"
         argv = _browser_argv(c, profile, url, kiosk, position, size, mode)
         LOG_DIR.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as log:
@@ -388,7 +409,10 @@ def _launch(c: Candidate, profile: Path, url: str, kiosk: bool, position: str,
                 log.write(f"startfout={type(exc).__name__}: {exc}\n")
                 continue
         (rundir / ("browser.pid" if kiosk else "control-browser.pid")).write_text(str(proc.pid), encoding="utf-8")
-        end = time.monotonic() + max(0.6, probe_seconds)
+        # Snap/Flatpak wrappers can exit first and hand the launch to a confined
+        # browser several seconds later. Give that handoff a realistic window.
+        effective_probe = max(0.6, probe_seconds, 10.0 if c.packaging in {"snap", "flatpak"} else 0.0)
+        end = time.monotonic() + effective_probe
         exit_code = None
         while time.monotonic() < end:
             # Wrappers (Snap/Flatpak) may exit after handing off to the actual
@@ -415,6 +439,13 @@ def open_browser(url: str, kiosk: bool, position: str, size: str,
     if not gui_available():
         return False, "Geen grafische Linux-sessie gevonden (DISPLAY/WAYLAND_DISPLAY ontbreken)"
     rd = runtime_dir(rundir_path)
+    # START_P2000.sh may be invoked more than once by a desktop autostart entry,
+    # an old service or an impatient double-click. Treat launching as idempotent:
+    # never replace a healthy kiosk merely because the launcher ran again.
+    if kiosk:
+        existing = kiosk_status(str(rd))
+        if existing["running"]:
+            return True, "bestaande P2000-kiosk draait al"
     purpose = "kiosk" if kiosk else "control"
     candidates = discover()
     for c in candidates:
@@ -516,7 +547,7 @@ def main() -> int:
     p.add_argument("--url", default="http://127.0.0.1:8765/")
     p.add_argument("--position", default=os.environ.get("P2000_WINDOW_POSITION", "0,0"))
     p.add_argument("--size", default=os.environ.get("P2000_WINDOW_SIZE", "1920,1080"))
-    p.add_argument("--probe-seconds", type=float, default=float(os.environ.get("P2000_BROWSER_PROBE_SECONDS", "3")))
+    p.add_argument("--probe-seconds", type=float, default=float(os.environ.get("P2000_BROWSER_PROBE_SECONDS", "8")))
     p.add_argument("--rundir", default="")
     p.add_argument("--prefer-x11", action="store_true")
     p = sub.add_parser("open")

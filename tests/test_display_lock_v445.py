@@ -52,7 +52,7 @@ finally:
  mod.enumerate_monitors=orig_enum;mod.DB_PATH=orig_db;mod.DATA_DIR=orig_data
 sup=(ROOT/'tools'/'supervisor.py').read_text('utf-8')
 checks['supervisor_no_fingerprint_pingpong']='fp!=last_fp' not in sup and 'selected_fingerprint' not in sup
-checks['supervisor_reconnect_only_same_selector']='selector==last_selector' in sup and 'last_connected is False and display_connected' in sup
+checks['supervisor_reconnect_is_diagnostic_only']='Display enumeration is diagnostic only' in sup and 'Geselecteerd scherm opnieuw aangesloten; kiosk teruggeplaatst' not in sup
 launcher=(ROOT/'START_P2000.sh').read_text('utf-8')
 checks['launcher_passes_nonprimary_intent']='P2000_DISPLAY_PRIMARY' in launcher and '--prefer-x11' in launcher
 failed=[k for k,v in checks.items() if not v]

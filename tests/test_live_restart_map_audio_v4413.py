@@ -81,7 +81,7 @@ history = [0.0, 100.0, 200.0]
 check(not supervisor.restart_budget_available(history, 300.0, 3, 900), "restart budget blocks a fourth rapid restart")
 check(supervisor.restart_budget_available(history, 1200.0, 3, 900), "restart budget recovers after cooldown")
 check("backend_failures>=5" in supervisor_text and "loop_now-backend_unhealthy_since>=20" in supervisor_text and "runtime=api('/api/runtime',2.0)" in supervisor_text, "backend requires sustained failure")
-check("kiosk_stale_episode_restarted" in supervisor_text and "kiosk_age>150" in supervisor_text, "stale kiosk heartbeat restarts once after long grace")
+check("kiosk_missing_evidence" in supervisor_text and "required_probes=3" in supervisor_text, "kiosk restart requires three independent missing-process probes")
 
 desktop = load("p2000_linux_desktop_v4413", ROOT / "tools" / "linux_desktop.py")
 kiosk_cmd = "chromium --user-data-dir=/home/u/.config/p2000-monitor/browser-chromium-kiosk --kiosk http://127.0.0.1:8765/"

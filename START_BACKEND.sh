@@ -2,7 +2,7 @@
 set -u
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"; cd "$ROOT" || exit 1
 source "$ROOT/ENSURE_PYTHON.sh" || exit 1
-VERSION="$(tr -d '\r\n ' < "$ROOT/VERSION" 2>/dev/null || printf '4.4.14')"
+VERSION="$(tr -d '\r\n ' < "$ROOT/VERSION" 2>/dev/null || printf '4.4.15')"
 mkdir -p "$ROOT/data" "$ROOT/config" 2>/dev/null || true
 probe="$ROOT/data/.write-test-$$"
 if ! ( umask 077; : > "$probe" ) 2>/dev/null; then
