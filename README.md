@@ -1,4 +1,4 @@
-# P2000 Monitor — MultiPlatform v4.4.6
+# P2000 Monitor — MultiPlatform v4.4.8
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
@@ -27,13 +27,22 @@ Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde b
 
 ## Nieuw in v4.4.3 — 112-nu + landelijke parser + eigen rustscherm
 
-- **112-nu.nl** is toegevoegd als optionele landelijke racebron (`https://112-nu.nl/hulpdiensten/rss`). Eén request per pollcyclus racet tegen de bestaande feeds; dezelfde ruwe P2000-regel wordt bron-onafhankelijk gededupliceerd.
+- **112-nu.nl is de vaste hoofdbron** via vijf landelijke disciplinefeeds: Brandweer, Ambulance, Politie, Traumahelikopter en KNRM. Ze worden iedere pollcyclus parallel opgehaald; Alarmeringen blijft alleen een onafhankelijke race/fallback. Exact dezelfde ruwe P2000-regel wordt bron-onafhankelijk gededupliceerd.
 - De lichtkrant toont standaard de **originele P2000-regel groot**. De samengevatte incidentweergave blijft als optie beschikbaar.
 - Regionale brandweerkanaalcodes zoals `BZB-01`, `BNH-01`, `BGM-01`, `Sxx-..` en `KAZ-..` worden als kanaalmetadata herkend en niet uitgesproken als locatie.
 - Rijkswegspraak begrijpt o.a. `Li` = links, `Re` = rechts, `Kp` = knooppunt en `St.` = Sint. De originele tekst op het scherm blijft ongewijzigd.
 - Het rustscherm heeft een eigen builder met gecentreerd, links, split of minimaal ontwerp, eigen kop/onderregel, klokgrootte en schakelaars voor datum/seconden/status.
 - Brandweerregio kan landelijk uit het eerste twee-cijferige roepnummer worden afgeleid wanneer een nationale RSS-feed geen regio meestuurt.
 
+
+
+### v4.4.8 landelijker en leesbaarder
+
+- Vijf 112-nu disciplinefeeds zijn altijd de primaire transportlaag.
+- Plaats uit een 112-nu artikel-URL is leidend; een verkeerde/generieke RSS-category kan de melding dus niet meer naar de ingestelde hoofdplaats trekken.
+- De backend houdt een landelijke woonplaatsenindex bij uit PDOK/BAG en bewaart die lokaal voor offline/fail-safe parsing.
+- SW Mediaproducties Roepnummer API-voertuigen worden als normale tekst getoond, bijvoorbeeld `Hulpverleningsvoertuig met kraan (HVT-KR) — Tilburg Centrum`.
+- Roepnummers worden landelijk uit de omroeptekst verwijderd; de originele P2000-regel op het scherm blijft ongewijzigd.
 
 ## Linux-start hotfix v4.4.2
 
@@ -70,7 +79,9 @@ Handig:
 - `STOP_P2000.bat`
 - `HERSTEL_VORIGE_VERSIE.bat`
 
-### Linux
+#
+
+## Linux
 
 **Aanbevolen:** pak de ZIP volledig uit, geef zo nodig execute-rechten met `chmod +x *.sh tools/*.py` en start als je **normale desktopgebruiker** `./INSTALL_P2000.sh`. Gebruik hiervoor **geen `sudo`**: Chromium/Chrome weigert onder root vaak te starten zonder onveilige sandbox-flags en de desktop-/autostartbestanden horen bij je eigen gebruikersaccount. De installer gebruikt standaard `~/.local/share/p2000-monitor`, behoudt instellingen/data en maakt appmenu-items voor Monitor, Instellingen, Configuratiewizard, Linux Diagnose en Stoppen.
 
@@ -97,6 +108,8 @@ De browserlaag ondersteunt native Chrome/Chromium/Brave/Edge/Firefox, Ubuntu **S
 
 Wanneer de wizard of monitor toch niet opent, voer eerst `./LINUX_CHECK.sh` uit. `./LINUX_REPAIR.sh` herstelt de meest voorkomende problemen na uitpakken/updaten (execute-rechten, appmenu en autostart).
 
+
+
 ## Linux: aanbevolen pakketten
 
 Alleen Python is noodzakelijk voor de backend. Voor de beste kioskervaring zijn onderstaande pakketten handig:
@@ -120,7 +133,7 @@ Op GNOME Wayland bestaat geen universele veilige CLI om één fysiek scherm uit 
 
 ## P2000-bronnen
 
-De monitor bouwt RSS-feeds automatisch uit de gekozen regio/discipline-matrix. In v4.4.2 worden de regionale feeds parallel geracet met passende landelijke disciplinefeeds; de eerste kopie van een melding wint en SQLite dedupliceert de rest. Het portaal toont per feed fetch-tijd, geschatte ingest-latency en het aantal feed-wins. Extra compatibele RSS-feeds kunnen als supplemental/fallback worden toegevoegd in de configuratie. De frontend ontvangt nieuwe meldingen via SSE zonder pagina-refresh.
+De vijf landelijke 112-nu disciplinefeeds (Brandweer, Ambulance, Politie, Traumahelikopter en KNRM) zijn vanaf v4.4.8 altijd de primaire transportlaag. De gekozen regio-/disciplinematrix filtert de berichten pas na parsing. Passende landelijke Alarmeringen-feeds worden parallel als race/fallback opgehaald; de eerste kopie van dezelfde originele P2000-regel wint en SQLite dedupliceert de rest. Het portaal toont per feed fetch-tijd, geschatte ingest-latency en feed-wins. Extra compatibele feeds kunnen als supplemental/fallback worden toegevoegd. De frontend ontvangt nieuwe meldingen via SSE zonder pagina-refresh.
 
 De parser bevat regressies voor onder andere brandweer, politie, lifeliner/MMT, opschalingen, GRIP, BZB/Contact MKB en uiteenlopende adres-/roepnummerformaten.
 
@@ -177,7 +190,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.6.zip
+P2000_Monitor_MultiPlatform_v4.4.8.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.

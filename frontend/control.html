@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071018">
   <title>P2000 Monitor • Instellingen</title>
-  <link rel="stylesheet" href="/styles.css?v=4430">
+  <link rel="stylesheet" href="/styles.css?v=4480">
   <style>
     .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
     .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
@@ -179,10 +179,10 @@
     </section>
 
     <section class="control-card wide">
-      <div class="panel-head compact"><div><span class="eyebrow">FEED-RACE</span><h3>P2000-bronnen & snelheid</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
-      <label class="switch-row"><span><b>112-nu snelle racebron</b><small>Één landelijke RSS-feed wordt parallel met de bestaande bronnen opgehaald. Eerste unieke melding wint.</small></span><input id="feed112nuInput" type="checkbox" checked></label>
+      <div class="panel-head compact"><div><span class="eyebrow">HOOFDBRONNEN</span><h3>P2000-bronnen & snelheid</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
+      <label class="switch-row"><span><b>112-nu.nl is de hoofdbron</b><small>Brandweer, ambulance, politie, traumahelikopter en KNRM worden ieder via hun eigen landelijke 112-nu RSS-feed opgehaald. Alarmeringen blijft alleen race/fallback.</small></span><input id="feed112nuInput" type="checkbox" checked disabled aria-label="112-nu hoofdfeeds altijd actief"></label>
       <div id="feedList" class="feed-list"><div class="feed-row">laden…</div></div>
-      <p class="hint">Regionale feeds, landelijke disciplinefeeds en optioneel 112-nu worden parallel opgehaald. Exact dezelfde P2000-regel wordt bron-onafhankelijk gededupliceerd. Latency en bron-wins worden live gemeten.</p>
+      <p class="hint">De vijf 112-nu disciplinefeeds zijn altijd primair. Alarmeringen wordt alleen als tweede bron/racefallback gebruikt. Exact dezelfde P2000-regel wordt bron-onafhankelijk gededupliceerd. Latency en bron-wins worden live gemeten.</p>
     </section>
 
     <section class="control-card wide">
@@ -287,6 +287,6 @@
   </div>
 </main>
 <div id="pageFeedback" class="page-feedback" role="status" aria-live="polite" hidden></div>
-<script src="/control.js?v=4400" defer></script>
+<script src="/control.js?v=4480" defer></script>
 </body>
 </html>

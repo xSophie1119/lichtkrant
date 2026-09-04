@@ -34,7 +34,7 @@ checks.update({
     '112nu_city_url': msg.city=='Bavel',
     '112nu_region_callsign': 'Regio Midden- en West-Brabant' in msg.categories,
     '112nu_scope': mod.config_allows_message(state.config,msg),
-    '112nu_race': mod.NU112_ALL_RSS in mod.AppState.race_feed_urls(state),
+    '112nu_race': all(url in mod.build_feed_urls(state.config.get('region_disciplines', {})) for url in mod.NU112_DISCIPLINE_URLS.values()) and mod.NU112_ALL_RSS not in mod.AppState.race_feed_urls(state),
 })
 # Same original line from another source/day must share the same id for race dedupe.
 id_a=mod.canonical_message_id(RAW,'2026-09-04T13:44:00+00:00','https://112-nu.nl/a')

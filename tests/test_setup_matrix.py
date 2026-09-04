@@ -14,22 +14,23 @@ fails=[]
 def check(cond,msg):
     if not cond: fails.append(msg)
 
-# One region with every service: three regional feeds + two national special feeds.
+# v4.4.8: all five 112-nu discipline feeds are always the primary transport
+# layer; region/discipline scope is applied after parsing.
+expected_primary=[mod.NU112_DISCIPLINE_URLS[d] for d in ('brandweer','ambulance','politie','lifeliner','knrm')]
 m={'utrecht':['brandweer','ambulance','politie','knrm','lifeliner']}
 u=mod.build_feed_urls(m)
-check(len(u)==5,f'utrecht all expected 5 feeds, got {u}')
-check(mod.regional_feed_url('utrecht','brandweer') in u,'regional brandweer missing')
-check(mod.NATIONAL_DISCIPLINE_URLS['lifeliner'] in u,'lifeliner feed missing')
+check(u==expected_primary,f'fixed 112-nu primary set mismatch: {u}')
+check(mod.NU112_DISCIPLINE_URLS['brandweer'] in u,'112-nu brandweer missing')
+check(mod.NU112_DISCIPLINE_URLS['lifeliner'] in u,'112-nu traumahelikopter missing')
 
-# Parent + subregion for the same discipline must not cause a duplicate overlapping poll.
+# Changing the selected regions may change filtering/fallback, never the five primary feeds.
 m={'hollands-midden':['brandweer'],'bollenstreek':['brandweer']}
 u=mod.build_feed_urls(m)
-check(u==[mod.regional_feed_url('hollands-midden','brandweer')],f'parent/subregion optimization failed: {u}')
+check(u==expected_primary,f'primary feed set changed with region selection: {u}')
 
-# All 25 safety regions collapse to one national feed for each fully selected discipline.
 m={slug:['brandweer','politie'] for slug in mod.SAFETY_REGION_SLUGS}
 u=mod.build_feed_urls(m)
-check(set(u)=={mod.NATIONAL_DISCIPLINE_URLS['brandweer'],mod.NATIONAL_DISCIPLINE_URLS['politie']},f'national collapse failed: {u}')
+check(u==expected_primary,f'primary feed set changed for national selection: {u}')
 
 # Scope filter: same article allowed for selected discipline/region, rejected elsewhere.
 def msg(region,service='brandweer',url=''):

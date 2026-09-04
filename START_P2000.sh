@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# P2000 Monitor Linux launcher - v4.4.6
+# P2000 Monitor Linux launcher - v4.4.8
 set -u
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.6')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.8')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
 BASE_RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" ]]; then BASE_RUNTIME=/tmp; fi
@@ -84,6 +84,10 @@ if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
 fi
 KIOSK_EXTRA=()
 if [[ "${P2000_DISPLAY_PRIMARY:-1}" == "0" ]]; then KIOSK_EXTRA+=(--prefer-x11); fi
+# A manual start after an installer/update must never reuse an old renderer.
+# Stop only our dedicated kiosk profile; control/wizard browser windows are untouched.
+"$P2000_PYTHON" "$ROOT/tools/linux_desktop.py" stop-kiosk --rundir "$RUNDIR" >>"$START_LOG" 2>&1 || true
+sleep 0.25
 DETAIL="$("$P2000_PYTHON" "$ROOT/tools/linux_desktop.py" kiosk \
   --url 'http://127.0.0.1:8765/' \
   --position "${P2000_WINDOW_POSITION:-0,0}" \

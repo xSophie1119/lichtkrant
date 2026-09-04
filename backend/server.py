@@ -2,7 +2,9 @@
 """P2000 Monitor - cross-platform configurable P2000 backend (Windows/Linux).
 
 Core server uses Python's standard library and bundles gTTS for optional speech:
-- polls Alarmeringen.nl RSS feeds using ETag / If-Modified-Since
+- polls the five nationwide 112-nu.nl discipline RSS feeds as primary sources
+- races Alarmeringen.nl discipline feeds as an independent fallback
+- uses ETag / If-Modified-Since where the source supports it
 - normalizes and stores messages in SQLite
 - exposes a small JSON REST API
 - streams new messages to browsers using Server-Sent Events (SSE)
@@ -83,14 +85,26 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.4.6"
+APP_VERSION = "4.4.8"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
 ALARMERINGEN_TRAUMA_URL = f"{ALARMERINGEN_BASE}/discipline/trauma.rss"
 ALARMERINGEN_KNRM_URL = f"{ALARMERINGEN_BASE}/discipline/knrm.rss"
-NU112_ALL_RSS = "https://112-nu.nl/hulpdiensten/rss"
+NU112_ALL_RSS = "https://112-nu.nl/hulpdiensten/rss"  # legacy aggregate; no longer primary
 NU112_SITE_URL = "https://112-nu.nl/"
+NU112_DISCIPLINE_URLS = {
+    "brandweer": "https://112-nu.nl/brandweer/rss",
+    "ambulance": "https://112-nu.nl/ambulance/rss",
+    "politie": "https://112-nu.nl/politie/rss",
+    "lifeliner": "https://112-nu.nl/trauma-helikopter/rss",
+    "knrm": "https://112-nu.nl/knrm/rss",
+}
+PLACE_CACHE_DIR = DATA_DIR / "places"
+NL_PLACES_CACHE_PATH = PLACE_CACHE_DIR / "nl-woonplaatsen.json"
+PDOK_BAG_WOONPLAATS_URL = "https://api.pdok.nl/kadaster/bag/ogc/v2/collections/woonplaats/items"
+NL_PLACES_SYNC_SECONDS = 24 * 60 * 60
+NL_PLACES_TIMEOUT_SECONDS = 8.0
 SW_ROEPNUMMER_API_BASE = "https://swmediaproducties.nl/roepnummers-api/v1"
 SW_ROEPNUMMER_SYNC_SECONDS = 5 * 60
 SW_ROEPNUMMER_PAGE_LIMIT = 500
@@ -214,48 +228,16 @@ def regional_feed_url(region_slug: str, discipline: str) -> str:
 
 
 def build_feed_urls(region_disciplines: dict) -> list[str]:
-    """Build the smallest correct feed set for the selected matrix.
+    """Return the five nationwide 112-nu feeds as the fixed primary set.
 
-    Normally every selected region/discipline gets its direct regional RSS URL.
-    If a regional discipline is selected for all 25 safety regions, the official
-    national discipline feed is equivalent and avoids polling 25 overlapping
-    feeds every cycle. Subregions are already covered by their parent safety
-    regions in that all-Netherlands case. KNRM and traumaheli are always national
-    feeds and are filtered back to the selected regions after parsing.
+    v4.4.8 deliberately polls *all five* discipline feeds every cycle. The
+    user's region/discipline matrix is applied after parsing, so changing setup
+    filters never changes the primary transport layer. This also prevents an
+    old or partially migrated config from silently dropping police, ambulance,
+    trauma-helicopter or KNRM input. Alarmeringen remains secondary fallback.
     """
-    if not isinstance(region_disciplines, dict):
-        return []
-    cleaned: dict[str, set[str]] = {}
-    for slug, disciplines in region_disciplines.items():
-        if slug not in REGION_CATALOG or not isinstance(disciplines, list):
-            continue
-        selected = {str(x).lower() for x in disciplines if str(x).lower() in ALL_DISCIPLINES}
-        if selected:
-            cleaned[slug] = selected
-
-    urls: list[str] = []
-    safety_set = set(SAFETY_REGION_SLUGS)
-    for discipline in REGIONAL_DISCIPLINES:
-        selected_safety = {slug for slug in SAFETY_REGION_SLUGS if discipline in cleaned.get(slug, set())}
-        nationwide = selected_safety == safety_set
-        if nationwide:
-            urls.append(NATIONAL_DISCIPLINE_URLS[discipline])
-        else:
-            for slug in REGION_CATALOG:
-                if discipline not in cleaned.get(slug, set()):
-                    continue
-                # A selected safety region already contains its Alarmeringen
-                # subregions. Do not poll both feeds for the same discipline.
-                parent = SUBREGION_PARENT.get(slug)
-                if parent and discipline in cleaned.get(parent, set()):
-                    continue
-                urls.append(regional_feed_url(slug, discipline))
-
-    if any("knrm" in values for values in cleaned.values()):
-        urls.append(NATIONAL_DISCIPLINE_URLS["knrm"])
-    if any("lifeliner" in values for values in cleaned.values()):
-        urls.append(NATIONAL_DISCIPLINE_URLS["lifeliner"])
-    return list(dict.fromkeys(urls))
+    order = ("brandweer", "ambulance", "politie", "lifeliner", "knrm")
+    return [NU112_DISCIPLINE_URLS[d] for d in order]
 
 
 def region_slug_for_url(url: str) -> str | None:
@@ -266,13 +248,13 @@ def region_slug_for_url(url: str) -> str | None:
 
 
 def discipline_for_feed_url(url: str) -> str | None:
-    low = str(url or "").lower()
-    if "/discipline/trauma.rss" in low:
+    low = str(url or "").lower().rstrip("/")
+    if low.endswith("112-nu.nl/trauma-helikopter/rss") or "/discipline/trauma.rss" in low:
         return "lifeliner"
-    if "/discipline/knrm.rss" in low:
+    if low.endswith("112-nu.nl/knrm/rss") or "/discipline/knrm.rss" in low:
         return "knrm"
     for discipline in REGIONAL_DISCIPLINES:
-        if low.endswith(f"/{discipline}.rss"):
+        if low.endswith(f"112-nu.nl/{discipline}/rss") or low.endswith(f"/{discipline}.rss"):
             return discipline
     return None
 
@@ -593,7 +575,7 @@ def write_sw_api_key(api_key: str) -> None:
 
 
 def normalize_vehicle_digits(value: str) -> str:
-    """Normalize a supported fire callsign to its digit key."""
+    """Normalize a supported emergency-unit callsign to its digit key."""
     text = str(value or "").strip()
     ext = re.search(r"(?<!\d)(\d{2})[- ](\d{2})[- ](\d{3})(?!\d)", text)
     if ext:
@@ -601,8 +583,11 @@ def normalize_vehicle_digits(value: str) -> str:
     normal = re.search(r"(?<!\d)(\d{2})[- ]?(\d{4})(?!\d)", text)
     if normal:
         return "".join(normal.groups())
+    short = re.search(r"(?<!\d)(\d{2})[- ]?(\d{3})(?!\d)", text)
+    if short:
+        return "".join(short.groups())
     digits = re.sub(r"\D", "", text)
-    return digits if len(digits) in {6, 7} else ""
+    return digits if len(digits) in {5, 6, 7} else ""
 
 
 def fire_vehicle_type(description: str, digits: str = "") -> tuple[str, str]:
@@ -660,6 +645,8 @@ def format_vehicle_callsign(digits: str) -> str:
     if len(digits) == 7:
         return f"{digits[:2]}-{digits[2:4]}-{digits[4:]}"
     if len(digits) == 6:
+        return f"{digits[:2]}-{digits[2:]}"
+    if len(digits) == 5:
         return f"{digits[:2]}-{digits[2:]}"
     return ""
 
@@ -815,19 +802,18 @@ def sw_units_to_vehicle_catalog(units: dict[str, dict]) -> dict[str, dict]:
         if not isinstance(unit, dict):
             continue
         discipline = str(unit.get("discipline") or "").strip().lower()
-        # The API is currently primarily a fire-service catalogue. If it later
-        # gains other disciplines, do not misclassify those as brandweer units.
-        if discipline and discipline not in {"brandweer", "fire", "brw"}:
-            continue
         digits = normalize_vehicle_digits(str(unit.get("callsign") or unit.get("lookup_key") or lookup))
-        if len(digits) not in {6, 7}:
+        if len(digits) not in {5, 6, 7}:
             continue
         function_code = normalize_space(str(unit.get("function_code") or ""))[:64]
         function_name = normalize_space(str(unit.get("function_name") or ""))[:180]
         station_name = normalize_space(str(unit.get("station_name") or ""))[:160]
-        inferred_code, inferred_name = fire_vehicle_type(function_name or function_code, digits)
-        type_code = function_code or inferred_code
-        label = function_name or inferred_name
+        is_fire = not discipline or discipline in {"brandweer", "fire", "brw"}
+        inferred_code, inferred_name = fire_vehicle_type(function_name or function_code, digits) if is_fire else ("", "")
+        discipline_code = {"ambulance":"AMB","ambu":"AMB","politie":"POL","police":"POL","knrm":"KNRM","lifeliner":"MMT","mmt":"MMT"}.get(discipline, "")
+        discipline_name = {"ambulance":"Ambulance","ambu":"Ambulance","politie":"Politievoertuig","police":"Politievoertuig","knrm":"KNRM-eenheid","lifeliner":"Mobiel Medisch Team","mmt":"Mobiel Medisch Team"}.get(discipline, "Voertuig")
+        type_code = function_code or inferred_code or discipline_code or "UNIT"
+        label = function_name or inferred_name or discipline_name
         display = " • ".join(x for x in (type_code, label, station_name) if x)
         catalog[digits] = {
             "lookup_key": str(unit.get("lookup_key") or lookup),
@@ -841,6 +827,7 @@ def sw_units_to_vehicle_catalog(units: dict[str, dict]) -> dict[str, dict]:
             "function_name": label,
             "station_name": station_name,
             "source": "SW Mediaproducties Roepnummer API",
+            "discipline": discipline,
             "verified": unit.get("verified"),
             "api_primary": True,
         }
@@ -1434,6 +1421,67 @@ def _place_key(value: str) -> str:
     return normalize_space(value)
 
 
+# Nationwide locality index. A small built-in seed makes first boot useful; the
+# complete current BAG woonplaats list is refreshed from PDOK in the background.
+_NL_PLACE_LOCK = threading.RLock()
+_NL_PLACE_DISPLAY: dict[str, str] = {}
+_NL_PLACE_SORTED: list[str] = []
+_NL_PLACE_SEED = {
+    "Amsterdam","Rotterdam","Den Haag","'s-Gravenhage","Utrecht","Eindhoven","Tilburg","Breda",
+    "Groningen","Leeuwarden","Zwolle","Arnhem","Nijmegen","Maastricht","Roermond","Helmond",
+    "'s-Hertogenbosch","Den Bosch","Apeldoorn","Enschede","Emmen","Dalfsen","Ommen","Ugchelen",
+    "Zaandijk","Zaandam","Schiphol","Amstelveen","Gouda","Middelburg","Arnemuiden","Waalre",
+    "Hoogerheide","Huijbergen","Ossendrecht","Putte","Woensdrecht","Etten-Leur","Soest","Soesterberg",
+    "Vlaardingen","Foxhol","Hoogezand","Kiel-Windeweer","Kropswolde","Hank","Bavel","Haren Gn",
+    "Haren","Meeden","Hoogvliet","Eemnes","Baarn","Bunschoten","Spakenburg","Hilversum","Laren",
+}
+
+def _nl_place_match_key(value: str) -> str:
+    return normalize_space(_place_key(value).replace("-", " "))
+
+def _set_nl_place_index(names) -> int:
+    mapping: dict[str, str] = {}
+    for raw in [*_NL_PLACE_SEED, *list(names or [])]:
+        name = normalize_space(str(raw or ""))[:120]
+        key = _nl_place_match_key(name)
+        if len(key) < 2:
+            continue
+        mapping.setdefault(key, name)
+    with _NL_PLACE_LOCK:
+        _NL_PLACE_DISPLAY.clear(); _NL_PLACE_DISPLAY.update(mapping)
+        _NL_PLACE_SORTED[:] = sorted(mapping, key=lambda x: (len(x.split()), len(x)), reverse=True)
+    return len(mapping)
+
+def load_nl_place_cache() -> tuple[list[str], dict]:
+    try:
+        data=json.loads(NL_PLACES_CACHE_PATH.read_text(encoding="utf-8")) if NL_PLACES_CACHE_PATH.exists() else {}
+        names=data.get("places",[]) if isinstance(data,dict) else []
+        meta=data.get("meta",{}) if isinstance(data,dict) and isinstance(data.get("meta"),dict) else {}
+        return [normalize_space(str(x)) for x in names if normalize_space(str(x))], meta
+    except Exception:
+        return [], {}
+
+def write_nl_place_cache(names: list[str], meta: dict) -> None:
+    PLACE_CACHE_DIR.mkdir(parents=True,exist_ok=True)
+    tmp=NL_PLACES_CACHE_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"meta":meta,"places":sorted(set(names),key=str.casefold)},ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
+    tmp.replace(NL_PLACES_CACHE_PATH)
+
+def infer_city_from_nl_gazetteer(title: str) -> str:
+    raw=normalize_space(title or "")
+    if not raw:
+        return ""
+    # Roepnummers/capcodes after the locality must not become part of the match.
+    tail=re.sub(r"(?:\s+(?:\d{6}|\d{2}[- ]?\d{4}|\d{2}[- ]\d{2}[- ]\d{3}))+\s*$","",raw,flags=re.I)
+    key=_nl_place_match_key(tail)
+    if not key:
+        return ""
+    with _NL_PLACE_LOCK:
+        for place_key in _NL_PLACE_SORTED:
+            if key == place_key or key.endswith(" "+place_key):
+                return _NL_PLACE_DISPLAY.get(place_key,"")
+    return ""
+
 def place_is_nearby(city: str, categories: list[str] | None = None, region_key: str | None = None) -> bool:
     return place_is_monitor_area(city, categories)
 
@@ -1878,6 +1926,9 @@ def choose_windows_monitor(selector: str | None, monitors: list[dict] | None = N
 def normalize_space(s: str) -> str:
     return re.sub(r"\s+", " ", s or "").strip()
 
+_cached_places,_cached_places_meta=load_nl_place_cache()
+_set_nl_place_index(_cached_places)
+
 def _simple_ascii_lower(value: str) -> str:
     value = normalize_space(str(value or "")).lower()
     return value
@@ -2197,8 +2248,13 @@ def infer_city(categories: list[str], title: str) -> str:
     if m:
         return re.sub(r"^'S(?=[ -])", "'s", normalize_space(m.group(1)).title())
 
-    # For monitor-area messages, prefer the longest known place occurring in the raw title.
-    # This covers fire messages where the place is near the end, before vehicle numbers.
+    # Nationwide fallback from the current BAG woonplaats cache. This replaces
+    # the old local-only place hinting and works for raw pasted P2000 rows too.
+    nationwide = infer_city_from_nl_gazetteer(title)
+    if nationwide:
+        return nationwide
+
+    # Tiny legacy hint set retained only for compatibility before the first PDOK sync.
     title_key = f" {_place_key(title)} "
     hits = [place for place in KNOWN_MONITOR_PLACES if f" {place} " in title_key]
     if hits:
@@ -2510,6 +2566,18 @@ def normalize_location_display_case(value: str) -> str:
     out = re.sub(r"^'T\b", "'t", out)
     out = re.sub(r"^'S\b", "'s", out)
     return out
+
+
+def infer_message_city(categories: list[str], title: str, article_url: str = "", source_url: str = "") -> str:
+    """Resolve the locality without ever falling back to the configured station city.
+
+    112-nu article URLs carry the reported place explicitly and are preferred
+    over generic RSS categories. Other sources keep category-first behaviour.
+    """
+    host=(urlparse(source_url or article_url).hostname or "").lower()
+    if host.endswith("112-nu.nl"):
+        return city_from_article_url(article_url) or infer_city(categories,title)
+    return infer_city(categories,title) or city_from_article_url(article_url)
 
 
 def infer_location(title: str, summary: str, city: str) -> str:
@@ -2880,6 +2948,12 @@ class AppState:
         # learns the official local street/public-space names for later offline use.
         self.street_index_warming: set[str] = set()
         self.street_index_warm_lock = threading.Lock()
+        cached_places, cached_meta = load_nl_place_cache()
+        self.place_gazetteer_status = {
+            "online": None, "count": _set_nl_place_index(cached_places),
+            "last_sync": cached_meta.get("updated_at"), "last_error": None,
+            "source": "PDOK BAG woonplaatsen",
+        }
 
     @contextmanager
     def connect(self):
@@ -3009,19 +3083,13 @@ class AppState:
         for vals in matrix.values():
             wanted.update(vals)
         urls=[]
-        # Regional and national Alarmeringen feeds are fetched in parallel.
-        # The first copy that reaches SQLite wins; INSERT OR IGNORE deduplicates it.
-        for discipline in REGIONAL_DISCIPLINES:
-            if discipline in wanted:
-                url=NATIONAL_DISCIPLINE_URLS.get(discipline)
-                if url and url not in (self.config.get("feed_urls") or []): urls.append(url)
-        # One nationwide 112-nu request races the existing sources. We
-        # deliberately do not poll five service-specific 112-nu endpoints: one
-        # request is enough, keeps fair-use load low and is easier to dedupe.
-        if self.config.get("feed_112nu_enabled", True) and wanted.intersection({"brandweer","ambulance","politie","lifeliner"}):
-            if NU112_ALL_RSS not in urls and NU112_ALL_RSS not in (self.config.get("feed_urls") or []):
-                urls.append(NU112_ALL_RSS)
-        return urls
+        # 112-nu is primary from v4.4.8 onward. Alarmeringen remains an
+        # independent secondary race source so a 112-nu outage never blinds the monitor.
+        for discipline in wanted:
+            url=NATIONAL_DISCIPLINE_URLS.get(discipline)
+            if url and url not in (self.config.get("feed_urls") or []):
+                urls.append(url)
+        return list(dict.fromkeys(urls))
 
     def feed_config_view(self) -> dict:
         return {
@@ -3030,7 +3098,8 @@ class AppState:
             "supplemental_feed_urls": list(self.config.get("supplemental_feed_urls") or []),
             "fallback_feed_urls": list(self.config.get("fallback_feed_urls") or []),
             "feed_race_enabled": bool(self.config.get("feed_race_enabled", True)),
-            "feed_112nu_enabled": bool(self.config.get("feed_112nu_enabled", True)),
+            "feed_112nu_enabled": True,
+            "primary_provider": "112-nu.nl",
             "feed_parallel_workers": int(self.config.get("feed_parallel_workers",6)),
             "poll_interval_seconds": int(self.config.get("poll_interval_seconds",10)),
             "watchdog_stale_seconds": int(self.config.get("watchdog_stale_seconds",600)),
@@ -3044,7 +3113,7 @@ class AppState:
         fallback=self._clean_feed_urls(payload.get("fallback_feed_urls", self.config.get("fallback_feed_urls") or []), maximum=6, exclude=primary|set(supplemental))
         watchdog=bounded_int(payload.get("watchdog_stale_seconds", self.config.get("watchdog_stale_seconds",600)),600,180,86400)
         race_enabled=bool(payload.get("feed_race_enabled", self.config.get("feed_race_enabled", True)))
-        nu112_enabled=bool(payload.get("feed_112nu_enabled", self.config.get("feed_112nu_enabled", True)))
+        nu112_enabled=True
         workers=bounded_int(payload.get("feed_parallel_workers", self.config.get("feed_parallel_workers",6)),6,1,12)
         with self.config_lock:
             self.config["supplemental_feed_urls"]=supplemental
@@ -4942,6 +5011,47 @@ class SWVehicleApiWorker(threading.Thread):
                 break
 
 
+class NLPlaceGazetteerWorker(threading.Thread):
+    daemon = True
+    def __init__(self,state: AppState):
+        super().__init__(name="nl-place-gazetteer-worker"); self.state=state
+
+    def _sync(self):
+        url=PDOK_BAG_WOONPLAATS_URL+"?limit=1000&f=json"
+        names=[]; pages=0
+        try:
+            while url and pages < 20:
+                req=urllib.request.Request(url,headers={"User-Agent":USER_AGENT,"Accept":"application/geo+json, application/json"})
+                with urllib.request.urlopen(req,timeout=NL_PLACES_TIMEOUT_SECONDS) as resp:
+                    payload=json.loads(resp.read(15_000_000).decode("utf-8","replace"))
+                pages+=1
+                for feature in payload.get("features",[]) if isinstance(payload,dict) else []:
+                    props=feature.get("properties",{}) if isinstance(feature,dict) else {}
+                    status=normalize_space(str(props.get("status") or ""))
+                    if "ingetrokken" in status.lower():
+                        continue
+                    name=normalize_space(str(props.get("woonplaats") or ""))[:120]
+                    if name: names.append(name)
+                nxt=""
+                for link in payload.get("links",[]) if isinstance(payload,dict) else []:
+                    if isinstance(link,dict) and str(link.get("rel") or "").lower()=="next":
+                        nxt=str(link.get("href") or ""); break
+                url=nxt
+            if not names:
+                raise RuntimeError("PDOK gaf geen woonplaatsen terug")
+            names=sorted(set(names),key=str.casefold)
+            meta={"updated_at":utcnow_iso(),"count":len(names),"pages":pages,"source":"PDOK BAG woonplaatsen"}
+            write_nl_place_cache(names,meta); count=_set_nl_place_index(names)
+            self.state.place_gazetteer_status.update({"online":True,"count":count,"last_sync":meta["updated_at"],"last_error":None,"pages":pages})
+        except Exception as exc:
+            self.state.place_gazetteer_status.update({"online":False,"last_error":f"{type(exc).__name__}: {exc}"})
+
+    def run(self):
+        while not self.state.stop_event.is_set():
+            self._sync()
+            if self.state.stop_event.wait(NL_PLACES_SYNC_SECONDS): break
+
+
 class FeedPoller(threading.Thread):
     daemon = True
 
@@ -4974,6 +5084,9 @@ class FeedPoller(threading.Thread):
                 published = parse_dt(item.findtext("pubDate", default=""))
                 updated = published
                 categories = [normalize_space(c.text or "") for c in item.findall("category") if normalize_space(c.text or "")]
+                source_discipline=discipline_for_feed_url(source_url)
+                if source_discipline and source_discipline not in [c.lower() for c in categories]:
+                    categories.append(source_discipline)
                 if source_region_label:
                     categories.append(f"Regio {source_region_label}")
                 elif url:
@@ -4982,7 +5095,7 @@ class FeedPoller(threading.Thread):
                         categories.append(f"Regio {REGION_CATALOG[article_region]['label']}")
                 service = detect_service(title, summary, categories)
                 priority = detect_priority(title, summary)
-                city = infer_city(categories, title) or city_from_article_url(url)
+                city = infer_message_city(categories, title, url, source_url)
                 location = infer_location(title, summary, city)
                 units = infer_units(summary, title)
                 if not message_region_slug(categories, url) and service == "brandweer":
@@ -5025,6 +5138,9 @@ class FeedPoller(threading.Thread):
                 url = links[0].attrib.get("href", "")
             categories = [normalize_space(c.attrib.get("term", "")) for c in entry.findall("a:category", ATOM_NS)]
             categories = [c for c in categories if c]
+            source_discipline=discipline_for_feed_url(source_url)
+            if source_discipline and source_discipline not in [c.lower() for c in categories]:
+                categories.append(source_discipline)
             if source_region_label:
                 categories.append(f"Regio {source_region_label}")
             elif url:
@@ -5033,7 +5149,7 @@ class FeedPoller(threading.Thread):
                     categories.append(f"Regio {REGION_CATALOG[article_region]['label']}")
             service = detect_service(title, summary, categories)
             priority = detect_priority(title, summary)
-            city = infer_city(categories, title) or city_from_article_url(url)
+            city = infer_message_city(categories, title, url, source_url)
             location = infer_location(title, summary, city)
             units = infer_units(summary, title)
             if not message_region_slug(categories, url) and service == "brandweer":
@@ -6718,6 +6834,23 @@ def _write_pending_update_health(target_version: str, backup: Path) -> None:
     UPDATE_PENDING_HEALTH_PATH.write_text(json.dumps({"target_version":target_version,"backup":str(backup),"created_at":utcnow_iso(),"pid":os.getpid()},ensure_ascii=False,indent=2),encoding="utf-8")
 
 
+def _restart_kiosk_after_healthy_update() -> dict:
+    """Force the already-open firehouse display onto the newly installed frontend.
+
+    Runtime identity reloads remain useful, but Linux kiosk browsers can keep an old
+    renderer/profile alive across a backend exec.  A completed update therefore also
+    asks the external supervisor to kill and relaunch the kiosk process.
+    """
+    try:
+        sup = ensure_supervisor_running(timeout=4.5)
+        if not sup.get("running"):
+            return {"ok": False, "error": "supervisor niet beschikbaar", "supervisor": sup}
+        command = queue_supervisor_command("restart-kiosk")
+        return {"ok": True, "command": command, "supervisor": sup}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
 def _mark_update_healthy_later(state: "AppState") -> None:
     if not UPDATE_PENDING_HEALTH_PATH.exists(): return
     def worker():
@@ -6731,6 +6864,14 @@ def _mark_update_healthy_later(state: "AppState") -> None:
             if not (FRONTEND_DIR/"index.html").is_file(): return
             UPDATE_PENDING_HEALTH_PATH.unlink(missing_ok=True)
             _write_update_status(state="ready",message=f"v{APP_VERSION} gezond na update",installed_version=APP_VERSION,latest_version=APP_VERSION,available=False,error="")
+            # Do not merely hope the old JavaScript notices the new backend.  Once
+            # the new build is healthy, explicitly recycle the kiosk browser so Linux
+            # also loads the new app.js/CSS from a clean process.
+            refresh = _restart_kiosk_after_healthy_update()
+            if refresh.get("ok"):
+                _write_update_status(kiosk_refreshed=True, kiosk_refresh_at=utcnow_iso())
+            else:
+                _write_update_status(kiosk_refreshed=False, kiosk_refresh_error=str(refresh.get("error") or "onbekend")[:500])
         except Exception:
             pass
     threading.Thread(target=worker,daemon=True,name="update-health-confirm").start()
@@ -7481,7 +7622,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({
                 "regions": rows,
                 "disciplines": list(ALL_DISCIPLINES),
-                "national_feeds": dict(NATIONAL_DISCIPLINE_URLS),
+                "national_feeds": dict(NU112_DISCIPLINE_URLS),
+                "secondary_feeds": dict(NATIONAL_DISCIPLINE_URLS),
                 "subregion_parent": dict(SUBREGION_PARENT),
             })
         if parsed.path == "/api/feed-config":
@@ -7514,9 +7656,11 @@ class Handler(BaseHTTPRequestHandler):
                 "messages_total": count,
                 "messages_today": count_today,
                 "poll_interval_seconds": max(8, int(self.state.config.get("poll_interval_seconds", 10))),
-                "source": "parallelle P2000 feed-race",
-                "source_url": "https://alarmeringen.nl/",
+                "source": "112-nu.nl hoofdfeeds + Alarmeringen race/fallback",
+                "source_url": "https://112-nu.nl/",
+                "primary_feeds": list(self.state.config.get("feed_urls") or []),
                 "race_feeds": self.state.race_feed_urls(),
+                "place_gazetteer": dict(self.state.place_gazetteer_status),
                 "supervisor": supervisor_status(),
                 "scope": self.state.config.get("standplaats") or SCOPE_LABEL,
                 "scope_code": "+".join(setup_region_disciplines(self.state.config).keys()),
@@ -7824,6 +7968,7 @@ def main():
     # loaded synchronously above, while a full authenticated refresh happens in
     # the background immediately and then every five minutes. Legacy regional
     # sources remain an asynchronous fallback and never block the lichtkrant.
+    NLPlaceGazetteerWorker(state).start()
     SWVehicleApiWorker(state).start()
     # Legacy online sources are fallback-only once the SW API is configured.
     # Their existing local shards and bundled seed remain available at all times.

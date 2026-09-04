@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.6';
+const CLIENT_VERSION='4.4.8';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -293,9 +293,15 @@ async function loadVehicleDb(){
 function vehicleDisplayLabel(v){
   if(!v)return '';
   if(v.api_primary||String(v.source||'').includes('SW Mediaproducties')){
-    return [v.function_code||v.type,v.function_name||v.label,v.station_name||v.station].map(x=>String(x||'').trim()).filter(Boolean).join(' • ');
+    const code=String(v.function_code||v.type||'').trim(),name=String(v.function_name||v.label||code||'Brandweervoertuig').trim(),station=String(v.station_name||v.station||'').trim();
+    const withCode=code&&name.toLocaleUpperCase('nl-NL')!==code.toLocaleUpperCase('nl-NL')?`${name} (${code})`:name;
+    return `${withCode}${station?` — ${station}`:''}`.trim();
   }
   return String(v.display||[v.type,v.station].filter(Boolean).join(' '));
+}
+function vehicleHeaderFor(v,callsign){
+  const natural=vehicleDisplayLabel(v);
+  return (v?.api_primary||String(v?.source||'').includes('SW Mediaproducties'))?natural:`${callsign} - ${natural}`;
 }
 function vehicleSpeechLabel(v){
   if(!v)return '';
@@ -335,11 +341,19 @@ function vehicleDetails(m){
     [/(?<!\d)(?:1220805|12[- ]?20805)(?!\d)/i,'1220805','OvD-G 805 - Officier van Dienst Geneeskundig','Officier van Dienst Geneeskundig 805']
   ];
   for(const [re,key,header,speech] of ovdSpecials)if(re.test(hay))add(key,header,speech,{type:'OVD-G',isOfficer:true});
+  // Any exact SW/local catalogue hit is a real unit regardless of discipline.
+  // This makes future ambulance/police/KNRM API rows immediately useful too,
+  // without teaching the frontend a new hardcoded number plan.
+  for(const match of hay.matchAll(/(?<!\d)(\d{2}(?:[- ]?\d{2}[- ]?\d{3}|[- ]?\d{3,5}))(?!\d)/g)){
+    const digits=String(match[1]||'').replace(/\D/g,''),v=vehicleByDigits(digits);if(!v)continue;
+    const callsign=v?.callsign||match[1],type=String(v.type||'UNIT').toUpperCase();
+    add(digits,vehicleHeaderFor(v,callsign),vehicleSpeechLabel(v),{type,station:v.station||'',isOfficer:/^(?:OVD|HOVD|DA-OVD|DB-OVD|AGS|VEBS)/.test(type)});
+  }
   const fireService=String(m?.service||'').toLowerCase()==='brandweer';
   for(const match of hay.matchAll(/(?<!\d)(\d{2})[- ](\d{2})[- ](\d{3})(?!\d)/g)){
     const digits=`${match[1]}${match[2]}${match[3]}`,v=vehicleByDigits(digits),callsign=v?.callsign||`${match[1]}-${match[2]}-${match[3]}`;
     if(!fireService&&!v)continue;
-    if(v){const type=String(v.type||'BRW').toUpperCase();add(digits,`${callsign} - ${vehicleDisplayLabel(v)}`,vehicleSpeechLabel(v),{type,station:v.station||''})}
+    if(v){const type=String(v.type||'BRW').toUpperCase();add(digits,vehicleHeaderFor(v,callsign),vehicleSpeechLabel(v),{type,station:v.station||''})}
     else add(digits,`${callsign} - Brandweer ${FIRE_REGION_LABELS[match[1]]||''}`.trim(),`brandweervoertuig ${FIRE_REGION_LABELS[match[1]]||''}`.trim(),{type:'BRW'});
   }
   for(const match of hay.matchAll(/(?<!\d)(\d{2})[- ]?(\d{4})(?!\d)/g)){
@@ -347,7 +361,7 @@ function vehicleDetails(m){
     if(!fireService&&!exact)continue;
     const v=exact||inferredFireVehicle(digits),callsign=v?.callsign||`${match[1]}-${match[2]}`;
     if(v){
-      let header=`${callsign} - ${vehicleDisplayLabel(v)}`;
+      let header=vehicleHeaderFor(v,callsign);
       let speech=vehicleSpeechLabel(v);
       if(digits==='200064'&&/\bASS\.?\s*AMBU\s*\(\s*REDDINGSKUSSEN\s*\)/i.test(norm(hay))){header=`${callsign} - Sprongredder Breda`;speech='sprongredder Breda'}
       const type=String(v.type||'').toUpperCase();
@@ -360,7 +374,7 @@ function vehicleDetails(m){
     const digits=`${match[1]}${match[2]}`,v=vehicleByDigits(digits),callsign=v?.callsign||`${match[1]}-${match[2]}`;
     if(v){
       const type=String(v.type||'AMB').toUpperCase();
-      add(digits,`${callsign} - ${vehicleDisplayLabel(v)}`,vehicleSpeechLabel(v),{type,station:v.station||''});
+      add(digits,vehicleHeaderFor(v,callsign),vehicleSpeechLabel(v),{type,station:v.station||''});
     }else add(digits,`${callsign} - Ambulance`,'ambulance',{type:'AMB'});
   }
   for(const raw of (m?.units||[])){
@@ -662,6 +676,24 @@ function sentenceCaseSpeech(v){
   const s=String(v||'').trim().toLocaleLowerCase('nl-NL');
   return s?s.charAt(0).toLocaleUpperCase('nl-NL')+s.slice(1):'';
 }
+function stripCallsignsForSpeech(value,m){
+  let s=String(value||'');
+  // First remove every exact unit recognised by the current SW/local catalogue.
+  for(const item of vehicleDetails(m)){
+    const digits=String(item?.key||'').replace(/\D/g,'');if(!/^\d{5,7}$/.test(digits))continue;
+    let pattern='';
+    if(digits.length===7)pattern=`${digits.slice(0,2)}[- ]?${digits.slice(2,4)}[- ]?${digits.slice(4)}`;
+    else if(digits.length===6)pattern=`${digits.slice(0,2)}[- ]?${digits.slice(2)}`;
+    else pattern=`${digits.slice(0,2)}[- ]?${digits.slice(2)}`;
+    s=s.replace(new RegExp(`(?<!\\d)(?:${digits}|${pattern})(?!\\d)`,'g'),' ');
+  }
+  // Native brandweer rows end in six/seven digit roepnummers. Once the service
+  // is known as brandweer these are bookkeeping, never spoken address text.
+  if(String(m?.service||'').toLowerCase()==='brandweer'){
+    s=s.replace(/(?<!\d)(?:\d{2}[- ]?\d{2}[- ]?\d{3}|\d{7}|\d{2}[- ]?\d{4}|\d{6})(?!\d)/g,' ');
+  }
+  return s.replace(/\s+/g,' ').trim();
+}
 function speechLocation(m,info=speechIncidentInfo(m),city=speechCity(m)){
   let raw=norm(originalMessage(m));
   raw=raw
@@ -685,11 +717,12 @@ function speechLocation(m,info=speechIncidentInfo(m),city=speechCity(m)){
     .replace(/^\s*(?:AMBU|AMBULANCE|POLITIE)\b\s*/ig,' ')
     // Police incident/bundle id (e.g. 366315) and ambulance/MMT resources.
     .replace(/^(?:\s*\d{4,7}\s+)+(?=[A-ZÀ-ÖØ-Þ])/i,' ')
-    .replace(/(?<!\d)(?:(?:08|18|19|20|21|22)[- ]?\d{4}|13[- ]?\d{3}|13\d{3}|17[- ]?\d{3}|17\d{3}|08[- ]?\d{3}|08\d{3}|122080[345]|12[- ]?2080[345])(?!\d)/g,' ')
+    .replace(/(?<!\d)(?:13[- ]?\d{3}|17[- ]?\d{3}|08[- ]?\d{3}|122080[345]|12[- ]?2080[345])(?!\d)/g,' ')
     .replace(/\b(?:BON|RIT)\s*:?\s*\d+\b.*$/ig,' ')
     .replace(/\b\d{4}\s*[A-Z]{2}\b/ig,' ')
     .replace(/\([^)]*\)/g,' ')
     .replace(/\s+/g,' ').trim();
+  raw=stripCallsignsForSpeech(raw,m);
   if(city){
     const reCity=new RegExp(`\\b${escapeRegex(norm(city))}\\b`,'i');
     const hit=reCity.exec(raw);
@@ -703,7 +736,7 @@ function speechLocation(m,info=speechIncidentInfo(m),city=speechCity(m)){
   if(!raw){
     raw=norm(m?.location||'');
     if(city)raw=raw.replace(new RegExp(`\\b${escapeRegex(norm(city))}\\b`,'ig'),' ');
-    raw=raw.replace(/(?<!\d)(?:08|18|19|20|21|22)[- ]?\d{4}(?!\d)/g,' ').replace(/\b\d{4}\s*[A-Z]{2}\b/ig,' ').replace(/\s+/g,' ').trim();
+    raw=stripCallsignsForSpeech(raw,m).replace(/\b\d{4}\s*[A-Z]{2}\b/ig,' ').replace(/\s+/g,' ').trim();
   }
   return naturalRoadSpeechLocation(sentenceCaseSpeech(raw));
 }
@@ -1325,9 +1358,20 @@ function nextPriorityCarouselIndex(now=Date.now()){
   const rows=state.activeMessages||[];if(rows.length<=1)return 0;let best=-1,bestScore=-Infinity;
   rows.forEach((m,i)=>{if(m.id===state.activeMessage?.id)return;const last=state.carouselShownAt.get(m.id)||0,age=Math.max(1,now-last),score=age*carouselWeight(m)+(publishedMs(m)/1e9);if(score>bestScore){bestScore=score;best=i}});return best>=0?best:(state.activeMessageIndex+1)%rows.length;
 }
-// Live P2000 items expire strictly from the timestamp carried by that item.
-// A later message never extends an older message's three-minute lifetime.
-function liveMessageStartedAt(m){return publishedMs(m)||ingestedMs(m)||0}
+// Live P2000 items have an absolute deadline.  Feed timestamps can occasionally
+// be ahead of the kiosk clock (or be interpreted differently by a source), so
+// never let such clock skew keep a message on screen indefinitely.  The earliest
+// trustworthy timestamp wins: publication, backend ingestion, or local first-seen.
+function localFirstSeenMs(m){
+  const existing=Number(m?.__monitorFirstSeenAt)||0;if(existing>0)return existing;
+  const now=Date.now();try{Object.defineProperty(m,'__monitorFirstSeenAt',{value:now,writable:false,configurable:true,enumerable:false})}catch{try{m.__monitorFirstSeenAt=now}catch{}}return now
+}
+function liveMessageStartedAt(m){
+  if(!m)return 0;const now=Date.now(),futureTolerance=30*1000,pub=publishedMs(m),ing=ingestedMs(m),seen=localFirstSeenMs(m);
+  const trusted=[pub,ing,seen].filter(t=>Number.isFinite(t)&&t>0&&t<=now+futureTolerance);
+  if(trusted.length)return Math.min(...trusted);
+  const any=[ing,pub,seen].filter(t=>Number.isFinite(t)&&t>0);return any.length?Math.min(...any.map(t=>Math.min(t,now))):now
+}
 function liveMessageExpiresAt(m){const started=liveMessageStartedAt(m);return started?started+visibleMs():0}
 function isLiveMessageActive(m,now=Date.now()){const expires=liveMessageExpiresAt(m);return !!m&&!!expires&&now<expires}
 function activeLiveMessages(now=Date.now()){return (state.activeMessages||[]).filter(m=>isLiveMessageActive(m,now))}
@@ -1369,9 +1413,9 @@ function pruneExpiredActiveMessages(now=Date.now()){
   const changed=oldLength!==state.activeMessages.length||currentExpired;if(changed||state.liveExpiryTimer===null)scheduleLiveExpiry();return changed
 }
 function activeVisible(){
-  // Expiry is maintained by a dedicated precise timer + the 1 Hz safety tick.
-  // Keep this hot-path side-effect free: rendering used to reschedule timers here.
-  if((state.activeMessages||[]).length)return !!state.activeMessage;
+  // Rendering itself enforces the deadline too.  Even if a browser throttles or
+  // misses the timeout/tick, an expired live message can never remain visible.
+  if((state.activeMessages||[]).length)return !!state.activeMessage&&isLiveMessageActive(state.activeMessage,Date.now());
   return !!state.activeMessage&&Date.now()<state.activeUntil
 }
 function selectActiveMessage(index,{resetSwitch=true}={}){

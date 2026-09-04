@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>P2000 Monitor</title>
-  <link rel="stylesheet" href="/lightkrant.css?v=4430">
+  <link rel="stylesheet" href="/lightkrant.css?v=4480">
   <link rel="manifest" href="/manifest.webmanifest">
 </head>
 <body>
@@ -46,7 +46,7 @@
       const r=await fetch('/api/setup',{cache:'no-store'}),d=await r.json();
       if(!d?.setup?.setup_complete){location.replace('/setup.html');return;}
     }catch(e){console.warn('Setupcontrole mislukt; monitor probeert normaal te starten.',e)}
-    const script=document.createElement('script');script.src='/app.js?v=4430';script.defer=true;document.body.appendChild(script);
+    const script=document.createElement('script');script.src='/app.js?v=4480';script.defer=true;document.body.appendChild(script);
   })();
 </script>
 </body>
