@@ -67,10 +67,10 @@ async function displayInfo(){
     // Backend is source of truth. Using the local DEFAULTS value here caused a
     // race where a saved second monitor was silently reset to primary.
     const wanted=String(x.selected_monitor_id||settings.kioskMonitor||'primary');
-    const valueOf=r=>String(r.fingerprint||r.device||r.id||'primary');
+    const valueOf=r=>String(r.selector||r.device||r.fingerprint||r.id||'primary');
     if(sel&&rows.length){
       sel.innerHTML=rows.map((r,i)=>`<option value="${escapeHtml(valueOf(r)||String(i+1))}">${escapeHtml(r.label||`Scherm ${i+1}`)}${Number.isFinite(r.x)&&Number.isFinite(r.y)?` • ${r.x},${r.y}`:''}</option>`).join('');
-      let chosen=rows.find(r=>[r.fingerprint,r.device,r.id].map(v=>String(v||'')).includes(wanted));
+      let chosen=rows.find(r=>[r.selector,r.fingerprint,r.device,r.id].map(v=>String(v||'')).includes(wanted));
       if(chosen){
         sel.value=valueOf(chosen);
         settings.kioskMonitor=sel.value;
@@ -115,7 +115,7 @@ async function vehicleDb(){
   try{
     const s=await api('/api/vehicles/status'),st=s.status||{},regions=st.selected_regions||[],cached=st.cached_regions||[];
     const rows=Object.entries(st.regions||{}),done=rows.filter(([,x])=>x?.ok).length;
-    setText('#vehicleCount',st.count??'—');setText('#vehicleVersion',st.version||'4.4.4');
+    setText('#vehicleCount',st.count??'—');setText('#vehicleVersion',st.version||'4.4.5');
     const busy=st.running||st.force_pending;
     setText('#vehicleRegionStatus',busy?`bijwerken… (${Math.max(done,cached.length)}/${regions.length})`:(regions.length?`${Math.max(done,cached.length)}/${regions.length} regio’s`:'geen BRW-regio'));
     const detail=$('#vehicleSyncDetail');

@@ -7,7 +7,7 @@ desktop=(ROOT/'tools'/'linux_desktop.py').read_text(encoding='utf-8')
 supervisor=(ROOT/'tools'/'supervisor.py').read_text(encoding='utf-8')
 version=(ROOT/'VERSION').read_text().strip()
 checks={
-    'version_443': version=='4.4.4',
+    'version_443': tuple(map(int,version.split('.'))) >= (4,4,1),
     'shared_desktop_helper': 'tools/linux_desktop.py' in start and (ROOT/'tools'/'linux_desktop.py').is_file(),
     'snap_safe_profile': 'HOME / "snap" / c.snap_package / "common"' in desktop,
     'flatpak_support': 'FLATPAKS' in desktop and 'flatpak' in desktop and '.var' in desktop,
@@ -22,7 +22,7 @@ checks={
     'desktop_shortcuts': 'p2000-monitor-wizard.desktop' in installer and 'p2000-monitor-debug.desktop' in installer,
 }
 failed=[k for k,v in checks.items() if not v]
-print(f"Linux launcher v4.4.4 checks: {len(checks)-len(failed)}/{len(checks)}")
+print(f"Linux launcher checks: {len(checks)-len(failed)}/{len(checks)}")
 if failed:
     print('FAILED:', ', '.join(failed))
     raise SystemExit(1)

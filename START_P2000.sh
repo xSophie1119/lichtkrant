@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# P2000 Monitor Linux launcher - v4.4.4
+# P2000 Monitor Linux launcher - v4.4.5
 set -u
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.4')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.5')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
 BASE_RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" ]]; then BASE_RUNTIME=/tmp; fi
@@ -82,11 +82,13 @@ log "[4/4] Lichtkrant op ${P2000_DISPLAY_DEVICE:-primary} (${P2000_WINDOW_POSITI
 if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
   die 5 'Geen grafische Linux-sessie gevonden. Start P2000 vanuit je desktop/gebruikerssessie, niet via SSH of een root-service.'
 fi
+KIOSK_EXTRA=()
+if [[ "${P2000_DISPLAY_PRIMARY:-1}" == "0" ]]; then KIOSK_EXTRA+=(--prefer-x11); fi
 DETAIL="$("$P2000_PYTHON" "$ROOT/tools/linux_desktop.py" kiosk \
   --url 'http://127.0.0.1:8765/' \
   --position "${P2000_WINDOW_POSITION:-0,0}" \
   --size "${P2000_WINDOW_SIZE:-1920,1080}" \
-  --rundir "$RUNDIR" 2>>"$BROWSER_LOG")"
+  --rundir "$RUNDIR" "${KIOSK_EXTRA[@]}" 2>>"$BROWSER_LOG")"
 RC=$?
 if [[ $RC -ne 0 ]]; then
   tail -n 80 "$BROWSER_LOG" 2>/dev/null | tee -a "$START_LOG" >&2 || true

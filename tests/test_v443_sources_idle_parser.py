@@ -14,7 +14,7 @@ class State:
 
 state=State(); parsed=mod.parse_raw_p2000_line(state,RAW)
 checks={
-    'version_443': mod.APP_VERSION=='4.4.4' and (ROOT/'VERSION').read_text().strip()=='4.4.4',
+    'version_443': tuple(map(int,mod.APP_VERSION.split('.'))) >= (4,4,3) and tuple(map(int,(ROOT/'VERSION').read_text().strip().split('.'))) >= (4,4,3),
     'sample_city': parsed['city']=='Bavel',
     'sample_location': parsed['location']=='A58 Li - Kp St.Annabosch',
     'sample_channel': parsed['dispatch_channel']=='BZB-01',

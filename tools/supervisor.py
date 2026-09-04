@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
 STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.4'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.5'
 LOG=DATA/'supervisor.log'
 _runtime_base=Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
 if not _runtime_base.exists() or not os.access(_runtime_base, os.W_OK | os.X_OK): _runtime_base=Path('/tmp')
@@ -130,9 +130,15 @@ def rollback_if_pending():
         return cp.returncode==0
     except Exception as e:log(f'Rollback fout: {e}');return False
 
-def selected_fingerprint(display):
-    try:return str((display or {}).get('display',{}).get('selected_monitor',{}).get('fingerprint') or '')
-    except Exception:return ''
+def selected_display_state(display):
+    try:
+        d=(display or {}).get('display',{}) or {}
+        m=d.get('selected_monitor',{}) or {}
+        selector=str(d.get('selected_monitor_id') or m.get('selector') or m.get('device') or '')
+        connected=bool(d.get('selection_connected',d.get('connected',False)))
+        geometry=(int(m.get('x',0)),int(m.get('y',0)),int(m.get('width',0)),int(m.get('height',0)))
+        return selector,connected,geometry
+    except Exception:return '',False,(0,0,0,0)
 
 def consume_command():
     if not COMMAND.exists():return ''
@@ -149,7 +155,7 @@ def main():
     if old:
         print(f'P2000 supervisor draait al (PID {old}).');return 0
     DATA.mkdir(parents=True,exist_ok=True);PIDFILE.write_text(str(os.getpid()),encoding='utf-8')
-    counters={'backend_restarts':0,'kiosk_restarts':0,'rollbacks':0};state='starting';last_action='';last_error='';backend_failures=0;kiosk_stale_hits=0;last_fp='';last_kiosk_restart=0.0;setup_was_incomplete=False;setup_completed_grace_until=0.0
+    counters={'backend_restarts':0,'kiosk_restarts':0,'rollbacks':0};state='starting';last_action='';last_error='';backend_failures=0;kiosk_stale_hits=0;last_selector='';last_connected=None;last_geometry=None;geometry_candidate=None;geometry_hits=0;last_kiosk_restart=0.0;setup_was_incomplete=False;setup_completed_grace_until=0.0
     log(f'P2000 supervisor v{VERSION} gestart (PID {os.getpid()}).')
     try:
         while True:
@@ -173,7 +179,7 @@ def main():
                 log(f'{last_action}: {"OK" if ok else "MISLUKT"}')
                 backend_failures=0;backend_ok=ok
 
-            kiosk_age=10**9;fp=''
+            kiosk_age=10**9;selector='';display_connected=False;geometry=(0,0,0,0)
             if backend_ok:
                 setup_row=api('/api/setup',1.5) or {}
                 setup_complete=bool((setup_row.get('setup') or {}).get('setup_complete'))
@@ -193,20 +199,37 @@ def main():
                         log(last_action)
                     h=(health or {}).get('health') or {}
                     kiosk_age=iso_age((h.get('display_client') or {}).get('reported_at'))
-                    disp=api('/api/display/info',2);fp=selected_fingerprint(disp)
-                    if fp and last_fp and fp!=last_fp and not a.no_kiosk and time.monotonic()-last_kiosk_restart>30:
-                        last_action='Monitor gewijzigd/herverbonden; kiosk opnieuw geplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic()
-                    if fp:last_fp=fp
+                    disp=api('/api/display/info',2);selector,display_connected,geometry=selected_display_state(disp)
+                    # Explicit screen changes already enqueue restart-kiosk from
+                    # the backend. Never infer a screen change from focus/order/
+                    # fingerprint changes: that caused Linux monitor ping-pong.
+                    if selector and last_selector and selector==last_selector:
+                        if last_connected is False and display_connected and not a.no_kiosk and time.monotonic()-last_kiosk_restart>20:
+                            last_action='Geselecteerd scherm opnieuw aangesloten; kiosk teruggeplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic()
+                        if display_connected and last_geometry and geometry!=last_geometry:
+                            if geometry_candidate==geometry: geometry_hits+=1
+                            else: geometry_candidate=geometry;geometry_hits=1
+                            if geometry_hits>=2 and not a.no_kiosk and time.monotonic()-last_kiosk_restart>30:
+                                last_action='Geometrie van geselecteerd scherm stabiel gewijzigd; kiosk opnieuw geplaatst';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();geometry_hits=0
+                        else:
+                            geometry_candidate=None;geometry_hits=0
+                    else:
+                        geometry_candidate=None;geometry_hits=0
+                    if selector:last_selector=selector
+                    last_connected=display_connected
+                    if display_connected:last_geometry=geometry
                     # Give browser 90s boot grace and another 90s after setup.
                     grace=max(STARTED+90,setup_completed_grace_until)
-                    stale=kiosk_age>75 and time.monotonic()>grace
+                    # If the locked monitor is unplugged, restarting the browser
+                    # cannot help and may make the compositor move it to primary.
+                    stale=display_connected and kiosk_age>75 and time.monotonic()>grace
                     kiosk_stale_hits=(kiosk_stale_hits+1) if stale else 0
                     if kiosk_stale_hits>=2 and not a.no_kiosk and time.monotonic()-last_kiosk_restart>60:
                         last_action='Kiosk-heartbeat verlopen; browser automatisch herstart';log(last_action);kill_kiosk();time.sleep(.3);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic();kiosk_stale_hits=0
 
             write_json(STATUS,{
                 'version':VERSION,'pid':os.getpid(),'heartbeat_at':now_iso(),'state':state,'backend_ok':backend_ok,
-                'kiosk_heartbeat_age_seconds':None if kiosk_age>=10**8 else round(kiosk_age,1),'display_fingerprint':fp or last_fp,
+                'kiosk_heartbeat_age_seconds':None if kiosk_age>=10**8 else round(kiosk_age,1),'display_selector':selector or last_selector,'display_connected':display_connected,
                 **counters,'last_action':last_action,'last_error':last_error,
             })
             if a.once:return 0 if backend_ok else 2

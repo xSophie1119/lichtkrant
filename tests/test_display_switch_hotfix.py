@@ -27,7 +27,7 @@ try:
         state.display_info_cache={'stale':True};state.display_info_monotonic=999999
         result=state.select_display('HDMI-A-1')
         saved=state.get_display_settings()
-        checks['selection_saved_as_stable_fingerprint']=saved.get('kioskMonitor')=='fp:second222'
+        checks['selection_saved_as_exact_linux_output']=saved.get('kioskMonitor')=='linux-output:HDMI-A-1'
         checks['selection_returns_geometry']=result.get('selected_monitor',{}).get('x')==1920 and result.get('selected_monitor',{}).get('width')==2560
         checks['display_cache_refreshed']=state.display_info_cache is not None and state.display_info_cache.get('selected_monitor',{}).get('device')=='HDMI-A-1'
         try:
@@ -70,7 +70,7 @@ try:
         state=mod.AppState({'vehicle_cache_regions':[]});state.init_db();mod.Handler.state=state
         httpd=mod.QuietThreadingHTTPServer(('127.0.0.1',0),mod.Handler);port=httpd.server_address[1]
         thread=threading.Thread(target=httpd.serve_forever,daemon=True);thread.start()
-        req=urllib.request.Request(f'http://127.0.0.1:{port}/api/display/select',data=json.dumps({'selector':'fp:second222'}).encode(),headers={'Content-Type':'application/json'},method='POST')
+        req=urllib.request.Request(f'http://127.0.0.1:{port}/api/display/select',data=json.dumps({'selector':'HDMI-A-1'}).encode(),headers={'Content-Type':'application/json'},method='POST')
         with urllib.request.urlopen(req,timeout=4) as r: payload=json.load(r)
         checks['api_switch_ok']=payload.get('ok') is True and payload.get('reposition_requested') is True
         checks['api_switch_geometry']=payload.get('selected_monitor',{}).get('device')=='HDMI-A-1' and payload.get('selected_monitor',{}).get('x')==1920

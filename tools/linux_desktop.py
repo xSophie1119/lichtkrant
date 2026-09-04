@@ -232,15 +232,17 @@ def _clean_profile_locks(profile: Path) -> None:
             pass
 
 
-def _platform_modes(position: str) -> list[str]:
+def _platform_modes(position: str, prefer_x11: bool = False) -> list[str]:
     forced = (os.environ.get("P2000_BROWSER_PLATFORM") or "auto").strip().lower()
     if forced in {"x11", "wayland"}:
         return [forced, "auto"]
     wayland = bool(os.environ.get("WAYLAND_DISPLAY"))
     x11 = bool(os.environ.get("DISPLAY"))
-    non_primary = position not in {"", "0,0", "+0+0"}
+    non_primary = prefer_x11 or position not in {"", "0,0", "+0+0"}
     # On GNOME/KDE Wayland, XWayland usually respects explicit kiosk geometry
-    # better than native Wayland, where the compositor owns placement.
+    # better than native Wayland, where the compositor owns placement.  Do not
+    # infer "primary" from 0,0: a non-primary output can legitimately live at
+    # 0,0 while the primary output has negative coordinates.
     if wayland and x11 and non_primary:
         return ["x11", "wayland", "auto"]
     modes = ["auto"]
@@ -279,8 +281,57 @@ def _browser_argv(c: Candidate, profile: Path, url: str, kiosk: bool,
     return argv
 
 
+def _force_x11_geometry(profile: Path, position: str, size: str, log_path: Path) -> bool:
+    """Best-effort hard move for X11/XWayland kiosk windows.
+
+    Chromium flags are advisory under some desktop environments.  When wmctrl
+    or xdotool is available, move the actual browser window after launch.
+    """
+    if not os.environ.get("DISPLAY"):
+        return False
+    try:
+        x,y=[int(v.strip()) for v in position.split(",",1)]
+        w,h=[max(1,int(v.strip())) for v in size.split(",",1)]
+    except Exception:
+        return False
+    pids=set(matching_pids(profile,"127.0.0.1:8765"))
+    if not pids:
+        return False
+    wm=shutil.which("wmctrl")
+    if wm:
+        cp=_run([wm,"-lp"],3)
+        if cp and cp.returncode==0:
+            wins=[]
+            for line in cp.stdout.splitlines():
+                parts=line.split(None,4)
+                if len(parts)>=3:
+                    try:
+                        if int(parts[2]) in pids:wins.append(parts[0])
+                    except Exception:pass
+            for wid in wins[-3:]:
+                # Fullscreen can pin a window to its old monitor. Temporarily
+                # remove it, move/size, then restore fullscreen.
+                _run([wm,"-ir",wid,"-b","remove,fullscreen"],2)
+                _run([wm,"-ir",wid,"-e",f"0,{x},{y},{w},{h}"],2)
+                _run([wm,"-ir",wid,"-b","add,fullscreen"],2)
+                with log_path.open("a",encoding="utf-8") as log:log.write(f"x11-hard-placement=wmctrl window={wid} geometry={x},{y},{w},{h}\n")
+                return True
+    xd=shutil.which("xdotool")
+    if xd:
+        for pid in sorted(pids):
+            cp=_run([xd,"search","--onlyvisible","--pid",str(pid)],2)
+            if not cp or cp.returncode!=0:continue
+            wins=[w.strip() for w in cp.stdout.splitlines() if w.strip()]
+            for wid in wins[-3:]:
+                _run([xd,"windowmove",wid,str(x),str(y)],2)
+                _run([xd,"windowsize",wid,str(w),str(h)],2)
+                with log_path.open("a",encoding="utf-8") as log:log.write(f"x11-hard-placement=xdotool window={wid} geometry={x},{y},{w},{h}\n")
+                return True
+    return False
+
+
 def _launch(c: Candidate, profile: Path, url: str, kiosk: bool, position: str,
-            size: str, probe_seconds: float, rundir: Path, log_path: Path) -> tuple[bool, str]:
+            size: str, probe_seconds: float, rundir: Path, log_path: Path, prefer_x11: bool = False) -> tuple[bool, str]:
     profile.mkdir(parents=True, exist_ok=True)
     _clean_profile_locks(profile)
     if c.family == "firefox":
@@ -294,7 +345,7 @@ def _launch(c: Candidate, profile: Path, url: str, kiosk: bool, position: str,
             )
         except Exception:
             pass
-    modes = _platform_modes(position) if c.family == "chromium" else ["auto"]
+    modes = _platform_modes(position, prefer_x11) if c.family == "chromium" else ["auto"]
     for mode in modes:
         if mode == "wayland" and not os.environ.get("WAYLAND_DISPLAY"):
             continue
@@ -318,9 +369,11 @@ def _launch(c: Candidate, profile: Path, url: str, kiosk: bool, position: str,
             if proc.poll() is None or matching_pids(profile, url):
                 time.sleep(0.15)
                 if proc.poll() is None or matching_pids(profile, url):
+                    if kiosk and mode=="x11": _force_x11_geometry(profile,position,size,log_path)
                     return True, f"{c.label} ({mode})"
             time.sleep(0.15)
         if matching_pids(profile, url):
+            if kiosk and mode=="x11": _force_x11_geometry(profile,position,size,log_path)
             return True, f"{c.label} ({mode})"
         with log_path.open("a", encoding="utf-8") as log:
             log.write(f"browser stopte direct, exit={proc.poll()}\n")
@@ -329,7 +382,7 @@ def _launch(c: Candidate, profile: Path, url: str, kiosk: bool, position: str,
 
 
 def open_browser(url: str, kiosk: bool, position: str, size: str,
-                 probe_seconds: float, rundir_path: str = "") -> tuple[bool, str]:
+                 probe_seconds: float, rundir_path: str = "", prefer_x11: bool = False) -> tuple[bool, str]:
     if not IS_LINUX:
         return False, "linux_desktop.py werkt alleen op Linux"
     if not gui_available():
@@ -344,7 +397,7 @@ def open_browser(url: str, kiosk: bool, position: str, size: str,
             if pids:
                 (rd / "browser.pid").write_text(str(pids[-1]), encoding="utf-8")
             return True, f"{c.label} draait al"
-        ok, detail = _launch(c, profile, url, kiosk, position, size, probe_seconds, rd, LOG_FILE)
+        ok, detail = _launch(c, profile, url, kiosk, position, size, probe_seconds, rd, LOG_FILE, prefer_x11)
         if ok:
             return True, detail
     # For normal control/wizard pages, a standards-compliant desktop opener is a
@@ -422,6 +475,7 @@ def main() -> int:
     p.add_argument("--size", default=os.environ.get("P2000_WINDOW_SIZE", "1920,1080"))
     p.add_argument("--probe-seconds", type=float, default=float(os.environ.get("P2000_BROWSER_PROBE_SECONDS", "3")))
     p.add_argument("--rundir", default="")
+    p.add_argument("--prefer-x11", action="store_true")
     p = sub.add_parser("open")
     p.add_argument("--url", required=True)
     p.add_argument("--probe-seconds", type=float, default=1.8)
@@ -435,7 +489,7 @@ def main() -> int:
     if a.cmd == "stop-kiosk":
         print(stop_kiosk(a.rundir)); return 0
     if a.cmd == "kiosk":
-        ok, detail = open_browser(a.url, True, a.position, a.size, a.probe_seconds, a.rundir)
+        ok, detail = open_browser(a.url, True, a.position, a.size, a.probe_seconds, a.rundir, a.prefer_x11)
     else:
         ok, detail = open_browser(a.url, False, "0,0", "1280,900", a.probe_seconds, a.rundir)
     print(detail)

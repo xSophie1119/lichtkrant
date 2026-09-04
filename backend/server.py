@@ -80,7 +80,7 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.4.4"
+APP_VERSION = "4.4.5"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -1323,20 +1323,33 @@ def runtime_platform() -> str:
 
 
 def monitor_fingerprint(row: dict) -> str:
-    """Stable-ish monitor identity that survives HDMI/DP connector renaming.
+    """Best-effort hardware fingerprint for diagnostics.
 
-    Prefer EDID/serial data when available, otherwise combine manufacturer/model
-    and native geometry. The connector remains a fallback selector for upgrades.
+    Make/model alone is not unique: identical monitors often expose no serial on
+    Wayland. Only EDID/serial count as strong identities; otherwise include the
+    connector so equal displays can never collide.
     """
-    identity = "|".join(str(row.get(k) or "").strip() for k in ("edid","serial","make","model","name"))
-    if identity.strip("|"):
-        raw = identity + "|" + "|".join(str(row.get(k) or "").strip() for k in ("width","height"))
+    edid=str(row.get("edid") or "").strip()
+    serial=str(row.get("serial") or "").strip()
+    make=str(row.get("make") or "").strip()
+    model=str(row.get("model") or row.get("name") or "").strip()
+    device=str(row.get("device") or row.get("id") or "").strip()
+    geom="|".join(str(row.get(k) or "").strip() for k in ("width","height"))
+    if edid:
+        raw=f"edid|{edid}|{geom}"
+    elif serial:
+        raw=f"serial|{make}|{model}|{serial}|{geom}"
     else:
-        # Without EDID/serial data a connector-backed identity is less stable,
-        # but it must still be unique when two equal-resolution displays exist.
-        raw = "|".join(str(row.get(k) or "").strip() for k in ("device","id","width","height"))
+        raw=f"connector|{device}|{make}|{model}|{geom}"
     return "fp:" + hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
 
+
+def monitor_selector(row: dict) -> str:
+    """Selector persisted for one monitor. Linux locks to the exact output."""
+    device=str(row.get("device") or row.get("id") or "").strip()
+    if runtime_platform()=="linux" and device and device != "primary":
+        return f"linux-output:{device}"
+    return str(row.get("fingerprint") or device or "primary")
 
 def _fallback_monitor(label: str = "Primair scherm") -> dict:
     row={"id":"primary","device":"primary","label":label,"x":0,"y":0,"width":1920,"height":1080,"primary":True}
@@ -1517,12 +1530,18 @@ def enumerate_monitors() -> list[dict]:
                     pass
                 row["fingerprint"]=monitor_fingerprint(row)
                 row["label"]=f"Scherm {i} • {row.get('name') or row['width']}" + (f" • {row['width']}×{row['height']}" if row.get('name') else f"×{row['height']}") + (" • primair" if row["primary"] else "")
-            return rows or [fallback]
+            rows=rows or [fallback]
+            for row in rows: row["selector"]=monitor_selector(row)
+            return rows
         except Exception:
+            fallback["selector"]=monitor_selector(fallback)
             return [fallback]
     if sys.platform.startswith("linux"):
         rows=_linux_wlr_monitors() or _linux_xrandr_monitors()
-        return rows or [_fallback_monitor("Primair scherm • detectie niet beschikbaar")]
+        rows=rows or [_fallback_monitor("Primair scherm • detectie niet beschikbaar")]
+        for row in rows: row["selector"]=monitor_selector(row)
+        return rows
+    fallback["selector"]=monitor_selector(fallback)
     return [fallback]
 
 
@@ -1532,26 +1551,23 @@ def enumerate_windows_monitors() -> list[dict]:
 
 
 def resolve_monitor(selector: str | None, monitors: list[dict] | None = None) -> tuple[dict, bool]:
-    """Resolve a monitor selector and report whether it matched explicitly.
-
-    The boolean matters for the settings API: silently falling back to primary
-    when a user clicked another monitor made screen switching look successful
-    while nothing actually changed.
-    """
+    """Resolve an explicit selector without silently accepting primary fallback."""
     rows=list(monitors or enumerate_monitors())
     wanted=re.sub(r"\s+"," ",str(selector or "primary")).strip()
-    if wanted.lower() in {"primary","primair","auto",""}:
+    low=wanted.lower()
+    if low in {"primary","primair","auto",""}:
         return next((row for row in rows if row.get("primary")), rows[0] if rows else _fallback_monitor()), True
+    explicit_device=wanted.split(":",1)[1].strip() if low.startswith("linux-output:") else ""
     for row in rows:
-        aliases={str(row.get("id") or "").lower(),str(row.get("device") or "").lower(),str(row.get("fingerprint") or "").lower()}
-        if wanted.lower() in aliases:
+        aliases={str(row.get("id") or "").lower(),str(row.get("device") or "").lower(),str(row.get("fingerprint") or "").lower(),str(row.get("selector") or monitor_selector(row)).lower()}
+        if explicit_device and explicit_device.lower()==str(row.get("device") or row.get("id") or "").lower():
+            return row, True
+        if low in aliases:
             return row, True
     if wanted.isdigit():
         idx=int(wanted)-1
-        if 0 <= idx < len(rows):
-            return rows[idx], True
+        if 0 <= idx < len(rows): return rows[idx], True
     return next((row for row in rows if row.get("primary")), rows[0] if rows else _fallback_monitor()), False
-
 
 def choose_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
     return resolve_monitor(selector, monitors)[0]
@@ -4068,41 +4084,57 @@ class AppState:
                 return True,None,"linux-wlr-randr"
         return False,"Geen veilige scherm-power methode gevonden (X11: xset; wlroots Wayland: wlr-randr)",None
 
+    def _load_display_snapshot(self) -> dict:
+        try:
+            with self.connect() as con:
+                row=con.execute("SELECT value FROM kv WHERE key='display:selected-monitor'").fetchone()
+            value=json.loads(row["value"]) if row else {}
+            return value if isinstance(value,dict) else {}
+        except Exception:
+            return {}
+
+    def _save_display_snapshot(self, selector: str, row: dict) -> None:
+        snap={k:row.get(k) for k in ("id","device","label","x","y","width","height","primary","fingerprint","make","model","serial","edid") if row.get(k) is not None}
+        snap.update({"selector":str(selector or monitor_selector(row)),"saved_at":utcnow_iso(),"platform":runtime_platform()})
+        try:
+            self.save_kv("display:selected-monitor",json.dumps(snap,ensure_ascii=False,separators=(",",":")))
+        except Exception:
+            pass
+
     def display_info(self, force: bool = False, allow_stale: bool = False) -> dict:
         if not force and self.display_info_cache and (time.monotonic()-self.display_info_monotonic) < 8:
             return dict(self.display_info_cache)
-        monitors = enumerate_monitors()
-        settings = self.get_display_settings()
-        selected = choose_monitor(settings.get("kioskMonitor", "primary"), monitors)
+        monitors=enumerate_monitors()
+        settings=self.get_display_settings()
+        selector=str(settings.get("kioskMonitor","primary") or "primary")
+        selected,matched=resolve_monitor(selector,monitors)
+        fixed=selector.lower() not in {"primary","primair","auto",""}
+        snapshot=self._load_display_snapshot()
+        if fixed and not matched and snapshot and str(snapshot.get("selector") or "")==selector:
+            selected=dict(snapshot);selected["stale"]=True;selected["connected"]=False
+        else:
+            selected=dict(selected);selected["connected"]=bool(matched)
+            selected["selector"]=monitor_selector(selected) if matched else selector
+            if matched:self._save_display_snapshot(selector if fixed else monitor_selector(selected),selected)
         platform=runtime_platform()
         if platform=="windows":
-            method="windows-monitor-power"; connector="Windows display"; connected=True; session="windows"
+            method="windows-monitor-power";connector="Windows display";connected=bool(matched);session="windows"
         elif platform=="linux":
-            wayland=bool(os.environ.get("WAYLAND_DISPLAY")); x11=bool(os.environ.get("DISPLAY"))
+            wayland=bool(os.environ.get("WAYLAND_DISPLAY"));x11=bool(os.environ.get("DISPLAY"))
             real_x11=x11 and not wayland
-            if str(os.environ.get("XDG_SESSION_TYPE") or "").lower()=="x11": real_x11=True
+            if str(os.environ.get("XDG_SESSION_TYPE") or "").lower()=="x11":real_x11=True
             method=("linux-xset-dpms" if shutil.which("xset") and real_x11 else ("linux-wlr-randr" if shutil.which("wlr-randr") and wayland else None))
             connector=str(selected.get("device") or "Linux display")
-            connected=bool(monitors and (selected.get("device") not in {"primary",""} or x11 or wayland))
+            connected=bool(matched and monitors and (selected.get("device") not in {"primary",""} or x11 or wayland))
             session="wayland" if wayland else ("x11" if x11 else "linux-headless")
         else:
-            method=None; connector=""; connected=False; session=platform
-        result = {
-            "connected": connected,
-            "connector": connector,
-            "name": selected.get("label") or "Scherm",
-            "method": method,
-            "platform": platform,
-            "session": session,
-            "monitors": monitors,
-            "selected_monitor": selected,
-            "selected_monitor_id": settings.get("kioskMonitor", "primary"),
-        }
-        self.display_connector = result["connector"] or None
-        self.display_name = result["name"]
-        self.display_power_method = result["method"]
-        self.display_info_cache = dict(result)
-        self.display_info_monotonic = time.monotonic()
+            method=None;connector="";connected=False;session=platform
+        result={"connected":connected,"selection_connected":bool(matched),"selection_locked":fixed,"selection_stale":bool(fixed and not matched),"connector":connector,"name":selected.get("label") or "Scherm","method":method,"platform":platform,"session":session,"monitors":monitors,"selected_monitor":selected,"selected_monitor_id":selector}
+        self.display_connector=result["connector"] or None
+        self.display_name=result["name"]
+        self.display_power_method=result["method"]
+        self.display_info_cache=dict(result)
+        self.display_info_monotonic=time.monotonic()
         return result
 
     def select_display(self, selector: str | None) -> dict:
@@ -4112,10 +4144,11 @@ class AppState:
         wanted=normalize_space(str(selector or "primary")) or "primary"
         if not matched:
             raise ValueError(f"Scherm '{wanted}' is niet aangesloten of kon niet exact worden herkend")
-        stable=str(selected.get("fingerprint") or selected.get("device") or selected.get("id") or "primary")
+        stable=monitor_selector(selected)
         current=self.get_display_settings()
         current["kioskMonitor"]=stable
         saved=self.save_display_settings(current)
+        self._save_display_snapshot(stable,selected)
         # save_display_settings invalidates the monitor cache; force a fresh
         # response so the caller gets the exact coordinates that the kiosk will use.
         info=self.display_info(force=True)
@@ -6666,7 +6699,7 @@ class Handler(BaseHTTPRequestHandler):
                 monitors=enumerate_monitors();selected,matched=resolve_monitor(requested_selector,monitors)
                 if not matched:
                     return self.send_json({"ok":False,"error":f"Scherm '{requested_selector}' is niet aangesloten of kon niet exact worden herkend","display":self.state.display_info(force=True)},409)
-                payload=dict(payload);payload["kioskMonitor"]=str(selected.get("fingerprint") or selected.get("device") or selected.get("id") or "primary")
+                payload=dict(payload);payload["kioskMonitor"]=monitor_selector(selected);self.state._save_display_snapshot(payload["kioskMonitor"],selected)
             saved=self.state.save_display_settings(payload)
             response={"settings":saved,"display_reposition_requested":False}
             if display_changed:

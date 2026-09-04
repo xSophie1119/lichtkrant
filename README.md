@@ -1,10 +1,10 @@
-# P2000 Monitor — MultiPlatform v4.4.4
+# P2000 Monitor — MultiPlatform v4.4.5
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
 
-## Hotfix v4.4.4 — updater + schermwissel
+## Hotfix v4.4.5 — updater + schermwissel
 
 - Fix voor dubbele `target_version` in de update-status bij het klaarzetten van een GitHub-release.
 - Schermkeuze wordt nu direct backend-side toegepast: valideren, stabiele monitor-ID opslaan en kiosk opnieuw plaatsen.
@@ -165,7 +165,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.4.zip
+P2000_Monitor_MultiPlatform_v4.4.5.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.
