@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""P2000 Monitor - Windows-only configurable P2000 backend.
+"""P2000 Monitor - cross-platform configurable P2000 backend (Windows/Linux).
 
 Core server uses Python's standard library and bundles gTTS for optional speech:
 - polls Alarmeringen.nl RSS feeds using ETag / If-Modified-Since
@@ -58,6 +58,7 @@ DB_PATH = DATA_DIR / "p2000.sqlite3"
 VEHICLE_DB_PATH = FRONTEND_DIR / "vehicles.json"
 VEHICLE_CACHE_DIR = DATA_DIR / "vehicles"
 VEHICLE_OVERRIDES_PATH = VEHICLE_CACHE_DIR / "overrides.json"
+VEHICLE_HISTORY_PATH = VEHICLE_CACHE_DIR / "history.jsonl"
 VENDOR_DIR = ROOT / "vendor"
 TTS_CACHE_DIR = DATA_DIR / "tts-cache"
 BACKGROUND_DIR = DATA_DIR / "background"
@@ -69,6 +70,9 @@ UPDATE_STATUS_PATH = UPDATE_DIR / "status.json"
 UPDATE_BACKUP_DIR = UPDATE_DIR / "backups"
 GITHUB_INSTALL_MARKER_PATH = UPDATE_DIR / "installed-github.json"
 GITHUB_SETTINGS_STATUS_PATH = DATA_DIR / "github-settings-status.json"
+SUPERVISOR_STATUS_PATH = DATA_DIR / "supervisor-status.json"
+SUPERVISOR_COMMAND_PATH = DATA_DIR / "supervisor-command.json"
+UPDATE_PENDING_HEALTH_PATH = UPDATE_DIR / "pending-health.json"
 GITHUB_API_BASE = "https://api.github.com"
 DEFAULT_GITHUB_REPO = "xSophie1119/lichtkrant"
 DEFAULT_GITHUB_BRANCH = "main"
@@ -76,7 +80,7 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.2.5"
+APP_VERSION = "4.4.2"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -141,7 +145,7 @@ HULPDIENST_REGION_SLUGS.update({
     "24": "zuid-limburg",   # monitor slug is limburg-zuid
 })
 
-# Selectable catalogue for the Windows setup wizard. The 25 veiligheidsregio's
+# Selectable catalogue for the cross-platform setup wizard. The 25 veiligheidsregio's
 # are primary; three familiar Alarmeringen subregions are included as optional
 # narrower choices. Duplicate articles are de-duplicated by canonical URL.
 REGION_CATALOG = {
@@ -957,7 +961,7 @@ OTHER_SCALE_RULES = [
     (re.compile(r"\bKLEINE?\s+IBGS\b", re.I), "Klein IBGS", 40),
 ]
 
-# Runtime scope is selected by the user in the Windows setup wizard.
+# Runtime scope is selected by the user in the setup wizard.
 # Legacy place aliases below are retained only as parser hints for older fixtures;
 # they no longer restrict which regions the monitor can receive.
 LIFELINER_123_RE = re.compile(
@@ -1210,49 +1214,193 @@ def strip_html(value: str | None) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def enumerate_windows_monitors() -> list[dict]:
-    """Enumerate attached desktop monitors through the native Windows API."""
-    fallback = {"id":"primary","device":"primary","label":"Primair scherm","x":0,"y":0,"width":1920,"height":1080,"primary":True}
-    if os.name != "nt":
-        return [fallback]
+def runtime_platform() -> str:
+    if os.name == "nt":
+        return "windows"
+    if sys.platform.startswith("linux"):
+        return "linux"
+    return sys.platform or os.name
+
+
+def monitor_fingerprint(row: dict) -> str:
+    """Stable-ish monitor identity that survives HDMI/DP connector renaming.
+
+    Prefer EDID/serial data when available, otherwise combine manufacturer/model
+    and native geometry. The connector remains a fallback selector for upgrades.
+    """
+    identity = "|".join(str(row.get(k) or "").strip() for k in ("edid","serial","make","model","name"))
+    if identity.strip("|"):
+        raw = identity + "|" + "|".join(str(row.get(k) or "").strip() for k in ("width","height"))
+    else:
+        # Without EDID/serial data a connector-backed identity is less stable,
+        # but it must still be unique when two equal-resolution displays exist.
+        raw = "|".join(str(row.get(k) or "").strip() for k in ("device","id","width","height"))
+    return "fp:" + hashlib.sha256(raw.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _fallback_monitor(label: str = "Primair scherm") -> dict:
+    row={"id":"primary","device":"primary","label":label,"x":0,"y":0,"width":1920,"height":1080,"primary":True}
+    row["fingerprint"]=monitor_fingerprint(row)
+    return row
+
+
+def _run_quiet(argv: list[str], timeout: float = 3.0) -> subprocess.CompletedProcess | None:
     try:
-        import ctypes
-        from ctypes import wintypes
-        user32 = ctypes.windll.user32
-        class RECT(ctypes.Structure):
-            _fields_=[("left",wintypes.LONG),("top",wintypes.LONG),("right",wintypes.LONG),("bottom",wintypes.LONG)]
-        class MONITORINFOEXW(ctypes.Structure):
-            _fields_=[("cbSize",wintypes.DWORD),("rcMonitor",RECT),("rcWork",RECT),("dwFlags",wintypes.DWORD),("szDevice",wintypes.WCHAR*32)]
-        rows=[]
-        callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HMONITOR,wintypes.HDC,ctypes.POINTER(RECT),wintypes.LPARAM)
-        def collect(hmon, hdc, rect, lparam):
-            info=MONITORINFOEXW(); info.cbSize=ctypes.sizeof(info)
-            if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
-                r=info.rcMonitor
-                rows.append({"device":str(info.szDevice or ""),"x":int(r.left),"y":int(r.top),"width":int(r.right-r.left),"height":int(r.bottom-r.top),"primary":bool(info.dwFlags & 1)})
-            return True
-        cb=callback_type(collect)
-        user32.EnumDisplayMonitors(0,0,cb,0)
-        rows.sort(key=lambda m:(not m["primary"],m["x"],m["y"],m["device"]))
-        for i,row in enumerate(rows,1):
-            row["id"]=row["device"] or f"display-{i}"
-            row["label"]=f"Scherm {i} • {row['width']}×{row['height']}" + (" • primair" if row["primary"] else "")
-        return rows or [fallback]
+        return subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+            creationflags=(getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0),
+        )
     except Exception:
-        return [fallback]
+        return None
 
 
-def choose_windows_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
-    rows=list(monitors or enumerate_windows_monitors())
-    wanted=normalize_space(str(selector or "primary"))
+def _linux_xrandr_monitors() -> list[dict]:
+    exe = shutil.which("xrandr")
+    if not exe or not os.environ.get("DISPLAY"):
+        return []
+    cp = _run_quiet([exe, "--query"], 3)
+    if not cp or cp.returncode != 0:
+        return []
+    rows=[]
+    text=cp.stdout.decode("utf-8","replace")
+    rx=re.compile(r"^(\S+)\s+connected(?:\s+(primary))?\s+(\d+)x(\d+)\+(-?\d+)\+(-?\d+)")
+    lines=text.splitlines()
+    edids={}
+    current=None
+    collecting=False
+    for line in lines:
+        head=re.match(r"^(\S+)\s+(?:connected|disconnected)\b", line)
+        if head:
+            current=head.group(1); collecting=False
+        if current and re.match(r"^\s*EDID:\s*$", line):
+            collecting=True; edids[current]=""; continue
+        if collecting:
+            chunk=line.strip()
+            if re.fullmatch(r"[0-9A-Fa-f]{16,}",chunk): edids[current]+=chunk; continue
+            collecting=False
+    for line in lines:
+        m=rx.match(line.strip())
+        if not m:
+            continue
+        dev,primary,w,h,x,y=m.groups()
+        row={"id":dev,"device":dev,"x":int(x),"y":int(y),"width":int(w),"height":int(h),"primary":bool(primary),"edid":edids.get(dev,"")}
+        row["fingerprint"]=monitor_fingerprint(row)
+        rows.append(row)
+    rows.sort(key=lambda m:(not m["primary"],m["x"],m["y"],m["device"]))
+    for i,row in enumerate(rows,1):
+        row["label"]=f"Scherm {i} • {row['device']} • {row['width']}×{row['height']}" + (" • primair" if row["primary"] else "")
+    return rows
+
+
+def _linux_wlr_monitors() -> list[dict]:
+    exe = shutil.which("wlr-randr")
+    if not exe or not os.environ.get("WAYLAND_DISPLAY"):
+        return []
+    cp = _run_quiet([exe, "--json"], 3)
+    if not cp or cp.returncode != 0:
+        return []
+    try:
+        data=json.loads(cp.stdout.decode("utf-8","replace") or "[]")
+    except Exception:
+        return []
+    if isinstance(data,dict):
+        data=data.get("outputs") or data.get("monitors") or []
+    if not isinstance(data,list):
+        return []
+    rows=[]
+    for item in data:
+        if not isinstance(item,dict) or item.get("enabled") is False:
+            continue
+        dev=str(item.get("name") or item.get("output") or "").strip()
+        if not dev:
+            continue
+        pos=item.get("position") or item.get("pos") or {}
+        mode=item.get("current_mode") or item.get("mode") or {}
+        if isinstance(mode,str):
+            mm=re.search(r"(\d+)x(\d+)",mode); mode={"width":int(mm.group(1)),"height":int(mm.group(2))} if mm else {}
+        w=int(mode.get("width") or item.get("width") or 1920)
+        h=int(mode.get("height") or item.get("height") or 1080)
+        x=int(pos.get("x") or item.get("x") or 0) if isinstance(pos,dict) else 0
+        y=int(pos.get("y") or item.get("y") or 0) if isinstance(pos,dict) else 0
+        row={"id":dev,"device":dev,"x":x,"y":y,"width":w,"height":h,"primary":bool(item.get("primary") or item.get("focused")),
+             "make":str(item.get("make") or item.get("manufacturer") or ""),"model":str(item.get("model") or item.get("description") or ""),"serial":str(item.get("serial") or "")}
+        row["fingerprint"]=monitor_fingerprint(row)
+        rows.append(row)
+    if rows and not any(r["primary"] for r in rows): rows[0]["primary"]=True
+    rows.sort(key=lambda m:(not m["primary"],m["x"],m["y"],m["device"]))
+    for i,row in enumerate(rows,1):
+        row["label"]=f"Scherm {i} • {row['device']} • {row['width']}×{row['height']}" + (" • primair" if row["primary"] else "")
+    return rows
+
+
+def enumerate_monitors() -> list[dict]:
+    """Enumerate desktop monitors without requiring a GUI Python package."""
+    fallback=_fallback_monitor()
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+            user32 = ctypes.windll.user32
+            class RECT(ctypes.Structure):
+                _fields_=[("left",wintypes.LONG),("top",wintypes.LONG),("right",wintypes.LONG),("bottom",wintypes.LONG)]
+            class MONITORINFOEXW(ctypes.Structure):
+                _fields_=[("cbSize",wintypes.DWORD),("rcMonitor",RECT),("rcWork",RECT),("dwFlags",wintypes.DWORD),("szDevice",wintypes.WCHAR*32)]
+            rows=[]
+            callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HMONITOR,wintypes.HDC,ctypes.POINTER(RECT),wintypes.LPARAM)
+            def collect(hmon, hdc, rect, lparam):
+                info=MONITORINFOEXW(); info.cbSize=ctypes.sizeof(info)
+                if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+                    r=info.rcMonitor
+                    rows.append({"device":str(info.szDevice or ""),"x":int(r.left),"y":int(r.top),"width":int(r.right-r.left),"height":int(r.bottom-r.top),"primary":bool(info.dwFlags & 1)})
+                return True
+            cb=callback_type(collect); user32.EnumDisplayMonitors(0,0,cb,0)
+            rows.sort(key=lambda m:(not m["primary"],m["x"],m["y"],m["device"]))
+            for i,row in enumerate(rows,1):
+                row["id"]=row["device"] or f"display-{i}"
+                try:
+                    class DISPLAY_DEVICEW(ctypes.Structure):
+                        _fields_=[("cb",wintypes.DWORD),("DeviceName",wintypes.WCHAR*32),("DeviceString",wintypes.WCHAR*128),("StateFlags",wintypes.DWORD),("DeviceID",wintypes.WCHAR*128),("DeviceKey",wintypes.WCHAR*128)]
+                    dd=DISPLAY_DEVICEW();dd.cb=ctypes.sizeof(dd)
+                    if user32.EnumDisplayDevicesW(row["device"],0,ctypes.byref(dd),0):
+                        row["name"]=str(dd.DeviceString or "");row["serial"]=str(dd.DeviceID or "")
+                except Exception:
+                    pass
+                row["fingerprint"]=monitor_fingerprint(row)
+                row["label"]=f"Scherm {i} • {row.get('name') or row['width']}" + (f" • {row['width']}×{row['height']}" if row.get('name') else f"×{row['height']}") + (" • primair" if row["primary"] else "")
+            return rows or [fallback]
+        except Exception:
+            return [fallback]
+    if sys.platform.startswith("linux"):
+        rows=_linux_wlr_monitors() or _linux_xrandr_monitors()
+        return rows or [_fallback_monitor("Primair scherm • detectie niet beschikbaar")]
+    return [fallback]
+
+
+def enumerate_windows_monitors() -> list[dict]:
+    """Backwards-compatible alias used by older tests/tools."""
+    return enumerate_monitors()
+
+
+def choose_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
+    rows=list(monitors or enumerate_monitors())
+    wanted=re.sub(r"\s+"," ",str(selector or "primary")).strip()
     if wanted.lower() not in {"primary","primair","auto"}:
         for row in rows:
-            if wanted.lower() in {str(row.get("id") or "").lower(),str(row.get("device") or "").lower()}:
+            if wanted.lower() in {str(row.get("id") or "").lower(),str(row.get("device") or "").lower(),str(row.get("fingerprint") or "").lower()}:
                 return row
         if wanted.isdigit():
             idx=int(wanted)-1
             if 0 <= idx < len(rows): return rows[idx]
-    return next((row for row in rows if row.get("primary")), rows[0])
+    return next((row for row in rows if row.get("primary")), rows[0] if rows else _fallback_monitor())
+
+
+def choose_windows_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
+    return choose_monitor(selector, monitors)
 
 
 def normalize_space(s: str) -> str:
@@ -2108,6 +2256,34 @@ class Message:
     parser_notes: list[str] | None = None
 
 
+def append_vehicle_history(digits: str, before: dict | None, after: dict | None, reason: str) -> None:
+    if before == after:
+        return
+    VEHICLE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    row={"at":utcnow_iso(),"digits":digits,"callsign":format_vehicle_callsign(digits),"reason":reason,"before":before,"after":after}
+    try:
+        with VEHICLE_HISTORY_PATH.open("a",encoding="utf-8") as fh:
+            fh.write(json.dumps(row,ensure_ascii=False,separators=(",",":"))+"\n")
+        # Keep the audit file bounded (~5000 changes).
+        if VEHICLE_HISTORY_PATH.stat().st_size > 4_000_000:
+            lines=VEHICLE_HISTORY_PATH.read_text(encoding="utf-8",errors="ignore").splitlines()[-5000:]
+            VEHICLE_HISTORY_PATH.write_text("\n".join(lines)+"\n",encoding="utf-8")
+    except OSError:
+        pass
+
+
+def read_vehicle_history(limit: int = 100) -> list[dict]:
+    if not VEHICLE_HISTORY_PATH.exists(): return []
+    try:
+        rows=[]
+        for line in VEHICLE_HISTORY_PATH.read_text(encoding="utf-8",errors="ignore").splitlines()[-max(1,min(int(limit),500)):]:
+            try: rows.append(json.loads(line))
+            except Exception: pass
+        return list(reversed(rows))
+    except OSError:
+        return []
+
+
 class AppState:
     def __init__(self, config: dict):
         self.config = config
@@ -2155,6 +2331,8 @@ class AppState:
         self.sse_peak = 0
         self.feed_latency_history: dict[str, list[float]] = {}
         self.feed_fetch_history: dict[str, list[float]] = {}
+        self.feed_wins: dict[str, int] = {}
+        self.feed_cycle_ms: list[float] = []
         self.fallback_activations = 0
         self.last_fallback_action: str | None = None
         self.client_health: dict = {}
@@ -2287,11 +2465,31 @@ class AppState:
             if url not in out: out.append(url)
         return out
 
+    def race_feed_urls(self) -> list[str]:
+        if not self.config.get("feed_race_enabled", True):
+            return []
+        matrix=setup_region_disciplines(self.config)
+        wanted=set()
+        for vals in matrix.values():
+            wanted.update(vals)
+        urls=[]
+        # Regional and national Alarmeringen feeds are fetched in parallel.
+        # The first copy that reaches SQLite wins; INSERT OR IGNORE deduplicates it.
+        for discipline in REGIONAL_DISCIPLINES:
+            if discipline in wanted:
+                url=NATIONAL_DISCIPLINE_URLS.get(discipline)
+                if url and url not in (self.config.get("feed_urls") or []): urls.append(url)
+        return urls
+
     def feed_config_view(self) -> dict:
         return {
             "primary_feed_urls": list(self.config.get("feed_urls") or []),
+            "race_feed_urls": self.race_feed_urls(),
+            "supplemental_feed_urls": list(self.config.get("supplemental_feed_urls") or []),
             "fallback_feed_urls": list(self.config.get("fallback_feed_urls") or []),
-            "poll_interval_seconds": int(self.config.get("poll_interval_seconds",20)),
+            "feed_race_enabled": bool(self.config.get("feed_race_enabled", True)),
+            "feed_parallel_workers": int(self.config.get("feed_parallel_workers",6)),
+            "poll_interval_seconds": int(self.config.get("poll_interval_seconds",10)),
             "watchdog_stale_seconds": int(self.config.get("watchdog_stale_seconds",600)),
         }
 
@@ -2299,10 +2497,16 @@ class AppState:
         # Advanced diagnostics may still configure a small fallback list, but
         # primary feeds are always owned by the setup wizard.
         primary=set(self.config.get("feed_urls") or [])
-        fallback=self._clean_feed_urls(payload.get("fallback_feed_urls"), maximum=6, exclude=primary)
+        supplemental=self._clean_feed_urls(payload.get("supplemental_feed_urls", self.config.get("supplemental_feed_urls") or []), maximum=12, exclude=primary)
+        fallback=self._clean_feed_urls(payload.get("fallback_feed_urls", self.config.get("fallback_feed_urls") or []), maximum=6, exclude=primary|set(supplemental))
         watchdog=bounded_int(payload.get("watchdog_stale_seconds", self.config.get("watchdog_stale_seconds",600)),600,180,86400)
+        race_enabled=bool(payload.get("feed_race_enabled", self.config.get("feed_race_enabled", True)))
+        workers=bounded_int(payload.get("feed_parallel_workers", self.config.get("feed_parallel_workers",6)),6,1,12)
         with self.config_lock:
+            self.config["supplemental_feed_urls"]=supplemental
             self.config["fallback_feed_urls"]=fallback
+            self.config["feed_race_enabled"]=race_enabled
+            self.config["feed_parallel_workers"]=workers
             self.config["watchdog_stale_seconds"]=watchdog
             disk={}
             try:
@@ -2310,7 +2514,10 @@ class AppState:
                 if isinstance(loaded,dict): disk.update(loaded)
             except Exception:
                 disk.update({k:v for k,v in self.config.items() if k not in {"port","bind"}})
+            disk["supplemental_feed_urls"]=supplemental
             disk["fallback_feed_urls"]=fallback
+            disk["feed_race_enabled"]=race_enabled
+            disk["feed_parallel_workers"]=workers
             disk["watchdog_stale_seconds"]=watchdog
             CONFIG_PATH.parent.mkdir(parents=True,exist_ok=True)
             tmp=CONFIG_PATH.with_suffix(".json.tmp")
@@ -2380,7 +2587,7 @@ class AppState:
                 {"key":"lifeliner","label":"Lifeliner / traumaheli","regional_feed":False},
             ],
             "feed_urls": list(self.config.get("feed_urls") or []),
-            "poll_interval_seconds": int(self.config.get("poll_interval_seconds", 20)),
+            "poll_interval_seconds": int(self.config.get("poll_interval_seconds", 10)),
         }
 
     @staticmethod
@@ -2487,7 +2694,7 @@ class AppState:
         standplaats_city = self._resolve_setup_city(standplaats) or self._standplaats_city_hint(standplaats)
         requested_name = normalize_space(str(payload.get("monitor_name") or ""))[:120]
         monitor_name = requested_name or f"P2000 {standplaats_city or standplaats}"
-        poll = bounded_int(payload.get("poll_interval_seconds", 20), 20, 15, 300)
+        poll = bounded_int(payload.get("poll_interval_seconds", 10), 10, 8, 300)
         with self.config_lock:
             self.config.update({
                 "setup_complete": True,
@@ -2564,8 +2771,10 @@ class AppState:
         digits, item = sanitize_vehicle_override(payload)
         with self.vehicle_overrides_lock:
             rows = load_vehicle_overrides()
+            before=rows.get(digits)
             rows[digits] = item
             write_vehicle_overrides(rows)
+            append_vehicle_history(digits,before,item,"handmatige override")
             self._refresh_vehicle_catalog()
         self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
         return {"ok": True, "digits": digits, "vehicle": item, "overrides": self.vehicle_overrides_view()}
@@ -2576,8 +2785,10 @@ class AppState:
             raise ValueError("Ongeldig roepnummer")
         with self.vehicle_overrides_lock:
             rows = load_vehicle_overrides()
+            before=rows.get(digits)
             existed = rows.pop(digits, None) is not None
             write_vehicle_overrides(rows)
+            if existed: append_vehicle_history(digits,before,None,"override verwijderd")
             self._refresh_vehicle_catalog()
         self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
         return {"ok": True, "deleted": existed, "digits": digits, "overrides": self.vehicle_overrides_view()}
@@ -2743,6 +2954,10 @@ class AppState:
 
         if result:
             vehicles = result["vehicles"]
+            previous_vehicles,_previous_meta=load_cached_vehicle_region(region_code)
+            for digits in sorted(set(previous_vehicles)|set(vehicles)):
+                if previous_vehicles.get(digits)!=vehicles.get(digits):
+                    append_vehicle_history(digits,previous_vehicles.get(digits),vehicles.get(digits),f"{result.get('source') or 'online sync'} regio {region_code}")
             meta = {
                 "region": region_code,
                 "updated_at": utcnow_iso(),
@@ -2909,7 +3124,7 @@ class AppState:
             "name", "services", "cities", "keywords", "nightMode", "nightStart", "nightEnd",
             "messageMinutes", "maxAgeMinutes", "dateFormat", "idleCentered", "burnInProtection",
             "burnInPixels", "autoTextSize", "darkLedPercent", "vehicleHeader", "displaySleep",
-            "speechEnabled", "speechCities", "speechRate", "speechEngine", "speechPitch",
+            "speechEnabled", "speechMode", "masterVolume", "speechCities", "speechRate", "speechEngine", "speechPitch",
             "speechDeviceVolumeDay", "speechDeviceVolumeNight", "speechDeviceVolumeUrgent",
             "mapEnabled", "mapZoom", "locationAliases", "ttsDictionary", "capcodeMap",
             "idleStyle", "idleDimEnabled", "idleDimStart", "idleDimEnd", "idleDimMin",
@@ -2947,6 +3162,7 @@ class AppState:
             "backgroundPhotoVersion": (0, 9_999_999_999_999, int),
             "backgroundPhotoDarkness": (0.0, 0.90, float),
             "dispatchTuneYoutubeSeconds": (1.0, 15.0, float),
+            "masterVolume": (0, 100, int),
             "dispatchTuneVolume": (0, 100, int),
             "dispatchTuneCustomVersion": (0, 9_999_999_999_999, int),
         }
@@ -2974,6 +3190,9 @@ class AppState:
         # the lightkrant tab. Old "browser" preferences are migrated away.
         if "speechEngine" in clean:
             clean["speechEngine"] = "online"
+        if "speechMode" in clean:
+            mode=str(clean["speechMode"] or "normal").lower()
+            clean["speechMode"] = mode if mode in {"normal","mute","priority"} else "normal"
         for time_key in ("nightStart", "nightEnd", "idleDimStart", "idleDimEnd", "idleDimEarliest"):
             if time_key in clean and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", str(clean[time_key])):
                 clean.pop(time_key, None)
@@ -3038,7 +3257,7 @@ class AppState:
         if "backgroundPhotoFit" in clean:
             clean["backgroundPhotoFit"] = "contain" if str(clean["backgroundPhotoFit"]).lower() == "contain" else "cover"
         if "kioskMonitor" in clean:
-            clean["kioskMonitor"] = str(clean["kioskMonitor"] or "primary")[:80]
+            clean["kioskMonitor"] = str(clean["kioskMonitor"] or "primary")[:120]
         tune_choices = {"inherit", "none", "builtin:classic", "builtin:double", "builtin:rising", "builtin:urgent", "youtube", "custom"}
         for key in ("dispatchTuneDefault", "dispatchTuneBrandweer", "dispatchTuneAmbulance", "dispatchTunePolitie", "dispatchTuneLifeliner", "dispatchTuneKnrm", "dispatchTuneUrgent"):
             if key in clean:
@@ -3585,35 +3804,71 @@ class AppState:
         detail = errors[-1] if errors else "geen resultaat"
         raise RuntimeError(f"Geocoding mislukt: {detail}")
 
-    def _windows_monitor_power(self, mode: str) -> tuple[bool, str | None]:
-        """Control monitor power with the native Windows API."""
+    def _windows_monitor_power(self, mode: str) -> tuple[bool, str | None, str | None]:
         if os.name != "nt":
-            return False, "Windows monitorbesturing is alleen beschikbaar op Windows"
+            return False, "Windows monitorbesturing is niet beschikbaar", None
         try:
             import ctypes
             if mode == "off":
                 ctypes.windll.user32.SendMessageW(0xFFFF, 0x0112, 0xF170, 2)
             else:
-                # Keep the display awake and generate a tiny mouse movement so a
-                # monitor that is already in power-save wakes immediately.
                 ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | 0x00000001 | 0x00000002)
                 ctypes.windll.user32.mouse_event(0x0001, 0, 1, 0, 0)
                 ctypes.windll.user32.mouse_event(0x0001, 0, -1, 0, 0)
-            return True, None
+            return True, None, "windows-monitor-power"
         except Exception as exc:
-            return False, f"{type(exc).__name__}: {exc}"
+            return False, f"{type(exc).__name__}: {exc}", None
+
+    def _linux_monitor_power(self, mode: str, selected: dict | None = None) -> tuple[bool, str | None, str | None]:
+        if not sys.platform.startswith("linux"):
+            return False, "Linux monitorbesturing is niet beschikbaar", None
+        # X11: xset is the least invasive option; it powers the display without
+        # changing the monitor layout/resolution.
+        xset=shutil.which("xset")
+        real_x11=bool(os.environ.get("DISPLAY")) and not bool(os.environ.get("WAYLAND_DISPLAY"))
+        if str(os.environ.get("XDG_SESSION_TYPE") or "").lower()=="x11": real_x11=True
+        if xset and real_x11:
+            argv=[xset,"dpms","force",mode]
+            cp=_run_quiet(argv, 4)
+            if cp and cp.returncode == 0:
+                if mode == "on": _run_quiet([xset,"s","reset"],2)
+                return True,None,"linux-xset-dpms"
+        # wlroots compositors: wlr-randr can toggle one connector. This is only
+        # attempted when the output name was positively detected.
+        dev=str((selected or {}).get("device") or "").strip()
+        wlr=shutil.which("wlr-randr")
+        if wlr and os.environ.get("WAYLAND_DISPLAY") and dev and dev != "primary":
+            cp=_run_quiet([wlr,"--output",dev,"--off" if mode=="off" else "--on"],5)
+            if cp and cp.returncode == 0:
+                return True,None,"linux-wlr-randr"
+        return False,"Geen veilige scherm-power methode gevonden (X11: xset; wlroots Wayland: wlr-randr)",None
 
     def display_info(self, force: bool = False, allow_stale: bool = False) -> dict:
-        supported = os.name == "nt"
-        monitors = enumerate_windows_monitors()
+        if not force and self.display_info_cache and (time.monotonic()-self.display_info_monotonic) < 8:
+            return dict(self.display_info_cache)
+        monitors = enumerate_monitors()
         settings = self.get_display_settings()
-        selected = choose_windows_monitor(settings.get("kioskMonitor", "primary"), monitors)
+        selected = choose_monitor(settings.get("kioskMonitor", "primary"), monitors)
+        platform=runtime_platform()
+        if platform=="windows":
+            method="windows-monitor-power"; connector="Windows display"; connected=True; session="windows"
+        elif platform=="linux":
+            wayland=bool(os.environ.get("WAYLAND_DISPLAY")); x11=bool(os.environ.get("DISPLAY"))
+            real_x11=x11 and not wayland
+            if str(os.environ.get("XDG_SESSION_TYPE") or "").lower()=="x11": real_x11=True
+            method=("linux-xset-dpms" if shutil.which("xset") and real_x11 else ("linux-wlr-randr" if shutil.which("wlr-randr") and wayland else None))
+            connector=str(selected.get("device") or "Linux display")
+            connected=bool(monitors and (selected.get("device") not in {"primary",""} or x11 or wayland))
+            session="wayland" if wayland else ("x11" if x11 else "linux-headless")
+        else:
+            method=None; connector=""; connected=False; session=platform
         result = {
-            "connected": supported,
-            "connector": "Windows display" if supported else "",
-            "name": selected.get("label") if supported else "Niet op Windows gestart",
-            "method": "windows-monitor-power" if supported else None,
-            "session": "windows" if supported else os.name,
+            "connected": connected,
+            "connector": connector,
+            "name": selected.get("label") or "Scherm",
+            "method": method,
+            "platform": platform,
+            "session": session,
             "monitors": monitors,
             "selected_monitor": selected,
             "selected_monitor_id": settings.get("kioskMonitor", "primary"),
@@ -3631,17 +3886,23 @@ class AppState:
             return {"ok": False, "status": self.display_power_status, "error": "state must be on/off"}
         if mode == "off" and not manual and time.monotonic() < self.display_manual_wake_until_monotonic:
             remaining = max(1, int(self.display_manual_wake_until_monotonic - time.monotonic()))
-            return {"ok": True, "status": "on", "method": "windows-monitor-power", "held": True, "retry_after": remaining, "error": None}
-        ok, err = self._windows_monitor_power(mode)
+            return {"ok": True, "status": "on", "method": self.display_power_method, "held": True, "retry_after": remaining, "error": None}
+        info=self.display_info(force=True)
+        if os.name == "nt":
+            ok,err,method=self._windows_monitor_power(mode)
+        elif sys.platform.startswith("linux"):
+            ok,err,method=self._linux_monitor_power(mode, info.get("selected_monitor"))
+        else:
+            ok,err,method=False,f"Schermbesturing wordt niet ondersteund op {runtime_platform()}",None
         self.display_power_status = mode if ok else "unsupported"
-        self.display_power_method = "windows-monitor-power" if ok else None
+        self.display_power_method = method if ok else info.get("method")
         self.display_power_error = err
         self.display_power_changed_at = utcnow_iso()
         if manual and mode == "on" and ok:
             self.display_manual_wake_until_monotonic = time.monotonic() + 120.0
         elif manual and mode == "off":
             self.display_manual_wake_until_monotonic = 0.0
-        return {"ok": ok, "status": self.display_power_status, "method": self.display_power_method, "error": err, "display": self.display_info(force=True)}
+        return {"ok": ok, "status": self.display_power_status, "method": method, "error": err, "display": self.display_info(force=True)}
 
     def record_unknown_callsigns(self, con: sqlite3.Connection, message: Message):
         """Persist plausible fire callsigns not present in the exact regional cache.
@@ -3686,7 +3947,15 @@ class AppState:
                 "SELECT * FROM unknown_vehicles ORDER BY last_seen DESC LIMIT ?",
                 (min(max(int(limit), 1), 500),),
             ).fetchall()
-        return [dict(r) for r in rows if r["digits"] not in self.known_vehicle_keys]
+        out=[]
+        for r in rows:
+            if r["digits"] in self.known_vehicle_keys: continue
+            item=dict(r);digits=str(item.get("digits") or "")
+            if len(digits)==6 and digits[:2] in FIRE_REGION_LABELS:
+                suggested=FIRE_TYPE_DIGIT.get(digits[4],"Brandweer")
+                item.update({"suggested_type":suggested,"suggested_region":FIRE_REGION_LABELS.get(digits[:2],""),"suggested_callsign":format_vehicle_callsign(digits)})
+            out.append(item)
+        return out
 
     def add_messages(self, messages: list[Message]) -> list[Message]:
         # Enforce the first-run region/discipline matrix before SQLite or SSE.
@@ -3740,6 +4009,10 @@ class AppState:
     def subscriber_count(self) -> int:
         with self.sub_lock:
             return len(self.subscribers)
+
+    def record_feed_win(self, url: str, count: int = 1):
+        if count > 0:
+            self.feed_wins[url]=int(self.feed_wins.get(url,0))+int(count)
 
     def record_feed_metrics(self, url: str, source_latency_seconds: float | None, fetch_ms: float | None):
         if source_latency_seconds is not None:
@@ -3806,6 +4079,7 @@ class AppState:
                 "fetch_p50_ms": self._percentile(fetches, .50),
                 "fetch_p95_ms": self._percentile(fetches, .95),
                 "samples": max(len(latency), len(fetches)),
+                "wins": int(self.feed_wins.get(url,0)),
             })
         with self.client_health_lock:
             client_health = dict(self.client_health)
@@ -3825,6 +4099,10 @@ class AppState:
             "messages": message_rows,
             "geocode_cache_rows": geocode_rows,
             "feed_metrics": feed_metrics,
+            "feed_cycle_p50_ms": self._percentile(self.feed_cycle_ms,.50),
+            "feed_cycle_p95_ms": self._percentile(self.feed_cycle_ms,.95),
+            "feed_parallel_workers": int(self.config.get("feed_parallel_workers",6)),
+            "race_feeds": len(self.race_feed_urls()),
             "fallback_configured": len(self.config.get("fallback_feed_urls") or []),
             "fallback_activations": self.fallback_activations,
             "last_fallback_action": self.last_fallback_action,
@@ -4002,6 +4280,7 @@ class FeedPoller(threading.Thread):
                     latest_entry_age_seconds=round(latest_age, 1) if latest_age is not None else None,
                     ingest_latency_seconds=round(ingest_latency, 1) if ingest_latency is not None else None)
         self.state.record_feed_metrics(url, ingest_latency, fetch_ms)
+        self.state.record_feed_win(url,len(inserted))
         return len(messages),len(scoped),len(inserted)
 
     def _curl_fallback(self, url: str, diag: dict) -> tuple[int, int, int] | None:
@@ -4068,66 +4347,66 @@ class FeedPoller(threading.Thread):
 
     def fetch_once(self) -> int:
         cfg=self.state.config
-        core_urls=cfg.get("feed_urls") or build_feed_urls(setup_region_disciplines(cfg))
-        effective_primary=list(dict.fromkeys(core_urls))
-        nearby_urls=[]
-        fallback_urls=[u for u in (cfg.get("fallback_feed_urls") or []) if u and u not in effective_primary]
+        core_urls=list(dict.fromkeys(cfg.get("feed_urls") or build_feed_urls(setup_region_disciplines(cfg))))
+        race_urls=[u for u in self.state.race_feed_urls() if u not in core_urls]
+        supplemental=[u for u in (cfg.get("supplemental_feed_urls") or []) if u not in core_urls and u not in race_urls]
+        fallback_urls=[u for u in (cfg.get("fallback_feed_urls") or []) if u and u not in core_urls and u not in race_urls and u not in supplemental]
         self.state.last_poll=utcnow_iso()
-        # Empty DB + cached ETags can otherwise produce an empty screen after an
-        # upgrade. Force a body fetch until at least one scoped message exists.
         with self.state.connect() as con:
             db_empty=con.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-        total_inserted=0
-        primary_any_ok=False
-        primary_errors=[]
-        for url in core_urls:
-            _,_,inserted=self.fetch_url(url, force_full=db_empty, role="primary")
-            total_inserted+=inserted
-            d=self.state.feed_diag.get(url,{})
-            if d.get("status")=="online": primary_any_ok=True
-            elif d.get("error"): primary_errors.append(f"{url}: {d['error']}")
+        total_inserted=0; primary_any_ok=False; primary_errors=[]
+        cycle_started=time.monotonic()
 
-        # Nearby feeds are auxiliary. Their availability must never make the
-        # core monitor healthy/unhealthy and must never suppress true failover.
-        for url in nearby_urls:
-            _,_,inserted=self.fetch_url(url, force_full=db_empty, role="nearby")
-            total_inserted+=inserted
+        jobs=[(u,"primary") for u in core_urls]+[(u,"race") for u in race_urls]+[(u,"supplemental") for u in supplemental]
+        workers=min(max(1,int(cfg.get("feed_parallel_workers",6))),max(1,len(jobs)))
+        if jobs:
+            with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="feed-race") as pool:
+                futures={pool.submit(self.fetch_url,url,db_empty,role):(url,role) for url,role in jobs}
+                for future in as_completed(futures):
+                    url,role=futures[future]
+                    try: _entries,_scoped,inserted=future.result()
+                    except Exception as exc:
+                        inserted=0;self.state.feed_diag.setdefault(url,{}).update(status="error",role=role,error=f"{type(exc).__name__}: {exc}")
+                    total_inserted+=inserted
+                    d=self.state.feed_diag.get(url,{})
+                    if d.get("status")=="online": primary_any_ok=True
+                    elif d.get("error"): primary_errors.append(f"{role} {url}: {d['error']}")
 
-        fallback_used = False
-        fallback_errors=[]
+        fallback_used=False;fallback_errors=[]
         if not primary_any_ok and fallback_urls:
-            for url in fallback_urls:
-                _,_,inserted=self.fetch_url(url, force_full=True, role="fallback")
-                total_inserted+=inserted
-                d=self.state.feed_diag.get(url,{})
-                if d.get("status")=="online":
-                    primary_any_ok=True; fallback_used=True
-                elif d.get("error"):
-                    fallback_errors.append(f"fallback {url}: {d['error']}")
+            workers=min(max(1,int(cfg.get("feed_parallel_workers",6))),len(fallback_urls))
+            with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="feed-fallback") as pool:
+                futures={pool.submit(self.fetch_url,url,True,"fallback"):url for url in fallback_urls}
+                for future in as_completed(futures):
+                    url=futures[future]
+                    try: _entries,_scoped,inserted=future.result()
+                    except Exception as exc:
+                        inserted=0;self.state.feed_diag.setdefault(url,{}).update(status="error",role="fallback",error=f"{type(exc).__name__}: {exc}")
+                    total_inserted+=inserted;d=self.state.feed_diag.get(url,{})
+                    if d.get("status")=="online": primary_any_ok=True;fallback_used=True
+                    elif d.get("error"): fallback_errors.append(f"fallback {url}: {d['error']}")
             if fallback_used:
-                self.state.fallback_activations += 1
-                self.state.last_fallback_action = utcnow_iso()
+                self.state.fallback_activations += 1; self.state.last_fallback_action = utcnow_iso()
 
+        cycle_ms=(time.monotonic()-cycle_started)*1000
+        self.state.feed_cycle_ms.append(cycle_ms);del self.state.feed_cycle_ms[:-120]
         if primary_any_ok:
-            self.state.last_success=utcnow_iso()
+            self.state.last_success=utcnow_iso();self.state.consecutive_failures=0
             if fallback_used:
-                self.state.last_error="Primaire feed onbereikbaar; fallback actief"
-                self.state.feed_status="fallback"
+                self.state.last_error="Primaire/race-feeds onbereikbaar; fallback actief";self.state.feed_status="fallback"
             else:
-                self.state.last_error="; ".join(primary_errors) if primary_errors else None
+                self.state.last_error="; ".join(primary_errors[:5]) if primary_errors else None
                 self.state.feed_status="online" if not primary_errors else "degraded"
-            self.state.consecutive_failures = 0
         else:
             self.state.consecutive_failures += 1
-            self.state.last_error="; ".join(primary_errors+fallback_errors) or "Geen primaire feed kon worden opgehaald"
+            self.state.last_error="; ".join((primary_errors+fallback_errors)[:8]) or "Geen P2000-bron kon worden opgehaald"
             self.state.feed_status="error"
         self.state.broadcast({"type":"status","status":self.state.feed_status,"error":self.state.last_error})
-        if total_inserted:
-            self.state.broadcast({"type":"batch","count":total_inserted,"at":utcnow_iso()})
+        if total_inserted:self.state.broadcast({"type":"batch","count":total_inserted,"at":utcnow_iso(),"cycle_ms":round(cycle_ms,1)})
         return total_inserted
 
     def run(self):
-        interval=max(15,int(self.state.config.get("poll_interval_seconds",20)))
+        interval=max(8,int(self.state.config.get("poll_interval_seconds",10)))
         while not self.state.stop_event.is_set():
             try:
                 self.fetch_once()
@@ -4598,31 +4877,66 @@ try {
                 pass
 
 
-def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False, attention: bool = True) -> tuple[bytes, str, str]:
-    """Render one complete dispatch audio asset.
+def _espeak_executable() -> str | None:
+    if not sys.platform.startswith("linux"):
+        return None
+    return shutil.which("espeak-ng") or shutil.which("espeak")
 
-    Windows SAPI WAV is primary and fully local. gTTS MP3 remains a network
-    fallback so the display can still speak if the Dutch Windows voice stack is
-    unavailable. Playback always happens in the lightkrant browser tab.
-    """
+
+def generate_local_espeak_wav(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False, attention: bool = True) -> bytes:
+    """Offline Dutch WAV fallback for Linux using espeak-ng/espeak."""
     global _TTS_RENDER_LAST_ENGINE, _TTS_RENDER_LAST_ERROR, _TTS_RENDER_LAST_AT, _TTS_RENDER_LAST_VOICE
-    local_error = None
+    text=normalize_space(str(text or ""))[:1200]
+    if not text: raise ValueError("empty tts text")
+    exe=_espeak_executable()
+    if not exe: raise RuntimeError("espeak-ng/espeak niet gevonden")
+    rate=max(.65,min(1.25,float(rate or .96)))
+    wpm=max(115,min(220,int(round(165*rate))))
+    key=hashlib.sha256((f"linux-espeak-v1|{Path(exe).name}|{wpm}|{service}|{int(urgent)}|{int(attention)}|"+text).encode()).hexdigest()
+    TTS_CACHE_DIR.mkdir(parents=True,exist_ok=True)
+    cache=TTS_CACHE_DIR/f"{key}.wav"
+    if cache.exists() and cache.stat().st_size>1000:
+        _TTS_RENDER_LAST_ENGINE="linux-espeak-wav-cache"; _TTS_RENDER_LAST_VOICE="eSpeak Nederlands (nl)"; _TTS_RENDER_LAST_ERROR=""; _TTS_RENDER_LAST_AT=utcnow_iso(); return cache.read_bytes()
+    with _TTS_RENDER_LOCK:
+        tmp=TTS_CACHE_DIR/f".{key}-{time.time_ns()}.wav"
+        try:
+            cp=_run_quiet([exe,"-v","nl","-s",str(wpm),"-w",str(tmp),text],12)
+            if not cp or cp.returncode!=0 or not tmp.exists() or tmp.stat().st_size<1000:
+                err=(cp.stderr.decode("utf-8","replace")[-500:] if cp else "start mislukt")
+                raise RuntimeError(err or "eSpeak maakte geen bruikbaar WAV-bestand")
+            speech=tmp.read_bytes(); data=_prepend_attention_to_wav(speech,service,urgent) if attention else speech
+            out=cache.with_suffix('.tmp'); out.write_bytes(data); out.replace(cache)
+            for old in sorted(TTS_CACHE_DIR.glob('*.wav'),key=lambda f:f.stat().st_mtime,reverse=True)[160:]:
+                try: old.unlink()
+                except OSError: pass
+            _TTS_RENDER_LAST_ENGINE="linux-espeak-wav"; _TTS_RENDER_LAST_VOICE="eSpeak Nederlands (nl)"; _TTS_RENDER_LAST_ERROR=""; _TTS_RENDER_LAST_AT=utcnow_iso(); return data
+        except Exception as exc:
+            _TTS_RENDER_LAST_ERROR=str(exc)[:500]; _TTS_RENDER_LAST_AT=utcnow_iso(); raise
+        finally:
+            try: tmp.unlink(missing_ok=True)
+            except Exception: pass
+
+
+def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False, attention: bool = True) -> tuple[bytes, str, str]:
+    """Render one dispatch asset with a deterministic per-platform fallback chain."""
+    global _TTS_RENDER_LAST_ENGINE, _TTS_RENDER_LAST_ERROR, _TTS_RENDER_LAST_AT, _TTS_RENDER_LAST_VOICE
+    errors=[]
+    # Windows has a good local Dutch SAPI route; Linux gets offline Dutch eSpeak
+    # when installed. Both fall back to the same Dutch gTTS route.
+    local_renderer=generate_local_sapi_wav if os.name=="nt" else (generate_local_espeak_wav if sys.platform.startswith("linux") else None)
+    if local_renderer:
+        try:
+            data=local_renderer(text,rate=rate,service=service,urgent=urgent,attention=attention)
+            return data,"audio/wav",_TTS_RENDER_LAST_ENGINE or ("windows-sapi-wav" if os.name=="nt" else "linux-espeak-wav")
+        except Exception as exc:
+            errors.append(str(exc))
     try:
-        data = generate_local_sapi_wav(text, rate=rate, service=service, urgent=urgent, attention=attention)
-        return data, "audio/wav", _TTS_RENDER_LAST_ENGINE or "windows-sapi-wav"
+        data=generate_online_tts(text)
+        _TTS_RENDER_LAST_ENGINE="gtts-mp3-fallback"; _TTS_RENDER_LAST_VOICE="Google TTS • Nederlands (nl)"; _TTS_RENDER_LAST_ERROR="; ".join(errors)[:500]; _TTS_RENDER_LAST_AT=utcnow_iso()
+        return data,"audio/mpeg","gtts-mp3-fallback"
     except Exception as exc:
-        local_error = exc
-    try:
-        data = generate_online_tts(text)
-        _TTS_RENDER_LAST_ENGINE = "gtts-mp3-fallback"
-        _TTS_RENDER_LAST_VOICE = "Google TTS • Nederlands (nl)"
-        _TTS_RENDER_LAST_ERROR = str(local_error or "")[:500]
-        _TTS_RENDER_LAST_AT = utcnow_iso()
-        return data, "audio/mpeg", "gtts-mp3-fallback"
-    except Exception as exc:
-        _TTS_RENDER_LAST_ERROR = f"local={local_error}; online={exc}"[:500]
-        _TTS_RENDER_LAST_AT = utcnow_iso()
-        raise RuntimeError(f"geen TTS-audio beschikbaar: lokaal: {local_error}; online: {exc}") from exc
+        errors.append(str(exc)); _TTS_RENDER_LAST_ERROR="; ".join(errors)[:500]; _TTS_RENDER_LAST_AT=utcnow_iso()
+        raise RuntimeError("geen TTS-audio beschikbaar: "+"; ".join(errors)) from exc
 
 
 def generate_online_tts(text: str) -> bytes:
@@ -4678,23 +4992,20 @@ _TTS_LAST_PLAYED = ""
 
 
 def detect_local_audio_player(volume: int = 100) -> tuple[str, list[str]] | tuple[None, None]:
-    """Return the built-in Windows MediaPlayer command used for MP3 TTS."""
-    if os.name != "nt":
-        return None, None
-    volume = max(0, min(100, int(volume or 100)))
-    gain = volume / 100.0
-    ps = shutil.which("powershell.exe") or shutil.which("powershell")
-    if not ps:
-        return None, None
-    script = (
-        "Add-Type -AssemblyName PresentationCore; "
-        "$p=New-Object System.Windows.Media.MediaPlayer; "
-        "$p.Open([Uri]$args[0]); $p.Volume=" + f"{gain:.3f}" + "; $p.Play(); "
-        "for($i=0;$i -lt 80 -and -not $p.NaturalDuration.HasTimeSpan;$i++){Start-Sleep -Milliseconds 50}; "
-        "if($p.NaturalDuration.HasTimeSpan){Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds+250)}else{Start-Sleep -Seconds 8}; "
-        "$p.Close()"
-    )
-    return "windows-media", [ps, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script]
+    volume=max(0,min(100,int(volume or 100)))
+    if os.name=="nt":
+        gain=volume/100.0; ps=shutil.which("powershell.exe") or shutil.which("powershell")
+        if not ps:return None,None
+        script=("Add-Type -AssemblyName PresentationCore; $p=New-Object System.Windows.Media.MediaPlayer; "
+                "$p.Open([Uri]$args[0]); $p.Volume="+f"{gain:.3f}"+"; $p.Play(); "
+                "for($i=0;$i -lt 80 -and -not $p.NaturalDuration.HasTimeSpan;$i++){Start-Sleep -Milliseconds 50}; "
+                "if($p.NaturalDuration.HasTimeSpan){Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds+250)}else{Start-Sleep -Seconds 8}; $p.Close()")
+        return "windows-media",[ps,"-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",script]
+    if sys.platform.startswith("linux"):
+        if shutil.which("mpv"): return "mpv",[shutil.which("mpv"),"--no-video","--really-quiet",f"--volume={volume}"]
+        if shutil.which("ffplay"): return "ffplay",[shutil.which("ffplay"),"-nodisp","-autoexit","-loglevel","quiet","-volume",str(volume)]
+        if shutil.which("cvlc"): return "cvlc",[shutil.which("cvlc"),"--play-and-exit","--intf","dummy",f"--gain={max(.1,volume/100):.2f}"]
+    return None,None
 
 
 _TTS_DEVICE_VOLUME_LOCK = threading.Lock()
@@ -4704,6 +5015,11 @@ _TTS_LAST_DEVICE_CONTROLLER = ""
 _TTS_LAST_DEVICE_VOLUME = None
 
 def detect_device_volume_controller() -> str:
+    # Browser element volume is preferred. We only expose the available Linux
+    # controller for diagnostics; normal dispatch playback does not mutate it.
+    if sys.platform.startswith("linux"):
+        if shutil.which("wpctl"): return "wpctl"
+        if shutil.which("pactl"): return "pactl"
     return ""
 
 def read_device_volume(controller: str = "") -> dict | None:
@@ -4713,15 +5029,14 @@ def set_device_volume_percent(percent: int, controller: str = "") -> bool:
     return False
 
 def begin_temporary_device_volume(max_percent: int | None) -> tuple[int, dict | None]:
-    # Windows build changes only the MediaPlayer volume; it never rewrites the
-    # user's global Windows mixer level.
-    return 0, None
+    return 0,None
 
 def restore_temporary_device_volume(token: int | None = None, force: bool = False) -> bool:
     return True
 
 def _restore_device_volume_when_player_finishes(process, token: int) -> None:
     return
+
 
 def tts_cache_path(text: str) -> Path:
     text = normalize_space(str(text or ""))[:1200]
@@ -4792,7 +5107,7 @@ def play_online_tts_on_host(text: str, volume: int = 100, cue_service: str = "",
     player, argv = detect_local_audio_player(volume)
     if not player or not argv:
         restore_temporary_device_volume(device_token)
-        _TTS_LAST_ERROR = "Geen lokale MP3-speler gevonden (Windows Media/PowerShell of een compatibele speler)."
+        _TTS_LAST_ERROR = "Geen lokale audiospeler gevonden (Windows Media/PowerShell, mpv, ffplay of VLC)."
         raise RuntimeError(_TTS_LAST_ERROR)
     with _TTS_PLAYER_LOCK:
         try:
@@ -4836,11 +5151,16 @@ def tts_runtime_status() -> dict:
         online_generator = True
     except Exception:
         online_generator = False
-    local_wav = bool(_powershell_executable())
+    local_windows = bool(_powershell_executable())
+    local_linux = bool(_espeak_executable())
+    local_wav = bool(local_windows or local_linux)
     return {
         "engine": "local-wav-lightkrant-tab",
+        "platform": runtime_platform(),
         "generator_available": bool(local_wav or online_generator),
         "local_wav_available": local_wav,
+        "local_windows_sapi_available": local_windows,
+        "local_linux_espeak_available": local_linux,
         "online_fallback_available": online_generator,
         "local_player": "",
         "server_playback_ready": False,
@@ -5075,7 +5395,9 @@ def _select_github_release_asset(release: dict) -> dict:
         points = 0
         if "p2000" in name: points += 8
         if "monitor" in name: points += 5
-        if "windows" in name or "multiplatform" in name: points += 8
+        if "multiplatform" in name or "multi-platform" in name: points += 16
+        if "windows" in name: points += (10 if os.name == "nt" else -4)
+        if "linux" in name: points += (10 if sys.platform.startswith("linux") else -4)
         if APP_VERSION.lower() in name: points -= 1
         if "source" in name: points -= 10
         return points
@@ -5485,7 +5807,7 @@ def _validate_and_extract_update(zip_path: Path) -> tuple[Path, str]:
             # a safe executable fallback. Without this, a successful self-update
             # could leave start/kiosk/restart scripts at 0644 after the next reboot.
             archived_mode = (info.external_attr >> 16) & 0o777
-            launcher_names = {"start.sh", "restart.sh", "kiosk.sh", "install-user-service.sh", "diagnose.sh"}
+            launcher_names = {"START_P2000.sh", "START_P2000_AUTOSTART.sh", "LINUX_OPEN_PAGE.sh", "START_BACKEND.sh", "START_CHROME.sh", "START_EDGE.sh", "STOP_P2000.sh", "OPEN_INSTELLINGEN.sh", "CONFIGURATIE_WIZARD.sh", "OPEN_HANDLEIDING.sh", "INSTALL_NEDERLANDSE_STEM.sh", "INSTALL_AUTOSTART.sh", "REMOVE_AUTOSTART.sh", "HERSTEL_VORIGE_VERSIE.sh", "LINUX_CHECK.sh", "ENSURE_PYTHON.sh", "RUN_TESTS.sh", "INSTALL_P2000.sh", "UNINSTALL_P2000.sh", "LINUX_REPAIR.sh", "start.sh", "restart.sh", "kiosk.sh", "install-user-service.sh", "diagnose.sh"}
             should_exec = bool(archived_mode & 0o111) or target.name in launcher_names
             try:
                 target.chmod(0o755 if should_exec else 0o644)
@@ -5522,6 +5844,67 @@ def _validate_and_extract_update(zip_path: Path) -> tuple[Path, str]:
     return package_root, version
 
 
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET,socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1",0));return int(sock.getsockname()[1])
+
+
+def _preflight_staged_update(package_root: Path, target_version: str) -> dict:
+    """Boot the staged update on an isolated port before touching live files."""
+    port=_free_local_port();server=package_root/"backend"/"server.py"
+    env=os.environ.copy();env["PYTHONUNBUFFERED"]="1"
+    proc=subprocess.Popen([sys.executable,str(server),"--bind","127.0.0.1","--port",str(port),"--no-poll"],cwd=str(package_root),env=env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,creationflags=(getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0))
+    output=b""
+    try:
+        deadline=time.monotonic()+14
+        last_error=""
+        while time.monotonic()<deadline:
+            if proc.poll() is not None:
+                try: output=(proc.stdout.read(20000) if proc.stdout else b"")
+                except Exception: pass
+                raise RuntimeError("staged backend stopte tijdens preflight: "+output.decode("utf-8","replace")[-1200:])
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/runtime",timeout=1.2) as resp:
+                    row=json.loads(resp.read().decode("utf-8","replace") or "{}")
+                if str(row.get("version") or "").lstrip("vV") != str(target_version).lstrip("vV"):
+                    raise RuntimeError(f"preflight-versie {row.get('version')} != {target_version}")
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health",timeout=1.2) as resp:
+                    health=json.loads(resp.read().decode("utf-8","replace") or "{}")
+                if health.get("ok") is True:
+                    return {"ok":True,"port":port,"version":row.get("version")}
+            except Exception as exc:
+                last_error=str(exc);time.sleep(.25)
+        raise RuntimeError("staged backend werd niet gezond: "+last_error)
+    finally:
+        try: proc.terminate();proc.wait(timeout=2)
+        except Exception:
+            try: proc.kill()
+            except Exception: pass
+
+
+def _write_pending_update_health(target_version: str, backup: Path) -> None:
+    UPDATE_DIR.mkdir(parents=True,exist_ok=True)
+    UPDATE_PENDING_HEALTH_PATH.write_text(json.dumps({"target_version":target_version,"backup":str(backup),"created_at":utcnow_iso(),"pid":os.getpid()},ensure_ascii=False,indent=2),encoding="utf-8")
+
+
+def _mark_update_healthy_later(state: "AppState") -> None:
+    if not UPDATE_PENDING_HEALTH_PATH.exists(): return
+    def worker():
+        if state.stop_event.wait(8): return
+        try:
+            pending=json.loads(UPDATE_PENDING_HEALTH_PATH.read_text(encoding="utf-8"))
+            target=str(pending.get("target_version") or "")
+            if target and _version_key(target)!=_version_key(APP_VERSION): return
+            # Internal health checks: DB, frontend files and live HTTP state have all initialized.
+            state.health_snapshot()
+            if not (FRONTEND_DIR/"index.html").is_file(): return
+            UPDATE_PENDING_HEALTH_PATH.unlink(missing_ok=True)
+            _write_update_status(state="ready",message=f"v{APP_VERSION} gezond na update",installed_version=APP_VERSION,latest_version=APP_VERSION,available=False,error="")
+        except Exception:
+            pass
+    threading.Thread(target=worker,daemon=True,name="update-health-confirm").start()
+
+
 def _copy_update_into_place(package_root: Path):
     """Replace app code while preserving this installation's database/config."""
     package_root = package_root.resolve()
@@ -5544,9 +5927,12 @@ def _copy_update_into_place(package_root: Path):
 def _apply_update_and_exec(package_root: Path, target_version: str, install_meta: dict | None = None):
     try:
         time.sleep(1.1)  # give the browser time to receive the upload response
+        _write_update_status(state="preflight", target_version=target_version, message="Nieuwe versie geïsoleerd starten en healthcheck uitvoeren")
+        _preflight_staged_update(package_root,target_version)
         _write_update_status(state="backup", target_version=target_version, message="Vorige versie veiligstellen")
         backup = _create_update_backup()
-        _write_update_status(state="installing", target_version=target_version, backup=str(backup), message="Bestanden installeren")
+        _write_pending_update_health(target_version,backup)
+        _write_update_status(state="installing", target_version=target_version, backup=str(backup), message="Bestanden installeren (auto-rollback blijft actief)")
         _copy_update_into_place(package_root)
         if isinstance(install_meta, dict) and install_meta.get("source_kind") == "branch" and install_meta.get("revision"):
             marker = _write_installed_github_marker(install_meta)
@@ -5570,6 +5956,27 @@ def schedule_self_restart(delay: float = .8):
         time.sleep(delay)
         os.execv(sys.executable, [sys.executable, str(ROOT / "backend" / "server.py"), *sys.argv[1:]])
     threading.Thread(target=worker, daemon=True, name="self-restart").start()
+
+
+def queue_supervisor_command(action: str) -> dict:
+    action=normalize_space(str(action or "")).lower()
+    if action not in {"restart-kiosk","restart-backend"}: raise ValueError("Onbekende supervisoractie")
+    DATA_DIR.mkdir(parents=True,exist_ok=True)
+    row={"action":action,"created_at":utcnow_iso(),"token":hashlib.sha256(f"{time.time_ns()}:{action}".encode()).hexdigest()[:12]}
+    tmp=SUPERVISOR_COMMAND_PATH.with_suffix(".tmp");tmp.write_text(json.dumps(row,ensure_ascii=False),encoding="utf-8");tmp.replace(SUPERVISOR_COMMAND_PATH)
+    return row
+
+
+def supervisor_status() -> dict:
+    if not SUPERVISOR_STATUS_PATH.exists(): return {"running":False,"state":"not-started"}
+    try:
+        row=json.loads(SUPERVISOR_STATUS_PATH.read_text(encoding="utf-8"));ts=str(row.get("heartbeat_at") or "")
+        age=None
+        if ts:
+            dt=datetime.fromisoformat(ts.replace("Z","+00:00"));age=max(0,(datetime.now(timezone.utc)-dt.astimezone(timezone.utc)).total_seconds())
+        row["heartbeat_age_seconds"]=round(age,1) if age is not None else None;row["running"]=bool(age is not None and age<25)
+        return row
+    except Exception as exc: return {"running":False,"state":"invalid","error":str(exc)}
 
 
 MIME = {
@@ -5931,6 +6338,10 @@ class Handler(BaseHTTPRequestHandler):
                 "map_visible": bool(payload.get("map_visible",False)),
                 "busy": bool(payload.get("busy",False)),
                 "visibility": normalize_space(str(payload.get("visibility") or ""))[:40],
+                "speech_queue": bounded_int(payload.get("speech_queue",0),0,0,500),
+                "speech_active": bool(payload.get("speech_active",False)),
+                "speech_mode": normalize_space(str(payload.get("speech_mode") or "normal"))[:20],
+                "master_volume": bounded_int(payload.get("master_volume",100),100,0,100),
                 "audio_attempts": bounded_int(payload.get("audio_attempts",0),0,0,1_000_000),
                 "audio_successes": bounded_int(payload.get("audio_successes",0),0,0,1_000_000),
                 "audio_failures": bounded_int(payload.get("audio_failures",0),0,0,1_000_000),
@@ -6056,6 +6467,26 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "message": "Backend herstart"})
             schedule_self_restart()
             return
+        if parsed.path == "/api/quick-action":
+            action=normalize_space(str(payload.get("action") or "")).lower()
+            if action in {"speech-normal","speech-mute","speech-priority"}:
+                mode={"speech-normal":"normal","speech-mute":"mute","speech-priority":"priority"}[action]
+                merged=self.state.get_display_settings();merged["speechMode"]=mode;merged["speechEnabled"]=True
+                return self.send_json({"ok":True,"settings":self.state.save_display_settings(merged),"action":action})
+            if action=="volume":
+                merged=self.state.get_display_settings();merged["masterVolume"]=bounded_int(payload.get("value",100),100,0,100)
+                return self.send_json({"ok":True,"settings":self.state.save_display_settings(merged),"action":action})
+            if action=="stop-speech":
+                token=f"quick-stop-{int(time.time()*1000)}";self.state.broadcast({"type":"test","payload":{"token":token,"mode":"stop-speech"}})
+                return self.send_json({"ok":True,"action":action})
+            if action=="replay-last":
+                rows=query_messages(self.state,{"limit":["1"]})
+                if not rows:return self.send_json({"ok":False,"error":"Nog geen melding om te herhalen"},404)
+                delivered=self.state.broadcast({"type":"replay","message":rows[0],"speak":bool(payload.get("speak",True))})
+                return self.send_json({"ok":delivered>0,"clients":delivered,"action":action},200 if delivered else 409)
+            if action in {"restart-kiosk","restart-backend"}:
+                return self.send_json({"ok":True,"command":queue_supervisor_command(action)})
+            return self.send_json({"ok":False,"error":"Onbekende snelactie"},400)
         if parsed.path == "/api/display/power":
             return self.send_json(self.state.set_display_power(str(payload.get("state", "")), bool(payload.get("manual", False))))
         if parsed.path == "/api/feeds/reconnect":
@@ -6116,6 +6547,7 @@ class Handler(BaseHTTPRequestHandler):
                 "version": APP_VERSION,
                 "server_instance": self.state.server_instance,
                 "started_at": self.state.started_at,
+                "platform": runtime_platform(),
             })
         if parsed.path == "/api/setup":
             return self.send_json({"ok": True, "setup": self.state.setup_view()})
@@ -6125,6 +6557,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": True, "status": self.state.vehicle_sync_view()})
         if parsed.path == "/api/vehicle-overrides":
             return self.send_json({"ok": True, "overrides": self.state.vehicle_overrides_view()})
+        if parsed.path == "/api/vehicle-history":
+            limit=bounded_int(qs.get("limit",["100"])[0],100,1,500)
+            rows=read_vehicle_history(limit);return self.send_json({"ok":True,"history":rows,"count":len(rows)})
+        if parsed.path == "/api/supervisor/status":
+            return self.send_json({"ok":True,"supervisor":supervisor_status()})
         if parsed.path == "/api/test-status":
             token = normalize_space(str(qs.get("token", [""])[0]))[:120]
             row = self.state.test_command_view(token) if token else None
@@ -6170,9 +6607,11 @@ class Handler(BaseHTTPRequestHandler):
                 "last_message": last["published"] if last else None,
                 "messages_total": count,
                 "messages_today": count_today,
-                "poll_interval_seconds": max(15, int(self.state.config.get("poll_interval_seconds", 20))),
-                "source": SOURCE_NAME,
+                "poll_interval_seconds": max(8, int(self.state.config.get("poll_interval_seconds", 10))),
+                "source": "parallelle P2000 feed-race",
                 "source_url": "https://alarmeringen.nl/",
+                "race_feeds": self.state.race_feed_urls(),
+                "supervisor": supervisor_status(),
                 "scope": self.state.config.get("standplaats") or SCOPE_LABEL,
                 "scope_code": "+".join(setup_region_disciplines(self.state.config).keys()),
                 "profile": self.state.setup_view(),
@@ -6188,7 +6627,7 @@ class Handler(BaseHTTPRequestHandler):
                     "method": self.state.display_power_method,
                     "connector": self.state.display_connector,
                     "name": self.state.display_name,
-                    "supported_hint": "Windows SC_MONITORPOWER + input-wake",
+                    "supported_hint": "Windows: SC_MONITORPOWER • Linux X11: xset DPMS • wlroots Wayland: wlr-randr",
                 },
             })
         if parsed.path == "/api/settings":
@@ -6242,7 +6681,7 @@ class Handler(BaseHTTPRequestHandler):
             public = {
                 "display_name": self.state.config.get("display_name", "P2000 Monitor"),
                 "feed_urls": list(self.state.config.get("feed_urls") or []),
-                "poll_interval_seconds": max(15, int(self.state.config.get("poll_interval_seconds", 20))),
+                "poll_interval_seconds": max(8, int(self.state.config.get("poll_interval_seconds", 10))),
                 "scope": self.state.config.get("standplaats") or SCOPE_LABEL,
                 "setup_complete": self.state.config.get("setup_complete") is True,
             }
@@ -6328,8 +6767,11 @@ def load_config() -> dict:
         "bind": "0.0.0.0",
         "port": 8765,
         "feed_urls": [],
+        "supplemental_feed_urls": [],
         "fallback_feed_urls": [],
-        "poll_interval_seconds": 20,
+        "feed_race_enabled": True,
+        "feed_parallel_workers": 6,
+        "poll_interval_seconds": 10,
         "request_timeout_seconds": 15,
         "max_feed_bytes": 2_000_000,
         "retention_days": 30,
@@ -6346,10 +6788,12 @@ def load_config() -> dict:
         "github_settings_branch": DEFAULT_GITHUB_BRANCH,
         "github_settings_minutes": 5,
     }
+    legacy_default_poll = False
     if CONFIG_PATH.exists():
         try:
             loaded = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
+                legacy_default_poll = "feed_race_enabled" not in loaded and int(loaded.get("poll_interval_seconds", 20) or 20) == 20
                 default.update(loaded)
         except Exception as exc:
             print(f"Waarschuwing: config/config.json kon niet worden gelezen; veilige defaults worden gebruikt: {exc}", file=sys.stderr)
@@ -6359,7 +6803,9 @@ def load_config() -> dict:
     bind = normalize_space(str(default.get("bind") or "0.0.0.0"))
     default["bind"] = bind if len(bind) <= 120 else "0.0.0.0"
     default["port"] = bounded_int(default.get("port"), 8765, 1, 65535)
-    default["poll_interval_seconds"] = bounded_int(default.get("poll_interval_seconds"), 20, 15, 3600)
+    default["poll_interval_seconds"] = 10 if legacy_default_poll else bounded_int(default.get("poll_interval_seconds"), 10, 8, 3600)
+    default["feed_race_enabled"] = default.get("feed_race_enabled") is not False
+    default["feed_parallel_workers"] = bounded_int(default.get("feed_parallel_workers"),6,1,12)
     default["request_timeout_seconds"] = bounded_int(default.get("request_timeout_seconds"), 15, 5, 60)
     default["max_feed_bytes"] = bounded_int(default.get("max_feed_bytes"), 2_000_000, 100_000, 10_000_000)
     default["retention_days"] = bounded_int(default.get("retention_days"), 30, 1, 365)
@@ -6384,6 +6830,15 @@ def load_config() -> dict:
         if parsed.scheme in {"http", "https"} and parsed.netloc and len(url) <= 1000:
             urls.append(url)
     default["feed_urls"] = urls
+    raw_supplemental=default.get("supplemental_feed_urls")
+    if not isinstance(raw_supplemental,list): raw_supplemental=[]
+    supplemental=[]
+    for value in raw_supplemental[:12]:
+        url=normalize_space(str(value or ""))
+        try: parsed=urlparse(url)
+        except Exception: continue
+        if parsed.scheme in {"http","https"} and parsed.netloc and len(url)<=1000 and url not in default["feed_urls"]: supplemental.append(url)
+    default["supplemental_feed_urls"]=list(dict.fromkeys(supplemental))
     raw_fallback = default.get("fallback_feed_urls")
     if not isinstance(raw_fallback, list):
         raw_fallback = []
@@ -6394,7 +6849,7 @@ def load_config() -> dict:
             parsed = urlparse(url)
         except Exception:
             continue
-        if parsed.scheme in {"http", "https"} and parsed.netloc and len(url) <= 1000 and url not in default["feed_urls"]:
+        if parsed.scheme in {"http", "https"} and parsed.netloc and len(url) <= 1000 and url not in default["feed_urls"] and url not in default["supplemental_feed_urls"]:
             fallback_urls.append(url)
     default["fallback_feed_urls"] = fallback_urls
     default["setup_complete"] = default.get("setup_complete") is True
@@ -6442,6 +6897,7 @@ def main():
         print(f"Scope cleanup: {removed} meldingen buiten het actuele profiel verwijderd")
     Handler.state = state
     httpd = QuietThreadingHTTPServer((config["bind"], int(config["port"])), Handler)
+    _mark_update_healthy_later(state)
 
     def shutdown(*_):
         state.stop_event.set()

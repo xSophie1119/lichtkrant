@@ -12,7 +12,7 @@
   "port": 8765,
   "feed_urls": [],
   "fallback_feed_urls": [],
-  "poll_interval_seconds": 20,
+  "poll_interval_seconds": 10,
   "request_timeout_seconds": 15,
   "max_feed_bytes": 2000000,
   "retention_days": 30,
@@ -28,5 +28,8 @@
   "github_settings_auto_sync": false,
   "github_settings_path": "p2000-settings.json",
   "github_settings_branch": "main",
-  "github_settings_minutes": 5
+  "github_settings_minutes": 5,
+  "feed_race_enabled": true,
+  "feed_parallel_workers": 6,
+  "supplemental_feed_urls": []
 }

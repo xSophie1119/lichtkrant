@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071018">
   <title>P2000 Monitor • Instellingen</title>
-  <link rel="stylesheet" href="/styles.css?v=4230">
+  <link rel="stylesheet" href="/styles.css?v=4400">
   <style>
     .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
     .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
@@ -14,16 +14,24 @@
     .service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-top:10px}
     .service-grid label{display:flex;gap:9px;align-items:center;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:12px}
     .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.wide{grid-column:1/-1}.status-grid.compact-grid{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+
+    .quick-card{border-color:rgba(91,216,255,.34);background:linear-gradient(135deg,rgba(91,216,255,.08),rgba(255,255,255,.025))}
+    .quick-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:12px 0}.quick-actions button{min-height:44px}
+    .quick-status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.quick-status>div{padding:10px;border-radius:12px;background:rgba(255,255,255,.04)}.quick-status small{display:block;opacity:.65}.quick-status b{display:block;margin-top:4px}
+    .mode-btn.active{outline:2px solid rgba(91,216,255,.7);background:rgba(91,216,255,.15)}.danger-btn{border-color:rgba(255,100,100,.38)!important}
+    .live-preview{margin-top:12px;padding:18px;border-radius:16px;background:#020506;border:1px solid rgba(255,255,255,.10);min-height:130px}.live-preview .preview-priority{font-weight:900;font-size:.86rem;letter-spacing:.08em}.live-preview h4{font-size:1.35rem;margin:8px 0 4px}.live-preview p{margin:3px 0;opacity:.86}.preview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.preview-grid span{padding:8px;border-radius:10px;background:rgba(255,255,255,.05);font-size:.82rem}
+    .vehicle-history{display:grid;gap:7px;margin-top:10px;max-height:260px;overflow:auto}.history-row{padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.04);font-size:.86rem}.history-row small{opacity:.65}
+    @media(max-width:760px){.control-shell{padding:10px}.control-header{gap:14px}.header-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.header-actions #saveBtn{grid-column:1/-1}.quick-card{position:relative;z-index:2}.quick-actions{grid-template-columns:1fr 1fr}.quick-actions button{min-height:52px;font-size:.95rem}.quick-status{grid-template-columns:1fr 1fr}.preview-grid{grid-template-columns:1fr 1fr}.button-row{display:grid!important;grid-template-columns:1fr 1fr}.button-row button{min-height:46px}.field input,.field select,.field textarea{font-size:16px}.status-grid.compact-grid{grid-template-columns:1fr 1fr}}
   </style>
 </head>
 <body class="control-page">
 <main class="control-shell">
   <header class="control-header command-hero">
     <div class="hero-copy">
-      <span class="eyebrow">WINDOWS • P2000 ONLY</span>
+      <span class="eyebrow">WINDOWS + LINUX • P2000 ONLY</span>
       <h1>P2000 <span>Monitor</span></h1>
-      <p>Windows P2000-monitor met configureerbare standplaats, regio’s en disciplines. Geen agenda, geen weer en geen Linux-afhankelijkheden.</p>
-      <div class="hero-badges"><span class="hero-badge"><i class="live-dot"></i> LIVE</span><span class="hero-badge" id="profileBadge">CONFIGUREERBAAR</span><span class="hero-badge">WINDOWS KIOSK</span></div>
+      <p>P2000-monitor voor Windows én Linux met configureerbare standplaats, regio’s en disciplines.</p>
+      <div class="hero-badges"><span class="hero-badge"><i class="live-dot"></i> LIVE</span><span class="hero-badge" id="profileBadge">CONFIGUREERBAAR</span><span class="hero-badge">MULTIPLATFORM KIOSK</span></div>
     </div>
     <div class="header-actions">
       <a class="secondary-btn" href="/setup.html?edit=1">Configuratiewizard</a>
@@ -37,6 +45,25 @@
       <div class="panel-head compact"><div><span class="eyebrow">INSTALLATIEPROFIEL</span><h3 id="profileTitle">Regio’s en standplaats</h3></div><span id="controlStatus" class="status-pill">verbinden…</span></div>
       <div class="profile-note" id="profileSummary">Configuratie laden…</div>
       <div class="scope-tags" id="scopeTags"></div>
+    </section>
+
+    <section class="control-card wide quick-card" id="quickControlCard">
+      <div class="panel-head compact"><div><span class="eyebrow">SNELBEDIENING</span><h3>Direct vanaf telefoon of pc</h3></div><span id="quickSupervisorPill" class="status-pill">watchdog…</span></div>
+      <div class="quick-actions">
+        <button id="quickNormalBtn" class="secondary-btn mode-btn" type="button">🔊 Normaal</button>
+        <button id="quickPriorityBtn" class="secondary-btn mode-btn" type="button">🚨 Alleen prioriteit</button>
+        <button id="quickMuteBtn" class="secondary-btn mode-btn danger-btn" type="button">🔇 STIL</button>
+        <button id="quickReplayBtn" class="secondary-btn" type="button">↻ Laatste herhalen</button>
+        <button id="quickStopBtn" class="secondary-btn" type="button">■ Stop geluid</button>
+        <button id="quickTuneTestBtn" class="secondary-btn" type="button">♫ Testtoon</button>
+        <button id="quickVoiceTestBtn" class="secondary-btn" type="button">🗣 Testomroep</button>
+        <button id="quickDisplayOnBtn" class="secondary-btn" type="button">☀ Scherm aan</button>
+        <button id="quickDisplayOffBtn" class="secondary-btn" type="button">☾ Scherm uit</button>
+        <button id="quickRestartKioskBtn" class="secondary-btn" type="button">⟳ Kiosk herstarten</button>
+        <button id="quickRestartBackendBtn" class="secondary-btn" type="button">↻ Backend herstarten</button>
+      </div>
+      <label class="field"><span>Mastervolume <b id="quickVolumeValue">100</b>%</span><input id="quickVolumeInput" type="range" min="0" max="100" step="5" value="100"></label>
+      <div class="quick-status"><div><small>Feed</small><b id="quickFeedStatus">—</b></div><div><small>Omroep</small><b id="quickSpeechMode">—</b></div><div><small>Watchdog</small><b id="quickSupervisorStatus">—</b></div><div><small>Laatste melding</small><b id="quickLastMessage">—</b></div></div>
     </section>
 
     <section class="control-card">
@@ -61,7 +88,7 @@
         <div class="button-row"><button id="uploadBackgroundPhotoBtn" class="secondary-btn" type="button">Foto opslaan</button><button id="removeBackgroundPhotoBtn" class="secondary-btn" type="button">Foto verwijderen</button></div>
         <p id="backgroundPhotoStatus" class="hint">Nog geen foto gekozen.</p>
       </div>
-      <p class="hint">Kies een donkere kleur of een lokale JPG/PNG/WebP. Foto's worden lokaal op deze Windows-pc opgeslagen; de donkere laag houdt de P2000-tekst leesbaar.</p>
+      <p class="hint">Kies een donkere kleur of een lokale JPG/PNG/WebP. Foto's worden lokaal op deze computer opgeslagen; de donkere laag houdt de P2000-tekst leesbaar.</p>
     </section>
 
     <section class="control-card">
@@ -80,6 +107,7 @@
     <section class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">OMROEP</span><h3>Kazerne-omroep</h3></div><span id="ttsStatus" class="status-pill">controleren…</span></div>
       <label class="switch-row"><span><b>P2000 voorlezen</b><small>Bij nieuwe lokale meldingen.</small></span><input id="speechEnabledInput" type="checkbox"></label>
+      <div class="two-col"><label class="field"><span>Omroepmodus</span><select id="speechModeInput"><option value="normal">Normaal</option><option value="priority">Alleen prioriteit</option><option value="mute">STIL</option></select></label><label class="field"><span>Mastervolume <b id="masterVolumeValue">100</b>%</span><input id="masterVolumeInput" type="range" min="0" max="100" step="5" value="100"></label></div>
       <label class="field"><span>Alleen deze steden uitspreken</span><textarea id="speechCitiesInput" rows="3" placeholder="Bijv. Tilburg, Goirle, Oisterwijk"></textarea></label>
       <p class="hint">Komma, puntkomma of nieuwe regel gebruiken. Leeg = alle zichtbare meldingen mogen worden uitgesproken. Dit filter verandert alleen de omroep.</p>
       <label class="field"><span>Omroepengine</span><select id="speechEngineInput"><option value="online">Lokale WAV-omroep • Chrome + Edge</option></select></label>
@@ -88,7 +116,7 @@
         <label class="field"><span>Pitch (noodfallback)</span><input id="speechPitchInput" type="number" min="0.75" max="1.30" step="0.01"></label>
       </div>
       <div class="button-row"><button id="voiceTestBtn" class="secondary-btn">Test omroep</button><button id="stopSpeechBtn" class="secondary-btn">Stop geluid</button></div>
-      <p class="hint">De backend maakt lokaal een gewoon WAV-audiobestand met Windows SAPI. Chrome en Edge spelen exact hetzelfde bestand af via één vaste speler in het lichtkrant-tabblad. Als een handmatig geopende browser autoplay blokkeert, verschijnt op de lichtkrant éénmalig een knop om geluid te ontgrendelen.</p>
+      <p class="hint">De backend maakt één audiobestand voor het lichtkrant-tabblad. Windows gebruikt lokaal SAPI; Linux gebruikt lokaal eSpeak wanneer aanwezig en valt anders terug op de vaste Nederlandse online route. Als een handmatig geopende browser autoplay blokkeert, verschijnt op de lichtkrant éénmalig een knop om geluid te ontgrendelen.</p>
     </section>
 
     <section class="control-card wide">
@@ -114,29 +142,31 @@
     </section>
 
     <section class="control-card">
-      <div class="panel-head compact"><div><span class="eyebrow">WINDOWS SCHERM</span><h3>Scherm & slaapstand</h3></div><span id="displayStatus" class="status-pill">controleren…</span></div>
+      <div class="panel-head compact"><div><span class="eyebrow">SCHERM</span><h3>Scherm & slaapstand</h3></div><span id="displayStatus" class="status-pill">controleren…</span></div>
       <label class="field"><span>Lichtkrant openen op</span><select id="kioskMonitorInput"><option value="primary">Primair scherm</option></select></label>
-      <p class="hint" id="kioskMonitorHint">Windows-schermen worden automatisch gedetecteerd. De keuze wordt toegepast bij de volgende start van Chrome/Edge.</p>
-      <label class="switch-row"><span><b>Scherm automatisch uit</b><small>Gebruikt Windows SC_MONITORPOWER; geen xrandr of Wayland.</small></span><input id="displaySleepInput" type="checkbox"></label>
+      <p class="hint" id="kioskMonitorHint">Aangesloten schermen worden automatisch gedetecteerd. De keuze wordt toegepast bij de volgende kioskstart.</p>
+      <label class="switch-row"><span><b>Scherm automatisch uit</b><small>Windows gebruikt SC_MONITORPOWER. Linux gebruikt waar mogelijk X11 DPMS (xset) of wlroots Wayland (wlr-randr).</small></span><input id="displaySleepInput" type="checkbox"></label>
       <label class="switch-row"><span><b>Nachtstand</b><small>Gebruik de onderstaande tijden voor de donkere stand/slaapstand.</small></span><input id="nightModeInput" type="checkbox"></label>
       <div class="two-col">
         <label class="field"><span>Vanaf</span><input id="nightStartInput" type="time"></label>
         <label class="field"><span>Tot</span><input id="nightEndInput" type="time"></label>
       </div>
-      <div class="button-row"><button id="displayOffBtn" class="secondary-btn">Scherm uit</button><button id="displayOnBtn" class="secondary-btn">Scherm aan</button><button id="detectDisplayBtn" class="secondary-btn">Controleer Windows</button></div>
+      <div class="button-row"><button id="displayOffBtn" class="secondary-btn">Scherm uit</button><button id="displayOnBtn" class="secondary-btn">Scherm aan</button><button id="detectDisplayBtn" class="secondary-btn">Controleer scherm</button></div>
     </section>
 
     <section class="control-card wide">
-      <div class="panel-head compact"><div><span class="eyebrow">RSS</span><h3>P2000-bronnen</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
+      <div class="panel-head compact"><div><span class="eyebrow">FEED-RACE</span><h3>P2000-bronnen & snelheid</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
       <div id="feedList" class="feed-list"><div class="feed-row">laden…</div></div>
-      <p class="hint">Deze lijst wordt automatisch opgebouwd uit de regio/discipline-matrix in de configuratiewizard. Je hoeft RSS-links nooit handmatig te kopiëren.</p>
+      <p class="hint">Regionale feeds en landelijke disciplinefeeds worden parallel opgehaald. De eerste unieke kopie van een melding wint; duplicaten worden door SQLite genegeerd. Latency en bron-wins worden hieronder live gemeten.</p>
     </section>
 
     <section class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">TEST</span><h3>Eigen P2000-regel</h3></div></div>
       <label class="field"><span>Originele melding</span><textarea id="testInput" rows="4">P 1 BR woning Hoofdstraat Utrecht</textarea></label>
       <div class="button-row"><button id="testDisplayBtn" class="primary-btn">Toon testmelding</button><button id="testSpeakBtn" class="secondary-btn">Toon + spreek</button></div>
-      <p id="testStatus" class="hint">Tests worden niet als echte P2000-melding opgeslagen.</p>
+      <div class="live-preview" id="livePreview"><span class="preview-priority" id="previewPriority">P1 • BRANDWEER</span><h4 id="previewType">Brand woning</h4><p id="previewLocation">Hoofdstraat</p><p id="previewCity">Utrecht</p><div class="preview-grid"><span id="previewIncident">Incident: —</span><span id="previewScale">Opschaling: —</span><span id="previewVehicle">Voertuigen: —</span><span id="previewSpeech">Omroep: —</span></div></div>
+      <details><summary>Parserdetails</summary><pre id="parserDebugDetails" class="mono">Typ een melding om live te analyseren.</pre></details>
+      <p id="testStatus" class="hint">Live preview gebruikt exact dezelfde parser als de lichtkrant. Tests worden niet als echte P2000-melding opgeslagen.</p>
     </section>
 
     <section class="control-card">
@@ -147,7 +177,8 @@
         <div><dt>Regio-cache</dt><dd id="vehicleRegionStatus">—</dd></div>
       </div>
       <p id="vehicleSyncDetail" class="hint">De regionale voertuigcache wordt op de achtergrond bijgewerkt. Hier verschijnt de gebruikte bron of een concrete foutmelding.</p>
-      <p class="hint">Alleen de gekozen brandweerregio’s worden exact in geheugen geladen; onbekende roepnummers blijven direct bruikbaar via het landelijke nummerplan.</p>
+      <p class="hint">Bronvolgorde: handmatige correctie → regionale online cache → statische/landelijke fallback. Handmatige correcties winnen altijd.</p>
+      <details><summary>Laatste wijzigingen in voertuigdatabase</summary><div id="vehicleHistoryList" class="vehicle-history"><div class="history-row">laden…</div></div></details>
     </section>
 
     <section class="control-card wide" id="vehicleOverridesCard">
@@ -189,7 +220,7 @@
       </div>
       <p id="updateDetail" class="hint">Vul één openbaar GitHub repository in. De monitor gebruikt de nieuwste Release of de nieuwste commit op de gekozen branch.</p>
       <div class="button-row"><button id="saveUpdateSettingsBtn" class="secondary-btn">Update-instellingen opslaan</button><button id="checkUpdateBtn" class="secondary-btn">Controleer nu</button><button id="installUpdateBtn" class="primary-btn" disabled>Update installeren</button><button id="rollbackUpdateBtn" class="secondary-btn">Vorige versie herstellen</button></div>
-      <p class="hint">Config, database, achtergrondfoto en regionale caches worden niet overschreven. Er worden maximaal drie programmabackups bewaard in <code>data\updates\backups</code>. Publieke GitHub Releases hebben geen account/token nodig.</p>
+      <p class="hint">Config, database, achtergrondfoto en regionale caches worden niet overschreven. Er worden maximaal drie programmabackups bewaard in <code>data/updates/backups</code>. Publieke GitHub Releases hebben geen account/token nodig.</p>
     </section>
 
     <section class="control-card wide" id="githubSettingsCard">
@@ -222,6 +253,6 @@
   </div>
 </main>
 <div id="pageFeedback" class="page-feedback" role="status" aria-live="polite" hidden></div>
-<script src="/control.js?v=4250" defer></script>
+<script src="/control.js?v=4400" defer></script>
 </body>
 </html>

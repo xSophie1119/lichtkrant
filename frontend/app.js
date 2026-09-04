@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.2.5';
+const CLIENT_VERSION='4.4.2';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -23,7 +23,7 @@ const DEFAULTS={
   burnInProtection:true,burnInPixels:12,
   autoTextSize:true,darkLedPercent:4,vehicleHeader:true,
   displaySleep:false,
-  speechEnabled:true,speechCities:[],speechRate:0.96,speechPitch:1.0,speechEngine:'online',
+  speechEnabled:true,speechMode:'normal',masterVolume:100,speechCities:[],speechRate:0.96,speechPitch:1.0,speechEngine:'online',
   speechDeviceVolumeDay:38,speechDeviceVolumeNight:20,speechDeviceVolumeUrgent:55,
   dispatchTuneEnabled:true,dispatchTuneDefault:'youtube',dispatchTuneBrandweer:'inherit',dispatchTuneAmbulance:'inherit',dispatchTunePolitie:'inherit',dispatchTuneLifeliner:'inherit',dispatchTuneKnrm:'inherit',dispatchTuneUrgent:'youtube',dispatchTuneYoutubeUrl:'https://www.youtube.com/watch?v=VleijwaD_-U',dispatchTuneYoutubeSeconds:5,dispatchTuneVolume:80,dispatchTuneCustomVersion:0,
   mapEnabled:true,mapZoom:16,backgroundStyle:'black',backgroundColor:'#020506',backgroundPhotoVersion:0,backgroundPhotoDarkness:.60,backgroundPhotoFit:'cover',kioskMonitor:'primary',
@@ -599,7 +599,8 @@ function nightSpeechFactor(now=new Date()){
   const p=(minute-(4*60+30))/(2.5*60);return .65+.35*Math.max(0,Math.min(1,p));
 }
 function speechVolumeForTime(m,baseVolume,now=new Date()){
-  const base=Math.max(0,Math.min(100,Number(baseVolume)||0));
+  const master=Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)))/100;
+  const base=Math.round(Math.max(0,Math.min(100,Number(baseVolume)||0))*master);
   if(nightSpeechExempt(m))return base;
   const factor=nightSpeechFactor(now);
   if(factor>=.999)return base;
@@ -607,8 +608,8 @@ function speechVolumeForTime(m,baseVolume,now=new Date()){
   return Math.max(38,Math.min(base,Math.round(base*factor)));
 }
 function speechDeviceVolumeForTime(){
-  // Windows versie laat de globale Windows-volumemixer ongemoeid. Alleen het
-  // volume van het media-element in het lichtkrant-tabblad wordt aangepast.
+  // Laat de globale OS-volumemixer ongemoeid. Alleen het volume van het
+  // media-element in het lichtkrant-tabblad wordt aangepast.
   return null;
 }
 function linkedAgencyServices(m){
@@ -630,8 +631,16 @@ function speechWindowOpen(now=new Date()){
   // handled by speechVolumeForTime() instead of muting ordinary incidents.
   return !Number.isNaN(d.getTime());
 }
+function priorityModeEligible(m){
+  const u=urgencyInfo(m),raw=norm(originalMessage(m)).toUpperCase();
+  if(Number(u?.rank)>=3||Number(m?.scale_score||0)>=1)return true;
+  return /\b(?:MIDDEL|GROTE|ZEER\s+GROTE)\s+(?:BR|BRAND)\b|\bGRIP\s*[1-5]\b|SCHIET|STEEK|BR\s+(?:NATUUR|BOS|INDUSTRIE)|ONGEVAL\s+WEGVERVOER|ASS\.?\s*POL/i.test(raw);
+}
 function shouldSpeakMessage(m,now=new Date()){
   if(!state.settings.speechEnabled||!speechCity(m))return false;
+  const mode=String(state.settings.speechMode||'normal').toLowerCase();
+  if(mode==='mute')return false;
+  if(mode==='priority'&&!priorityModeEligible(m))return false;
   return speechWindowOpen(now);
 }
 function sentenceCaseSpeech(v){
@@ -817,7 +826,7 @@ function dispatchTuneChoice(service='',urgent=false,force=false){
   if(choice==='inherit')choice=String(state.settings.dispatchTuneDefault||'none');
   return choice||'none';
 }
-function dispatchTuneVolume(jobVolume=100){const bv=Number(state.settings.dispatchTuneVolume??80),sv=Number(jobVolume);const base=Math.max(0,Math.min(100,Number.isFinite(bv)?bv:80));const speech=Math.max(0,Math.min(100,Number.isFinite(sv)?sv:100));return Math.round(base*(speech/100))}
+function dispatchTuneVolume(jobVolume=100){const bv=Number(state.settings.dispatchTuneVolume??80),sv=Number(jobVolume),mv=Number(state.settings.masterVolume??100);const base=Math.max(0,Math.min(100,Number.isFinite(bv)?bv:80));const speech=Math.max(0,Math.min(100,Number.isFinite(sv)?sv:100));const master=Math.max(0,Math.min(100,Number.isFinite(mv)?mv:100));return Math.round(base*(speech/100)*(master/100))}
 function stopCurrentTune(){const stop=state.currentTuneStop;state.currentTuneStop=null;if(stop){try{stop()}catch{}}}
 async function playBuiltinDispatchTune(choice,volume=80){
   const AC=globalThis.AudioContext||globalThis.webkitAudioContext;if(!AC)return false;
@@ -900,7 +909,7 @@ async function waitForDutchVoice(timeoutMs=900){
 }
 async function browserSpeakPromise(text,volume=100){
   const synth=globalThis.speechSynthesis,Utterance=globalThis.SpeechSynthesisUtterance;
-  if(!synth||!Utterance)throw new Error('Windows/browserstem niet beschikbaar');
+  if(!synth||!Utterance)throw new Error('Nederlandse browserstem niet beschikbaar');
   const voice=await waitForDutchVoice();
   // Cruciaal: zonder expliciete Nederlandse stem NIET SpeechSynthesis laten
   // gokken. Chromium kiest dan op sommige Windows-installaties de Engelse
@@ -966,19 +975,19 @@ async function playOnlineAudioInBrowser(text,requestSeq,volume=100,cueService=''
   // SAPI-WAV already contains the attention tone, so the browser performs only
   // ONE actual media play operation for the whole dispatch. The cloud fallback
   // has no embedded cue; add one only in that exceptional path.
-  if(!/^windows-sapi-wav/i.test(rendered.engine)&&(cueService||cueUrgent))await browserAttentionCue(cueService,cueUrgent,volume);
+  if(!/^(?:windows-sapi|linux-espeak)-wav/i.test(rendered.engine)&&(cueService||cueUrgent))await browserAttentionCue(cueService,cueUrgent,volume);
   const url=URL.createObjectURL(rendered.blob),audio=$('#lightkrantSpeechAudio');
   if(!audio){URL.revokeObjectURL(url);throw new Error('lichtkrant-audiospeler ontbreekt')}
   try{audio.pause()}catch{}
   const entry={audio,url,finish:null,text};state.currentSpeechAudio=entry;
-  const rate=/^windows-sapi-wav/i.test(rendered.engine)?1:Math.max(.72,Math.min(1.22,Number(state.settings.speechRate)||.96));
+  const rate=/^(?:windows-sapi|linux-espeak)-wav/i.test(rendered.engine)?1:Math.max(.72,Math.min(1.22,Number(state.settings.speechRate)||.96));
   try{
     const result=await tryPlayMediaElement(audio,url,entry,volume,rate);noteAudioSuccess(rendered.engine||'audio-file');return result;
   }catch(error){if(isAudioLockedError(error)){state.audioBus.armed=false;setAudioUnlockVisible(true,'Browser blokkeert automatisch geluid. Klik één keer om de omroep in te schakelen.');throw audioLockedError(error)}throw error}
 }
 async function onlineSpeakText(text,requestSeq=++state.speechRequestSeq,volume=100,cueService='',cueUrgent=false,deviceVolume=null){
   // Alles blijft eigendom van het lichtkrant-tabblad. Primair speelt het tabblad
-  // één lokaal gerenderd SAPI-WAV-bestand; alleen als renderen echt mislukt wordt
+  // één lokaal gerenderd WAV-bestand; alleen als renderen echt mislukt wordt
   // in hetzelfde tabblad nog een browserstem als laatste noodfallback gebruikt.
   try{return await playOnlineAudioInBrowser(text,requestSeq,volume,cueService,cueUrgent)}
   catch(e){
@@ -998,10 +1007,11 @@ function stopSpeechPlayback({clearQueue=false}={}){
   if(current){try{current.finish?.(false)}catch{};cleanupSpeechAudio(current)}
   const job=state.speechCurrent;state.speechCurrent=null;try{job?.onResult?.({ok:false,detail:'Omroep gestopt'})}catch{};if(clearQueue){for(const queued of state.speechQueue){try{queued.onResult?.({ok:false,detail:'Omroep geannuleerd'})}catch{}}state.speechQueue=[]}return Promise.resolve(true);
 }
-function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',key='',cueService='',cueUrgent=false,forceAudio=false,skipTune=false,onResult=null}={}){
+function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',key='',groupKey='',cueService='',cueUrgent=false,forceAudio=false,skipTune=false,onResult=null}={}){
   text=String(text||'').trim();if(!text)return false;
-  const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:Math.max(0,Math.min(100,Number(volume)||72)),deviceVolume:deviceVolume===null?null:Math.max(5,Math.min(100,Number(deviceVolume)||38)),kind,key,cueService,cueUrgent:!!cueUrgent,forceAudio:!!forceAudio,skipTune:!!skipTune,onResult:typeof onResult==='function'?onResult:null,queuedAt:Date.now(),retries:0};
+  const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:Math.max(0,Math.min(100,Number(volume)||72)),deviceVolume:deviceVolume===null?null:Math.max(5,Math.min(100,Number(deviceVolume)||38)),kind,key,groupKey,cueService,cueUrgent:!!cueUrgent,forceAudio:!!forceAudio,skipTune:!!skipTune,onResult:typeof onResult==='function'?onResult:null,queuedAt:Date.now(),retries:0};
   if(key&&(state.speechCurrent?.key===key||state.speechQueue.some(x=>x.key===key)))return false;
+  if(groupKey){state.speechQueue=state.speechQueue.filter(x=>!(x.groupKey===groupKey&&job.priority>=x.priority));}
   const cur=state.speechCurrent;
   if(cur&&job.priority>=80&&job.priority>cur.priority){
     stopSpeechPlayback({clearQueue:false}).finally(()=>{state.speechQueue.unshift(job);startNextSpeechJob()});return true;
@@ -1037,7 +1047,7 @@ function startNextSpeechJob(){
 function maybeSpeakMessage(m,{force=false}={}){
   if(!m)return false;if(!force&&m?.__incidentDelta?.noChange)return false;if(force){if(!state.settings.speechEnabled||!speechCity(m))return false}else if(!shouldSpeakMessage(m))return false;
   const key=String(m.id||`${m.published||''}|${originalMessage(m)}`);if(!force&&state.spokenIds.has(key))return false;state.spokenIds.add(key);if(state.spokenIds.size>150){const first=state.spokenIds.values().next().value;state.spokenIds.delete(first)}
-  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);return queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,cueService:(/lifeliner/i.test(m?.service||'')?'lifeliner':String(m?.service||'overig')),cueUrgent:urg.rank>=5});
+  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);return queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,groupKey:`incident:${m.incident_key||dedupeKey(m)}`,cueService:(/lifeliner/i.test(m?.service||'')?'lifeliner':String(m?.service||'overig')),cueUrgent:urg.rank>=5});
 }
 
 function updateLastP2000ActivityFromMessages(){
@@ -1443,20 +1453,20 @@ function scheduleRuntimeWatch(delay=1000){
 async function reportClientHealth(){
   const rows=[...(state.renderPerf.samples||[])].filter(Number.isFinite).sort((a,b)=>a-b),sum=rows.reduce((a,b)=>a+b,0),p95=rows.length?rows[Math.min(rows.length-1,Math.floor((rows.length-1)*.95))]:0;
   const rect=canvas.getBoundingClientRect(),heap=Number(globalThis.performance?.memory?.usedJSHeapSize)||0;
-  const a=state.audioStats||{};const payload={viewport:`${Math.round(globalThis.innerWidth||rect.width)}x${Math.round(globalThis.innerHeight||rect.height)}`,canvas:`${canvas.width}x${canvas.height}`,dpr:Number(globalThis.devicePixelRatio)||1,render_avg_ms:rows.length?sum/rows.length:0,render_p95_ms:p95,render_max_ms:rows.length?rows.at(-1):0,render_samples:rows.length,js_heap_used:heap,active:activeVisible(),active_count:(state.activeMessages||[]).length,map_visible:!!state.mapVisible,busy:busyPeriodActive(),visibility:document.visibilityState||'unknown',audio_attempts:Number(a.attempts)||0,audio_successes:Number(a.successes)||0,audio_failures:Number(a.failures)||0,audio_fallbacks:Number(a.fallbacks)||0,audio_last_error:String(a.lastError||''),audio_last_mode:String(a.lastMode||''),audio_unlocked:!!a.unlocked,audio_last_success_at:Number(a.lastSuccessAt)||0};
+  const a=state.audioStats||{};const payload={viewport:`${Math.round(globalThis.innerWidth||rect.width)}x${Math.round(globalThis.innerHeight||rect.height)}`,canvas:`${canvas.width}x${canvas.height}`,dpr:Number(globalThis.devicePixelRatio)||1,render_avg_ms:rows.length?sum/rows.length:0,render_p95_ms:p95,render_max_ms:rows.length?rows.at(-1):0,render_samples:rows.length,js_heap_used:heap,active:activeVisible(),active_count:(state.activeMessages||[]).length,map_visible:!!state.mapVisible,busy:busyPeriodActive(),visibility:document.visibilityState||'unknown',speech_queue:(state.speechQueue||[]).length,speech_active:!!state.speechCurrent,speech_mode:String(state.settings.speechMode||'normal'),master_volume:Number(state.settings.masterVolume??100),audio_attempts:Number(a.attempts)||0,audio_successes:Number(a.successes)||0,audio_failures:Number(a.failures)||0,audio_fallbacks:Number(a.fallbacks)||0,audio_last_error:String(a.lastError||''),audio_last_mode:String(a.lastMode||''),audio_unlocked:!!a.unlocked,audio_last_success_at:Number(a.lastSuccessAt)||0};
   try{await fetch('/api/client-health',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store',keepalive:true})}catch{}
 }
 async function watchMonitorRuntime(){try{const d=await json(`/api/runtime?_=${Date.now()}`);monitorRuntimeFailures=0;observeMonitorRuntime(d);return true}catch{monitorRuntimeFailures++;if(monitorRuntimeFailures<8)scheduleRuntimeWatch(Math.min(5000,750*monitorRuntimeFailures));return false}}
 let sharedSettingsSignature='';
 function settingsSignature(settings){try{return JSON.stringify(settings||{})}catch{return''}}
-function applySharedSettings(settings){const incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);merged.speechEngine='online';sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
+function applySharedSettings(settings){const incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);merged.speechEngine='online';merged.speechMode=['normal','priority','mute'].includes(String(merged.speechMode))?String(merged.speechMode):'normal';merged.masterVolume=Math.max(0,Math.min(100,Number(merged.masterVolume??100)));sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&merged.speechMode!=='mute'&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false||merged.speechMode==='mute'){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
 async function loadSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};if(Object.keys(remote).length){applySharedSettings(remote);return}const local=loadSettings();applySharedSettings(local);const saved=await json('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(local)});applySharedSettings(saved.settings||local)}catch{state.settings=loadSettings()}}
 async function pollSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};const sig=settingsSignature(remote);if(Object.keys(remote).length&&sig!==sharedSettingsSignature)applySharedSettings(remote)}catch{}}
 async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.displaySleep)return;if(!force&&state.lastPowerWanted===wanted)return;state.lastPowerWanted=wanted;try{const r=await json('/api/display/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:wanted})});if(!r?.ok)state.lastPowerWanted=null;else if(r?.held){const retry=Math.max(1,Number(r.retry_after)||5)*1000;setTimeout(()=>{if(state.lastPowerWanted===wanted){state.lastPowerWanted=null;syncDisplayPower()}},retry+250)}}catch{state.lastPowerWanted=null}}
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
 async function refresh(){try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){const ordered=[...state.messages].sort((a,b)=>-compareMessageNewest(a,b));ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m)});state.started=true;considerLatestAtStartup()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds();freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(m=>{if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)})}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}}
 function incoming(m){if(!m||state.knownIds.has(m.id))return;state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
-function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb()}else if(p.type==='test'){handleTest(p.payload||{})}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
+function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb()}else if(p.type==='test'){handleTest(p.payload||{})}else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
 function tick(){
   const now=Date.now();

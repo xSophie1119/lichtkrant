@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>P2000 Monitor</title>
-  <link rel="stylesheet" href="/lightkrant.css?v=4230">
+  <link rel="stylesheet" href="/lightkrant.css?v=4400">
   <link rel="manifest" href="/manifest.webmanifest">
 </head>
 <body>
@@ -19,7 +19,7 @@
         <div class="audio-unlock-title">Geluid één keer inschakelen</div>
         <p id="audioUnlockText">Deze browser blokkeert automatisch geluid. Klik één keer; daarna gebruikt de lichtkrant één vaste audiospeler voor alle P2000-omroepen.</p>
         <button id="audioUnlockBtn" type="button">OMROEP INSCHAKELEN</button>
-        <small>Bij starten via START_P2000.bat hoort dit scherm normaal niet te verschijnen.</small>
+        <small>Bij starten via START_P2000.bat of START_P2000.sh hoort dit scherm normaal niet te verschijnen.</small>
       </div>
     </section>
     <aside id="incidentMapPanel" class="incident-map-panel" hidden aria-label="Locatiekaart incident">
@@ -45,7 +45,7 @@
       const r=await fetch('/api/setup',{cache:'no-store'}),d=await r.json();
       if(!d?.setup?.setup_complete){location.replace('/setup.html');return;}
     }catch(e){console.warn('Setupcontrole mislukt; monitor probeert normaal te starten.',e)}
-    const script=document.createElement('script');script.src='/app.js?v=4230';script.defer=true;document.body.appendChild(script);
+    const script=document.createElement('script');script.src='/app.js?v=4400';script.defer=true;document.body.appendChild(script);
   })();
 </script>
 </body>

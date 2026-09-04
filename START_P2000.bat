@@ -8,7 +8,7 @@ if not exist "%~dp0backend\server.py" goto :fatal_extract
 if not exist "%~dp0frontend\index.html" goto :fatal_extract
 if not exist "%~dp0ENSURE_PYTHON.bat" goto :fatal_extract
 title P2000 Monitor - starten
-set "P2000_VERSION=4.2.5"
+set "P2000_VERSION=4.4.2"
 set "P2000_LOGDIR=%LOCALAPPDATA%\P2000-Monitor\Logs"
 if not exist "%P2000_LOGDIR%" mkdir "%P2000_LOGDIR%" >nul 2>&1
 
@@ -28,6 +28,11 @@ if errorlevel 1 (
 echo [3/4] Wachten op http://127.0.0.1:8765/ ...
 "%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 15 >nul 2>&1
 if errorlevel 1 goto :fatal_backend
+
+if /I not "%P2000_SUPERVISED%"=="1" (
+  "%P2000_PYTHON%" "%~dp0tools\supervisor.py" --status >nul 2>&1
+  if errorlevel 1 start "P2000 Supervisor" /min "%P2000_PYTHON%" "%~dp0tools\supervisor.py"
+)
 
 echo [4/4] Lichtkrant openen...
 set "P2000_WINDOW_POSITION=0,0"

@@ -1,34 +1,21 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import ctypes,json,os,urllib.request
-from ctypes import wintypes
+import argparse,json,os,shlex,urllib.request
 
-def get_monitors():
-    if os.name != "nt": return [{"device":"primary","x":0,"y":0,"width":1920,"height":1080,"primary":True}]
-    user32=ctypes.windll.user32
-    class RECT(ctypes.Structure): _fields_=[("left",wintypes.LONG),("top",wintypes.LONG),("right",wintypes.LONG),("bottom",wintypes.LONG)]
-    class MI(ctypes.Structure): _fields_=[("cbSize",wintypes.DWORD),("rcMonitor",RECT),("rcWork",RECT),("dwFlags",wintypes.DWORD),("szDevice",wintypes.WCHAR*32)]
-    rows=[];CB=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HMONITOR,wintypes.HDC,ctypes.POINTER(RECT),wintypes.LPARAM)
-    def collect(h,dc,r,l):
-        i=MI();i.cbSize=ctypes.sizeof(i)
-        if user32.GetMonitorInfoW(h,ctypes.byref(i)):
-            q=i.rcMonitor;rows.append({"device":str(i.szDevice),"x":int(q.left),"y":int(q.top),"width":int(q.right-q.left),"height":int(q.bottom-q.top),"primary":bool(i.dwFlags&1)})
-        return True
-    cb=CB(collect);user32.EnumDisplayMonitors(0,0,cb,0);rows.sort(key=lambda r:(not r["primary"],r["x"],r["y"],r["device"]));return rows
-
-def wanted_monitor():
+def info():
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8765/api/settings",timeout=2) as r:return str(json.load(r).get("settings",{}).get("kioskMonitor","primary") or "primary")
-    except Exception:return "primary"
+        with urllib.request.urlopen("http://127.0.0.1:8765/api/display/info",timeout=2) as r:
+            d=json.load(r);x=d.get("display") or {};return x.get("selected_monitor") or {}
+    except Exception:return {}
 
-def choose(rows,wanted):
-    if wanted.lower() not in {"primary","primair","auto"}:
-        for r in rows:
-            if r["device"].lower()==wanted.lower():return r
-        if wanted.isdigit() and 0<int(wanted)<=len(rows):return rows[int(wanted)-1]
-    return next((r for r in rows if r["primary"]),rows[0] if rows else {"device":"primary","x":0,"y":0,"width":1920,"height":1080,"primary":True})
+def defaults():return {"device":"primary","x":0,"y":0,"width":1920,"height":1080,"primary":True}
 
-r=choose(get_monitors(),wanted_monitor())
-print(f'set "P2000_WINDOW_POSITION={r["x"]},{r["y"]}"')
-print(f'set "P2000_WINDOW_SIZE={max(320,r["width"])},{max(240,r["height"])}"')
-print(f'set "P2000_DISPLAY_DEVICE={r["device"]}"')
+def main():
+    ap=argparse.ArgumentParser();ap.add_argument("--shell",choices=("cmd","sh","json"),default=("cmd" if os.name=="nt" else "sh"));a=ap.parse_args()
+    r=defaults();r.update({k:v for k,v in info().items() if v is not None})
+    vals={"P2000_WINDOW_POSITION":f"{int(r.get('x',0))},{int(r.get('y',0))}","P2000_WINDOW_SIZE":f"{max(320,int(r.get('width',1920)))},{max(240,int(r.get('height',1080)))}","P2000_DISPLAY_DEVICE":str(r.get('device') or r.get('id') or 'primary')}
+    if a.shell=="json":print(json.dumps(vals,ensure_ascii=False));return
+    for k,v in vals.items():
+        if a.shell=="cmd":print(f'set "{k}={v}"')
+        else:print(f'export {k}={shlex.quote(v)}')
+if __name__=="__main__":main()

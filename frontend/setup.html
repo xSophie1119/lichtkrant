@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071018">
   <title>P2000 Monitor • Installatiewizard</title>
-  <link rel="stylesheet" href="/setup.css?v=4101">
+  <link rel="stylesheet" href="/setup.css?v=4402">
 </head>
 <body>
 <main class="setup-shell">
   <header class="setup-hero">
     <div>
-      <span class="eyebrow">WINDOWS • EERSTE INSTALLATIE</span>
+      <span class="eyebrow">WINDOWS + LINUX • EERSTE INSTALLATIE</span>
       <h1>P2000 Monitor <span>instellen</span></h1>
       <p>Geen RSS-links kopiëren en geen configbestanden aanpassen. Kies wie de monitor gebruikt, de standplaats, regio's en disciplines. De monitor bouwt de juiste feeds zelf.</p>
     </div>
-    <div class="version-badge">v4.2.5</div>
+    <div class="version-badge">v4.4.2</div>
   </header>
 
   <nav class="steps" aria-label="Installatiestappen">
@@ -30,7 +30,7 @@
       <div class="section-head">
         <span class="eyebrow">STAP 1</span>
         <h2>Voor wie is deze monitor?</h2>
-        <p>Deze gegevens blijven lokaal op deze Windows-pc staan.</p>
+        <p>Deze gegevens blijven lokaal op deze computer staan.</p>
       </div>
       <div class="profile-choice" role="radiogroup" aria-label="Type gebruiker">
         <label class="choice-card">
@@ -112,10 +112,10 @@
       <div class="section-head">
         <span class="eyebrow">STAP 4</span>
         <h2>Controleer de installatie</h2>
-        <p>Je kunt dit later altijd opnieuw openen via <b>CONFIGURATIE_WIZARD.bat</b> of via Instellingen.</p>
+        <p>Je kunt dit later altijd opnieuw openen via <b>CONFIGURATIE_WIZARD.bat</b> (Windows), <b>CONFIGURATIE_WIZARD.sh</b> (Linux) of via Instellingen.</p>
       </div>
       <div id="summaryCards" class="summary-grid"></div>
-      <label class="field compact-field"><span>RSS-controle-interval</span><select id="pollInterval"><option value="15">15 seconden</option><option value="20" selected>20 seconden (aanbevolen)</option><option value="30">30 seconden</option><option value="60">60 seconden</option></select></label>
+      <label class="field compact-field"><span>RSS-controle-interval</span><select id="pollInterval"><option value="10" selected>10 seconden (aanbevolen)</option><option value="15">15 seconden</option><option value="20">20 seconden</option><option value="30">30 seconden</option><option value="60">60 seconden</option></select></label>
       <div class="info-box"><b>Automatische updates via GitHub <em>optioneel</em></b><span>Deze monitor gebruikt standaard <b>xSophie1119/lichtkrant</b> voor automatische updates via GitHub Releases.</span></div>
       <div class="field-grid">
         <label class="field"><span>GitHub repository <em>optioneel</em></span><input id="githubRepo" maxlength="220" value="xSophie1119/lichtkrant" placeholder="owner/repository"></label>
@@ -134,6 +134,6 @@
     </footer>
   </form>
 </main>
-<script src="/setup.js?v=4101" defer></script>
+<script src="/setup.js?v=4402" defer></script>
 </body>
 </html>

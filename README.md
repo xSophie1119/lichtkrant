@@ -1,257 +1,208 @@
-# P2000 Monitor — Windows v4.2.5
+# P2000 Monitor — MultiPlatform v4.4.2
 
-## v4.2.5 – Brandbase en exacte GitHub-pushes
+Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
-- Brandbase is de primaire bron voor actuele roepnummers en voertuiggegevens van de geselecteerde brandweerregio's.
-- Alleen gekozen regio's worden op de achtergrond opgehaald, maximaal dagelijks en met de door Brandbase gevraagde wachttijd tussen verzoeken.
-- De bestaande regionale bron en Tomzulu10 blijven als fallback beschikbaar; de laatst goede cache blijft bruikbaar bij een tijdelijke bronstoring.
-- Handmatige roepnummercorrecties blijven altijd de hoogste prioriteit houden.
-- Gewone GitHub-pushes worden nu herkend aan de exacte commit-SHA, ook wanneer `VERSION` niet is verhoogd.
-- De geïnstalleerde commit wordt lokaal vastgelegd, zodat dezelfde push niet na iedere controle opnieuw wordt geïnstalleerd.
+> Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
 
-## v4.2.4 – snellere GitHub-updatecontrole
+## Linux-start hotfix v4.4.2
 
-- Controleert circa 10 seconden na het starten en daarna standaard iedere 5 minuten.
-- De instellingenpagina en configuratiewizard gebruiken nu minuten in plaats van uren.
-- Bestaande installaties met het oude urenveld migreren automatisch naar 5 minuten.
+Op Ubuntu wordt Chromium vaak als streng geïsoleerde Snap geleverd. De launcher gebruikt daarom automatisch een Snap-veilige profielmap, controleert of de browser na het starten daadwerkelijk blijft draaien en probeert bij problemen alternatieve browser-/Wayland-/X11-routes. Voor diagnose: `./START_P2000_DEBUG.sh`.
 
-## v4.2.3 – audiotests en handmatige roepnummers
+## Nieuw in v4.4.2
 
-- **Test omroep** en **Test gekozen deuntje** negeren tijdens de test bewust de aan/uit-hoofdschakelaar, wachten op een echte afspeelbevestiging van de lichtkrant en tonen een duidelijke fout als de monitor niet verbonden is of audio niet start.
-- De omroeptest speelt alleen spraak; hij start niet meer ongemerkt ook het ingestelde deuntje.
-- Handmatige roepnummercorrecties kunnen in Instellingen worden toegevoegd, aangepast en verwijderd. Ze hebben altijd voorrang op de regionale cache en blijven in `data/vehicles/overrides.json` behouden bij updates.
-- De online voertuigcache wordt voortaan dagelijks in plaats van wekelijks gecontroleerd. Vanaf v4.2.5 is Brandbase primair; Hulpdienstvoertuigen.nl en Tomzulu10 blijven fallbacks.
+- Windows- en Linux-installer met behoud van config/data.
+- Externe watchdog voor backend, kiosk, monitor-reconnects en update-rollback.
+- Parallelle feed-race voor lagere P2000-latency en bron-wins/latencydiagnose.
+- Omroepmodi Normaal / Alleen prioriteit / STIL en mastervolume.
+- Betere voertuigoverrides, onbekende-roepnummersuggesties en wijzigingshistorie.
+- Staged update-preflight plus automatische rollback als de nieuwe build niet gezond wordt.
+- Monitor-fingerprints, mobiele snelbediening en live parserpreview.
+- Extra regressietests gebaseerd op echte probleemmeldingen.
 
-Een configureerbare P2000-lichtkrant voor **Windows 10/11**. De monitor is niet meer aan één plaats of veiligheidsregio gekoppeld: bij de eerste start stel je zelf de standplaats, gebruiker/organisatie, regio's en disciplines in.
+## Snel starten
 
-## v4.2.1 – GitHub pushes en centrale instellingen
+### Windows
 
-- Automatische updates volgen nu zowel GitHub Releases als gewone pushes met een hogere versie in `VERSION`.
-- De GitHub API-header is hersteld; updatecontroles geven niet langer door die header HTTP 400.
-- `p2000-settings.json` kan optioneel iedere 1–60 minuten automatisch op alle monitoren worden toegepast.
-- De instellingenpagina heeft weer complete kaart-, kolom-, status- en mobiele styling.
-- Opslaan geeft een zichtbare melding bovenin en de instellingenknop op de lichtkrant opent betrouwbaar via `/control.html` of sneltoets `I`.
-- Alle deuntjes en eigen MP3/WAV/OGG-functionaliteit uit v4.2.0 blijven behouden.
+**Aanbevolen:** pak de ZIP volledig uit en start `INSTALL_P2000.bat`. De installer zet het programma onder `%LOCALAPPDATA%\P2000-Monitor\App`, behoudt bestaande instellingen/data bij upgrades, maakt snelkoppelingen en schakelt autostart in.
 
-## v4.2.0 – automatische GitHub Releases-updater
+Portable gebruiken kan ook: start rechtstreeks `START_P2000.bat` vanuit de uitgepakte map. De eerste start zet automatisch een eigen Python 3.13-runtime onder `%LOCALAPPDATA%\P2000-Monitor\Runtime` klaar. De configuratiewizard opent wanneer het profiel nog niet is afgerond.
 
-- Nieuwe **GitHub Releases-updater**: controleert optioneel automatisch bij opstart en daarna periodiek op een nieuwere versie.
-- Werkt met een openbaar repository in de vorm `xSophie1119/lichtkrant` of een volledige `https://github.com/xSophie1119/lichtkrant` URL.
-- Een nieuwe versie wordt alleen geïnstalleerd uit een complete `.zip` **Release asset**; losse source-code ZIPs/tags worden niet blind toegepast.
-- De updater controleert versie, ZIP-structuur en – wanneer GitHub die meestuurt – de SHA-256 `digest` van de release asset.
-- Voor installatie wordt automatisch een programmabackup gemaakt; `config/config.json` en de volledige `data/` map (database, achtergrondfoto, TTS-cache, voertuigcaches) blijven staan.
-- Instellingen bevat **Controleer nu**, **Update installeren** en **Vorige versie herstellen**.
-- Voor een backend die na een slechte release helemaal niet meer start is er `HERSTEL_VORIGE_VERSIE.bat`, onafhankelijk van de webinterface.
-- De eerste-startwizard kan het GitHub repository en automatisch installeren meteen instellen.
+Handig:
 
-- `START_P2000.bat` zet bij de eerste start automatisch een eigen **Python 3.13.15 embedded runtime** klaar als die nog ontbreekt.
-- De runtime staat per gebruiker onder `%LOCALAPPDATA%\P2000-Monitor\Runtime\Python313` en wijzigt Windows `PATH`, registry en bestaande Python-installaties niet.
-- De normale route downloadt alleen het officiële embedded ZIP-pakket van `python.org` en controleert het tegen de vaste officiële SHA-256 voordat het wordt uitgepakt.
-- Er draait dus geen Python-installer en er zijn geen administratorrechten nodig. PowerShell is alleen nog een noodfallback wanneer Windows `curl.exe` of `tar.exe` ontbreekt.
-- `START_BACKEND.bat`, `OPEN_INSTELLINGEN.bat` en `CONFIGURATIE_WIZARD.bat` gebruiken dezelfde vaste runtime.
-- Een standplaats mag nu ook een volledig adres zijn; voor parsing wordt de BAG/PDOK-woonplaats apart gebruikt.
-- Testmeldingen krijgen daardoor niet meer per ongeluk het volledige standplaatsadres als plaatsnaam.
-- Straatmeldingen zonder huisnummer kiezen bij geocoding een straat/weg-resultaat in plaats van een willekeurig BAG-huisnummer.
-- De voertuigdatabase synchroniseert nu primair via de gepagineerde regionale tabellen van Hulpdienstvoertuigen.nl; de oude Google/Tomzulu-route is alleen nog fallback.
-- Handmatig **Nu bijwerken** kan niet meer verloren gaan als de automatische startsync nog draait: een geforceerde tweede pass wordt gequeued.
-- Instellingen toont nu de echte bron, aantallen, pagina's en concrete foutmelding per regio in plaats van alleen `0/1 regio’s`.
-- De knop wacht tot 60 seconden op de achtergrondtaak en meldt niet meer onterecht `Bijgewerkt ✓` terwijl de sync nog loopt.
-- Nummerplan-fallbacks tonen geen onbevestigde `post XX` meer als exacte standplaats.
-- De Tilburg-regressiemelding `209432 209452 209031 209092` heeft een kleine geverifieerde offline seed gekregen.
+- `START_EDGE.bat` / `START_CHROME.bat`
+- `OPEN_INSTELLINGEN.bat`
+- `CONFIGURATIE_WIZARD.bat`
+- `WINDOWS_CHECK.bat`
+- `OPEN_HANDLEIDING.bat`
+- `RUN_TESTS.bat`
+- `INSTALL_AUTOSTART.bat`
+- `STOP_P2000.bat`
+- `HERSTEL_VORIGE_VERSIE.bat`
 
+### Linux
 
-## Wat is nieuw in 4.2.0
+**Aanbevolen:** pak de ZIP volledig uit, geef zo nodig execute-rechten met `chmod +x *.sh tools/*.py` en start als je **normale desktopgebruiker** `./INSTALL_P2000.sh`. Gebruik hiervoor **geen `sudo`**: Chromium/Chrome weigert onder root vaak te starten zonder onveilige sandbox-flags en de desktop-/autostartbestanden horen bij je eigen gebruikersaccount. De installer gebruikt standaard `~/.local/share/p2000-monitor`, behoudt instellingen/data en maakt appmenu-items voor Monitor, Instellingen, Configuratiewizard, Linux Diagnose en Stoppen.
 
-- Eerste-start **configuratiewizard**.
-- Profielkeuze **Particulier** of **Bedrijf / organisatie**.
-- Bij particulier: naam. Bij bedrijf: bedrijfs-/organisatienaam, optioneel afdeling/vestiging en contactpersoon.
-- Vrije **standplaats / hoofdplaats** voor kaart, testmeldingen en monitornaam.
-- Selectie per regio én discipline voor alle 25 veiligheidsregio's plus Achterhoek, Bollenstreek en Hoeksche Waard.
-- Disciplines: **Brandweer, Ambulance, Politie, KNRM en Lifeliner/traumaheli**.
-- RSS-URL's worden automatisch opgebouwd; je hoeft nooit zelf feeds te kopiëren.
-- Als een discipline voor alle 25 veiligheidsregio's is gekozen, gebruikt de monitor automatisch de landelijke disciplinefeed om onnodige dubbele requests te voorkomen.
-- Een subregiofeed wordt niet dubbel gepolld wanneer de bovenliggende veiligheidsregio voor dezelfde discipline al geselecteerd is.
-- Profielwissel wist de RSS-cache en verwijdert opgeslagen meldingen die niet meer binnen de gekozen regio-/disciplinematrix vallen.
-- Landelijke parser getest tegen **168 echte politie- en brandweerregels** uit verspreide regio's: 168/168 regressietests groen.
-- Parser ondersteunt onder meer P1/P2/P3/P4/P5, `Prio 1`, regionale codes, ICnum, OMS, BR-typen, Ass. Ambu/Pol, wegvervoer, Noord-Nederlandse slashnotatie, 6- en 7-cijferige brandweerroepnummers, GRIP en brand/HV/IBGS-opschalingen.
-- Landelijke brandweervoertuigendatabase: alleen de **geselecteerde veiligheidsregio’s** worden als regionale cache geladen en periodiek op de achtergrond bijgewerkt.
-- Exacte voertuiglookup is een directe dictionary-lookup (O(1)); RSS/SSE en de lichtkrant wachten nooit op een voertuigdownload.
-- Onbekende landelijke brandweerroepnummers blijven direct leesbaar via het landelijke nummerplan, ook vóór of zonder een databasesync.
-- Nederlandse WAV-omroep blijft browseronafhankelijk: Chrome en Edge spelen hetzelfde lokaal gerenderde audiobestand af.
-- Kaart gebruikt PDOK als primaire locatiebron met lokale straatcache/BGT-fallback.
-- Alleen Windows-start-, stop-, check- en autostartscripts worden meegeleverd.
+Portable gebruiken kan ook: start rechtstreeks `./START_P2000.sh` vanuit de uitgepakte map. Op een eerste installatie kun je `./CONFIGURATIE_WIZARD.sh` apart openen. De wizard start de backend indien nodig en controleert of de browser daadwerkelijk openblijft.
 
-## Installeren
+De Linux-build gebruikt **Python 3.10 of nieuwer**. Er is geen `pip install` nodig: de normale dependencies zijn meegeleverd of onderdeel van de standaardbibliotheek. De installer kan op ondersteunde distributies aanbieden om ontbrekende Python via de pakketbeheerder te installeren.
 
-1. Pak de volledige ZIP uit, bijvoorbeeld naar `C:\P2000-Monitor`. Zorg dat de pc bij de allereerste start internet heeft.
-2. Start `START_P2000.bat`. Bij de eerste start downloadt de monitor automatisch het officiële Python 3.13 embedded pakket vanaf python.org, controleert de SHA-256 en pakt het alleen voor P2000 uit in je lokale AppData.
-3. Wacht tot de automatische runtime-installatie klaar is; daarna start de backend vanzelf door.
-4. De eerste start opent automatisch de installatiewizard.
-5. Kies gebruiker, standplaats, regio's en disciplines en sla op.
-6. De lichtkrant start daarna met de nieuwe selectie.
+Handig:
 
-De wizard kan later opnieuw worden geopend via `CONFIGURATIE_WIZARD.bat` of via **Instellingen → Configuratiewizard**. `CONFIGURATIE_WIZARD.bat` en `OPEN_INSTELLINGEN.bat` starten de backend zelf als die nog niet draait.
+- `./START_P2000.sh` — normale monitorstart
+- `./START_P2000_DEBUG.sh` — start met zichtbare diagnose
+- `./OPEN_INSTELLINGEN.sh` — beheerpagina
+- `./CONFIGURATIE_WIZARD.sh` — eerste configuratie of opnieuw instellen
+- `./LINUX_CHECK.sh` — complete Linux-controle
+- `./LINUX_REPAIR.sh` — execute-rechten, shortcuts en autostart herstellen
+- `./INSTALL_NEDERLANDSE_STEM.sh` — lokale TTS controleren/installeren
+- `./OPEN_HANDLEIDING.sh`
+- `./RUN_TESTS.sh`
+- `./INSTALL_AUTOSTART.sh`
+- `./STOP_P2000.sh`
+- `./HERSTEL_VORIGE_VERSIE.sh`
 
-## Regio's en RSS
+De browserlaag ondersteunt native Chrome/Chromium/Brave/Edge/Firefox, Ubuntu **Snap** en veelgebruikte **Flatpak**-varianten. Snap krijgt automatisch een profiel onder `~/snap/<pakket>/common/`; kiosk en wizard/instellingen hebben aparte profielen. Onder Wayland wordt automatisch tussen Wayland/XWayland/X11-routes gewisseld. Als een compositor een tweede scherm niet goed positioneert kun je voor diagnose `P2000_BROWSER_PLATFORM=x11 ./START_P2000_DEBUG.sh` gebruiken.
 
-Alarmeringen.nl biedt feeds per regio/discipline en landelijke feeds per discipline. De monitor beheert deze links zelf. In de wizard kun je per regio afzonderlijk aanvinken wat je wilt ontvangen.
+Wanneer de wizard of monitor toch niet opent, voer eerst `./LINUX_CHECK.sh` uit. `./LINUX_REPAIR.sh` herstelt de meest voorkomende problemen na uitpakken/updaten (execute-rechten, appmenu en autostart).
 
-Voorbeeld:
+## Linux: aanbevolen pakketten
 
-- Utrecht: Brandweer + Politie + Lifeliner
-- Gooi en Vechtstreek: Brandweer
-- Flevoland: Politie
+Alleen Python is noodzakelijk voor de backend. Voor de beste kioskervaring zijn onderstaande pakketten handig:
 
-De backend accepteert daarna alleen meldingen die bij de opgeslagen matrix horen. Oude data uit een vorige selectie wordt bij wijziging opgeruimd.
+- Chrome/Chromium voor de kiosk.
+- `espeak-ng` voor volledig lokale Nederlandse TTS.
+- X11: `xrandr` voor schermdetectie en `xset` voor DPMS aan/uit.
+- wlroots-Wayland: `wlr-randr` voor schermdetectie en output aan/uit.
 
-### Heel Nederland
+Op GNOME Wayland bestaat geen universele veilige CLI om één fysiek scherm uit te schakelen. De monitor blijft daar gewoon werken; alleen de knop **Scherm uit/aan** kan als niet beschikbaar worden gemeld. Nachtmodus/true-black blijft onafhankelijk daarvan werken.
 
-Voor heel Nederland kun je de snelknoppen in de wizard gebruiken, bijvoorbeeld:
+## Architectuur
 
-- `Heel NL: BRW + POL`
-- `Heel NL: alleen BRW`
-- `Heel NL: alleen POL`
+- `backend/server.py` — RSS, parser, SQLite, voertuigdatabase, geocoding, TTS, updates en API.
+- `frontend/` — lichtkrant, instellingen, configuratiewizard en kaart.
+- `data/` — runtimegegevens zoals SQLite, caches, achtergronden, deuntjes en updatebackups.
+- `config/config.json` — installatieprofiel en feedconfiguratie.
+- `tools/runtime_probe.py` — backenddetectie en stale-process cleanup.
+- `tools/kiosk_display.py` — vertaalt het gekozen scherm naar browserpositie/-formaat.
+- `tools/supervisor.py` — externe watchdog voor backend, kiosk, monitorreconnects en mislukte updates.
 
-Als alle 25 veiligheidsregio's voor één regionale discipline geselecteerd zijn, gebruikt de monitor automatisch één landelijke feed voor die discipline. De filtering blijft op berichtniveau actief.
+## P2000-bronnen
 
-## Landelijke parser
+De monitor bouwt RSS-feeds automatisch uit de gekozen regio/discipline-matrix. In v4.4.2 worden de regionale feeds parallel geracet met passende landelijke disciplinefeeds; de eerste kopie van een melding wint en SQLite dedupliceert de rest. Het portaal toont per feed fetch-tijd, geschatte ingest-latency en het aantal feed-wins. Extra compatibele RSS-feeds kunnen als supplemental/fallback worden toegevoegd in de configuratie. De frontend ontvangt nieuwe meldingen via SSE zonder pagina-refresh.
 
-P2000-regels verschillen sterk per regio. Daarom bevat v4.2.0 een regressiecorpus met 168 echte regels uit onder andere Amsterdam-Amstelland, Rotterdam-Rijnmond, Haaglanden, Kennemerland, Twente, Groningen, Flevoland, Utrecht, Brabant, Limburg, Gelderland, IJsselland en Zaanstreek-Waterland.
+De parser bevat regressies voor onder andere brandweer, politie, lifeliner/MMT, opschalingen, GRIP, BZB/Contact MKB en uiteenlopende adres-/roepnummerformaten.
 
-De parser probeert steeds deze structuur te maken:
+## Voertuigdatabase
 
-**incidenttype → locatie/object → plaats → voertuigen → opschaling**
+De voertuiglaag gebruikt per geselecteerde brandweerregio een compacte lokale shard. De volgorde is:
 
-Voorbeelden van ondersteunde varianten:
+1. **Brandbase** als primaire actuele bron;
+2. Hulpdienstvoertuigen.nl als eerste fallback;
+3. Tomzulu10 als tweede fallback;
+4. lokale laatst-goede cache;
+5. landelijk nummerplan als generieke herkenning.
 
-- `P 1 BAD-01 BR woning ...`
-- `P 1 BNN-01 OMS handmelder ... 01-18-849`
-- `ongeval/wegvervoer/letsel prio 1 ...`
-- `P 4 373209 Demonstratie ...`
-- `Ongeval wegvervoer (Met brand)`
-- `Middel HV`, `Kleine IBGS`, `Zeer gr. BR`, `GRIP 1`
+Handmatige correcties in `data/vehicles/overrides.json` hebben altijd voorrang en blijven bij software-updates behouden.
 
-Politie-incidentnummers worden bewust niet als brandweervoertuig behandeld.
+## Omroep en audio
 
-## Landelijke brandweervoertuigen
+De browser speelt altijd één gewone same-origin audiofile af.
 
-De voertuiglaag is bewust gesplitst om de lichtkrant snel te houden. `frontend/vehicles.json` bevat alleen een kleine **offline seed**. Na het instellen van het profiel synchroniseert de backend op de achtergrond de actuele brandweer-/veiligheidsregiovoertuigen voor uitsluitend de gekozen veiligheidsregio’s. Primair worden de gepagineerde regionale tabellen van **Hulpdienstvoertuigen.nl** gebruikt; de oudere Tomzulu10/Google-publicatie blijft alleen als noodfallback bestaan. De regionale shards worden compact opgeslagen onder `data\vehicles\<regiocode>.json` en dagelijks automatisch gecontroleerd. Eigen correcties staan apart in `data\vehicles\overrides.json` en winnen altijd van beide online bronnen.
+**Windows:** P2000 → Nederlandse tekst → lokale Windows SAPI → WAV → lichtkrant-tab.
 
-Bij **Heel Nederland: Brandweer** mogen alle 25 shards lokaal bestaan, maar in geheugen worden ze samengevoegd tot één dictionary. Het opzoeken van een roepnummer blijft daardoor een directe O(1)-lookup; er wordt niet bij iedere melding door duizenden voertuigen geloopt en er vindt tijdens het renderen geen netwerkrequest plaats. De downloads draaien bovendien in maximaal vier achtergrondworkers.
+**Linux:** P2000 → Nederlandse tekst → lokale `espeak-ng`/`espeak` → WAV → lichtkrant-tab. Als lokale TTS ontbreekt of faalt wordt dezelfde Nederlandse gTTS-route gebruikt.
 
-De lichtkrant ondersteunt normale zes-cijferige roepnummers zoals `21-3831` en de gesegmenteerde zeven-cijferige varianten die in sommige noordelijke regio’s voorkomen, zoals `01-18-849`. De oude beperking tot `09/14/25` is verwijderd.
+De browserstem is alleen de laatste noodfallback. Een lokaal WAV-bestand bevat de attentietoon al; daardoor wordt de toon niet dubbel afgespeeld.
 
-Als de online bron niet bereikbaar is, gebruikt de monitor de laatst opgeslagen regionale cache. Is een voertuig echt nieuw of nog nooit gesynchroniseerd, dan wordt het **direct** generiek herkend via het landelijke brandweer-nummerplan (regio en veilige materieelgroep-afleiding; een onbekende standplaats wordt nooit als exact gepresenteerd). Daardoor blokkeert of verdwijnt een P2000-melding nooit omdat de voertuigdatabase achterloopt. Onbekende exacte roepnummers worden daarnaast onder Diagnose verzameld.
+Als autoplay bij een handmatig geopend tabblad wordt geblokkeerd verschijnt **OMROEP INSCHAKELEN**. De kiosklaunchers gebruiken autoplay-flags om dit normaal te voorkomen.
 
-In **Instellingen → Roepnummerdatabase** zie je hoeveel exacte voertuigen geladen zijn en hoeveel geselecteerde regio’s een cache hebben. Met **Nu bijwerken** kun je een geforceerde achtergrondrefresh starten.
+## Schermen
 
-## Kaart
+In **Instellingen → Scherm & slaapstand** kies je op welk scherm de kiosk bij de volgende start moet openen.
 
-De kaart zoekt locaties in deze volgorde:
+- Windows: native monitorcoördinaten en resoluties.
+- Linux/X11: `xrandr`.
+- Linux/wlroots-Wayland: `wlr-randr --json`.
+- Geen ondersteunde detectietool: veilige primaire 1920×1080 fallback; de monitor blijft bruikbaar.
 
-1. lokale geocode-/straatcache;
-2. PDOK Location API;
-3. klassieke PDOK Locatieserver;
-4. officiële BGT openbare-ruimte-index;
-5. OpenStreetMap/Nominatim als laatste fallback.
+De monitor verandert geen desktopresolutie en herschrijft geen permanente displayconfiguratie.
 
-De standplaats is alleen een herkenningspunt. De kaart kan meldingen uit alle ingestelde Nederlandse regio's geocoderen.
+## Automatische GitHub-updates
 
-## Omroep
+Standaardrepository: `xSophie1119/lichtkrant`.
 
-De meest betrouwbare route is:
+- controle circa 10 seconden na backendstart;
+- daarna standaard elke 5 minuten;
+- Release-versies én gewone branchpushes kunnen worden gevolgd;
+- branchpushes worden op exacte commit-SHA herkend, ook wanneer `VERSION` gelijk blijft;
+- een nieuwe build wordt eerst in staging gestart en krijgt een runtime/health-preflight;
+- pas daarna wordt een backup gemaakt en de build geactiveerd;
+- `config/config.json` en de volledige `data/` map worden niet overschreven;
+- de externe supervisor bewaakt de eerste gezonde start en rolt bij een mislukte verse update automatisch terug;
+- maximaal drie programmabackups worden bewaard.
 
-**P2000 → backend bouwt Nederlandse tekst → Windows rendert lokaal WAV → lichtkrant-tab speelt WAV af.**
-
-Chrome en Edge gebruiken dus dezelfde HTML5-audioroute. De browser hoeft zelf geen TTS-stem te genereren.
-
-- Gebruik `INSTALL_NEDERLANDSE_STEM.bat` als Windows nog geen Nederlandse TTS-stem heeft.
-- `START_EDGE.bat` en `START_CHROME.bat` gebruiken ieder een eigen kioskprofiel met autoplay-instellingen.
-- Als een handmatig geopend browsertabblad geluid blokkeert, verschijnt `OMROEP INSCHAKELEN`; één klik ontgrendelt audio voor dat tabblad.
-
-### Deuntjes vóór de omroep (v4.2.0)
-
-Onder **Instellingen → Deuntjes** kan vóór de gesproken melding een apart alarmeringsdeuntje worden gekozen. Er zijn aparte keuzes voor standaard, brandweer, ambulance, politie, Lifeliner/MMT, KNRM/waterhulp en urgente meldingen. Beschikbaar zijn ingebouwde attentietonen, een YouTube-stream of één eigen MP3/WAV/OGG-bestand tot 12 MB.
-
-De meegeleverde standaard-YouTube-URL is `https://www.youtube.com/watch?v=VleijwaD_-U`. De video wordt niet gedownload of in het pakket gekopieerd; het geselecteerde fragment wordt via de YouTube-embed afgespeeld. De afspeelduur en het deuntjevolume zijn instelbaar. Een eigen bestand wordt lokaal bewaard onder `data/tunes/` en blijft behouden bij software-updates. Als een deuntje succesvol wordt afgespeeld vervangt het de oude korte attentiepiep, waarna de normale Nederlandse omroep start.
-
-## Automatische updates via GitHub
-
-De updater gebruikt **GitHub Releases**. Publiceer dus niet alleen een commit/tag, maar maak een Release en voeg de complete Windows-ZIP toe, bijvoorbeeld:
+Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-Tag: v4.2.0
-Asset: P2000_Monitor_Windows_v4.2.0.zip
+P2000_Monitor_MultiPlatform_v4.4.2.zip
 ```
 
-Stel daarna op de monitor onder **Instellingen → Updates** het repository in als `xSophie1119/lichtkrant`. Je kunt kiezen tussen alleen automatisch controleren of nieuwe releases ook meteen automatisch installeren. Standaard gebruikt de monitor xSophie1119/lichtkrant en staan automatisch controleren en installeren aan. Zet die schakelaars uit als je dat niet wilt. De controle loopt bij backendstart na een korte wachttijd en daarna minimaal eens per ingesteld interval (1–168 uur), zodat de publieke GitHub API niet onnodig wordt belast.
+Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.
 
-Bij een installatie blijven `config/config.json` en `data/` onaangeroerd. Voor de programmabestanden wordt eerst een backup gemaakt onder `data\updates\backups`. Maximaal drie backups worden bewaard. Als de webinterface nog werkt kan **Vorige versie herstellen** worden gebruikt; start de backend helemaal niet meer, voer dan `HERSTEL_VORIGE_VERSIE.bat` uit.
+## Centrale instellingen vanuit GitHub
 
-GitHub Releases is bewust gekozen boven `git pull`: de ontvangende Windows-pc heeft daardoor geen Git-installatie nodig en lokale instellingen kunnen niet in een merge/conflict terechtkomen.
+Optioneel kan `p2000-settings.json` op de ingestelde branch automatisch worden opgehaald. Alleen bekende veilige display-/filter-/omroepinstellingen worden toegepast; lokale database, achtergrond, deuntjes en voertuigcaches blijven lokaal.
 
-## Handige bestanden
+## Data en updates
 
-| Bestand | Functie |
-|---|---|
-| `START_P2000.bat` | Zet zo nodig automatisch de eigen embedded Python-runtime klaar, start backend en kiest Edge/Chrome |
-| `START_EDGE.bat` | Start expliciet in Edge kiosk |
-| `START_CHROME.bat` | Start expliciet in Chrome kiosk |
-| `STOP_P2000.bat` | Sluit kiosk en backend |
-| `CONFIGURATIE_WIZARD.bat` | Wijzig profiel, standplaats, regio's en disciplines |
-| `OPEN_INSTELLINGEN.bat` | Open beheerpagina |
-| `WINDOWS_CHECK.bat` | Controleert de eigen Python-runtime, browsers, Nederlandse TTS, profiel en ingestelde RSS-feeds |
-| `INSTALL_NEDERLANDSE_STEM.bat` | Controleert/installeert Nederlandse Windows TTS |
-| `INSTALL_AUTOSTART.bat` | Start monitor na Windows-aanmelding |
-| `REMOVE_AUTOSTART.bat` | Verwijdert autostart |
-| `OPEN_HANDLEIDING.bat` | Opent de uitgebreide HTML-handleiding |
-| `HERSTEL_VORIGE_VERSIE.bat` | Herstelt de nieuwste lokale programmabackup als een update fout ging |
+Updatecode bewaart lokale runtimegegevens bewust:
 
-## Python-runtime
-
-De monitor gebruikt bewust **niet** de globale `python`, de Microsoft Store-alias of een `py`-launcher. De vaste interpreter is `%LOCALAPPDATA%\P2000-Monitor\Runtime\Python313\python.exe`. Ontbreekt of beschadigt die runtime, dan downloadt en herstelt `START_P2000.bat` hem automatisch als lokaal embedded pakket. Hierdoor werkt de monitor op een schone 64-bit Windows-pc zonder handmatige Python-installatie, PATH-configuratie of administratorrechten. De projectafhankelijkheden voor de normale monitorroute zijn meegeleverd; er hoeft geen `pip install` uitgevoerd te worden.
+- `config/config.json`
+- `data/p2000.sqlite3`
+- `data/vehicles/`
+- `data/background/`
+- `data/tunes/`
+- `data/tts-cache/`
+- `data/updates/backups/`
 
 ## Testen
 
-Parsercorpus:
+Alle meegeleverde regressiescripts:
+
+```bash
+for f in tests/test_*.py; do python3 "$f" || exit 1; done
+```
+
+Belangrijkste sets:
+
+- parsercorpus: 168 cases;
+- probleemmelding-regressies: 8 expliciete cases uit eerder fout verwerkte meldingen;
+- v4.4 reliability-contracten voor watchdog, feed-race, updater, display, audio en control UI;
+- setup/feedmatrix;
+- voertuigdatabase + Brandbase/fallbacks;
+- GitHub updater + SHA-updates;
+- centrale GitHub-instellingen;
+- UI-contracten;
+- Windows Python-bootstrap.
+
+Platformdiagnose:
+
+- Windows: `WINDOWS_CHECK.bat`
+- Linux: `./LINUX_CHECK.sh`
+
+## Logbestanden
+
+Windows:
 
 ```text
-python tests\test_parser_corpus.py
+%LOCALAPPDATA%\P2000-Monitor\Logs
 ```
 
-Verwacht resultaat in deze build:
+Linux:
 
-```json
-{"total":168,"failures":0,"passed":168}
+```text
+${XDG_STATE_HOME:-~/.local/state}/p2000-monitor/logs
 ```
 
-De regio-/RSS-matrix heeft daarnaast 12 regressietests (`python tests\test_setup_matrix.py`) en de landelijke voertuiglaag heeft een aparte regressieset (`python tests\test_vehicle_db.py`). Gebruik `WINDOWS_CHECK.bat` op de uiteindelijke Windows-pc voor browser-, stem-, RSS- en voertuigcachecontrole.
-
-## Opmerking
-
-Deze monitor is een informatieve weergave van openbare P2000-data. Hij is **geen officieel alarmeringsmiddel** en mag niet worden gebruikt als vervanging voor pager/pieper, C2000, meldkamercommunicatie of andere operationele voorzieningen.
-
-Python-check configuratiewizard: CONFIGURATIE_WIZARD.bat controleert en herstelt altijd eerst de eigen P2000 Python 3.13-runtime, ook wanneer de backend al actief is.
-
-
-## Startproblemen en logs (v4.2.0)
-
-Als een start mislukt sluit het venster niet meer direct. De concrete fout blijft in beeld. De twee belangrijkste logbestanden zijn:
-
-- `%LOCALAPPDATA%\P2000-Monitor\Logs\python-bootstrap.log` – download, architectuur, SHA-256 en uitpakken van de eigen Python-runtime.
-- `%LOCALAPPDATA%\P2000-Monitor\Logs\backend.log` – foutoutput van de P2000-backend.
-
-Gebruik `START_BACKEND.bat` als extra diagnose; dit venster blijft ook na een crash open. De normale Python-bootstrap heeft PowerShell niet nodig.
-
-
-Start de BAT-bestanden nooit rechtstreeks vanuit de ZIP; pak de volledige ZIP eerst uit. Vanaf v4.2.0 wordt dit automatisch herkend en blijft het foutvenster open.
-
-
-## Nieuwe persoonlijke weergave (v4.2.0)
-- **Omroepplaatsen:** Instellingen → *Alleen deze steden uitspreken*. Komma, puntkomma of nieuwe regel. Leeg = alles dat zichtbaar binnenkomt mag gesproken worden.
-- **Achtergrond:** zwart, nachtblauw, antraciet, donkergroen, donkerrood of een eigen kleur.
-- **Doelscherm:** Instellingen → *Windows scherm*. Kies een gedetecteerd scherm en herstart de lichtkrant. Chrome/Edge krijgt automatisch de juiste Windows-positie en resolutie.
-
-
-## Achtergrondfoto (v4.2.0)
-Onder **Instellingen → Weergave → Achtergrond → Foto** kan een lokale JPG, PNG of WebP tot 15 MB worden gekozen. De afbeelding wordt opgeslagen onder `data/background/` en blijft daardoor behouden bij software-updates. Met **Donkere laag** (0–90%) blijft tekst leesbaar; **Scherm vullen** snijdt zo nodig bij, **Hele foto tonen** behoudt de volledige afbeelding. De foto wordt alleen lokaal vanaf de monitor-pc geserveerd en veroorzaakt geen externe netwerkrequests.
+De backenddatabase en instellingen blijven bewust naast de applicatie staan zodat bestaande installaties en de ingebouwde updater hun data kunnen behouden.

@@ -1,71 +1,52 @@
-P2000 MONITOR WINDOWS v4.2.0 — SNELSTART
-========================================
+P2000 MONITOR v4.4.2 — WINDOWS + LINUX
+======================================
 
-1. Pak de HELE ZIP uit naar een vaste map, bijvoorbeeld:
-   C:\P2000-Monitor
+WINDOWS
+Aanbevolen installatie: INSTALL_P2000.bat
+Portable: START_P2000.bat
+Eerste start: wizard afronden.
+Diagnose: WINDOWS_CHECK.bat
 
-2. Zorg dat de pc bij de allereerste start internet heeft en dubbelklik
-   START_P2000.bat.
+LINUX
+Aanbevolen installatie:
+  chmod +x *.sh tools/*.py
+  ./INSTALL_P2000.sh
+Portable: ./START_P2000.sh
+Eerste start: wizard afronden.
+Diagnose: ./LINUX_CHECK.sh
 
-   Je hoeft Python NIET zelf te installeren.
-   Bij de eerste start controleert de monitor automatisch of de eigen
-   Python 3.13-runtime aanwezig is. Ontbreekt die, dan wordt het officiele
-   embedded ZIP-pakket vanaf python.org gedownload, via SHA-256 gecontroleerd
-   en lokaal uitgepakt. Geen installer, admin of PATH-wijziging nodig.
+INSTELLINGEN
+Windows: OPEN_INSTELLINGEN.bat
+Linux:   ./OPEN_INSTELLINGEN.sh
 
-3. Daarna start de backend vanzelf en opent automatisch de configuratiewizard.
-   Kies:
-   - Particulier of bedrijf/organisatie;
-   - naam of bedrijfsnaam;
-   - standplaats / hoofdplaats;
-   - de P2000-regio's die je wilt ontvangen;
-   - per regio: Brandweer, Ambulance, Politie, KNRM en/of Lifeliner.
+CONFIGURATIEWIZARD
+Windows: CONFIGURATIE_WIZARD.bat
+Linux:   ./CONFIGURATIE_WIZARD.sh
 
-4. Klik in de wizard op "Opslaan en monitor starten".
+AUTOSTART
+Windows: INSTALL_AUTOSTART.bat
+Linux:   ./INSTALL_AUTOSTART.sh
 
-5. Test daarna via Instellingen:
-   - Testmelding;
-   - Test omroep;
-   - kaart/geocoding;
-   - RSS-status;
-   - Roepnummerdatabase. De gekozen brandweerregio's worden op de achtergrond bijgewerkt.
+STOPPEN
+Windows: STOP_P2000.bat
+Linux:   ./STOP_P2000.sh
 
-6. Klinkt de omroep Engels of is er geen Nederlandse stem?
-   Sluit de monitor en start INSTALL_NEDERLANDSE_STEM.bat.
+VORIGE VERSIE HERSTELLEN
+Windows: HERSTEL_VORIGE_VERSIE.bat
+Linux:   ./HERSTEL_VORIGE_VERSIE.sh
 
-7. Automatisch laten starten bij Windows-aanmelding:
-   INSTALL_AUTOSTART.bat
+Linux heeft Python 3.10+ nodig. Geen pip-installatie nodig.
+Voor lokale Linux-omroep is espeak-ng aanbevolen.
+Voor X11-schermbeheer zijn xrandr + xset aanbevolen.
+Voor wlroots-Wayland is wlr-randr aanbevolen.
 
-Handige bestanden:
-- START_P2000.bat             normale start + automatische embedded Python-runtime
-- ENSURE_PYTHON.bat           Python-runtime controleren/herstellen
-- START_P2000_DEBUG.bat       startdiagnose; venster blijft altijd open
-- START_EDGE.bat              expliciet Edge
-- START_CHROME.bat            expliciet Chrome
-- STOP_P2000.bat              monitor netjes stoppen
-- CONFIGURATIE_WIZARD.bat     regio's/profiel later wijzigen
-- OPEN_INSTELLINGEN.bat       beheerpagina openen
-- WINDOWS_CHECK.bat           installatie en RSS controleren
-- OPEN_HANDLEIDING.bat        uitgebreide handleiding
+Webinterface:
+Monitor:      http://127.0.0.1:8765/
+Instellingen: http://127.0.0.1:8765/control
+Wizard:       http://127.0.0.1:8765/setup.html?edit=1
 
-LET OP
-Deze monitor is informatief en is geen vervanging voor C2000, pager/pieper,
-meldkamercommunicatie of andere officiele alarmeringsmiddelen.
-
-Python-check configuratiewizard: CONFIGURATIE_WIZARD.bat controleert en herstelt altijd eerst de eigen P2000 Python 3.13-runtime, ook wanneer de backend al actief is.
-
-STARTPROBLEMEN v4.2.0
----------------------
-Een foutvenster hoort niet meer vanzelf te verdwijnen. Kijk bij een fout in:
-%LOCALAPPDATA%\P2000-Monitor\Logs\python-bootstrap.log
-%LOCALAPPDATA%\P2000-Monitor\Logs\backend.log
-De normale Python-route gebruikt geen PowerShell meer.
-
-
-Start de BAT-bestanden nooit rechtstreeks vanuit de ZIP; pak de volledige ZIP eerst uit. Vanaf v4.2.0 wordt dit automatisch herkend en blijft het foutvenster open.
-
-
-## Nieuwe persoonlijke weergave (v4.2.0)
-- **Omroepplaatsen:** Instellingen → *Alleen deze steden uitspreken*. Komma, puntkomma of nieuwe regel. Leeg = alles dat zichtbaar binnenkomt mag gesproken worden.
-- **Achtergrond:** zwart, nachtblauw, antraciet, donkergroen, donkerrood of een eigen kleur.
-- **Doelscherm:** Instellingen → *Windows scherm*. Kies een gedetecteerd scherm en herstart de lichtkrant. Chrome/Edge krijgt automatisch de juiste Windows-positie en resolutie.
+SNELBEDIENING v4.4.2
+- Normaal / Alleen prioriteit / STIL
+- mastervolume, stop/replay omroep, testtoon/testomroep
+- scherm aan/uit, kiosk/backend herstart
+- live parserpreview en watchdog/feed-status in /control

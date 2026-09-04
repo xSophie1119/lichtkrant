@@ -3,6 +3,9 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 echo P2000 Monitor stoppen...
 
+echo [P2000] Supervisor stoppen...
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$pf='%~dp0data\supervisor.pid'; if(Test-Path $pf){$id=[int](Get-Content $pf -ErrorAction SilentlyContinue); if($id){Stop-Process -Id $id -Force -ErrorAction SilentlyContinue}; Remove-Item $pf -Force -ErrorAction SilentlyContinue}" >nul 2>&1
+
 echo [P2000] Lichtkrant-kiosk sluiten...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$procs=Get-CimInstance Win32_Process ^| Where-Object { $_.CommandLine -and $_.CommandLine -like '*P2000-Monitor\BrowserProfile*' -and $_.CommandLine -like '*127.0.0.1:8765*' }; foreach($p in $procs){ try { Invoke-CimMethod -InputObject $p -MethodName Terminate ^| Out-Null } catch {} }" >nul 2>&1
 

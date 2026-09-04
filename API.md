@@ -1,61 +1,23 @@
-# P2000 Monitor lokale API — Windows v4.2.0
+# P2000 Monitor lokale API — v4.4.2
 
-De backend luistert standaard op `http://127.0.0.1:8765` en dient ook de lichtkrant, beheerpagina en configuratiewizard uit.
+De API is op Windows en Linux gelijk en luistert standaard op poort `8765`.
 
-## Installatieprofiel
+Belangrijkste endpoints:
 
-- `GET /api/setup` — huidig profiel, standplaats, regio-/disciplinematrix en opgebouwde RSS-feeds.
-- `POST /api/setup` — sla de configuratiewizard op. Wijzigingen bouwen de RSS-set opnieuw op, legen de feedcache en verwijderen meldingen die buiten de nieuwe selectie vallen.
-- `GET /api/feed-catalog` — beschikbare regio's, disciplines, landelijke feeds en subregio-relaties.
-
-## Monitor
-
-- `GET /api/runtime` — appnaam, versie en serverinstantie.
-- `GET /api/status` — feed- en monitorstatus.
-- `GET /api/health` — watchdog/clientstatus, inclusief audio-status van het lichtkrant-tabblad.
-- `GET /api/messages?limit=100` — opgeslagen meldingen binnen de huidige selectie.
-- `GET /api/stream` — Server-Sent Events voor nieuwe meldingen, status, instellingen en testopdrachten.
+- `GET /api/runtime` — app, versie, backend-instance en platform.
+- `GET /api/status` — feed/database/watchdog/status.
+- `GET /api/health` — browser/SSE/audio health.
 - `GET /api/settings` / `POST /api/settings` — lichtkrantinstellingen.
-- `GET /api/feed-config` — door de wizard opgebouwde RSS-bronnen.
-- `POST /api/feeds/reconnect` — feedcache legen en opnieuw verbinden.
+- `GET /api/setup` / `POST /api/setup` — installatieprofiel.
+- `GET /api/display/info` — platform, sessietype, monitoren en gekozen monitor.
+- `POST /api/display/power` — `{ "state": "on" | "off", "manual": true }`.
+- `GET /api/tts/status` — beschikbare lokale/online TTS-routes.
+- `POST /api/tts` — Nederlandse omroepaudio; Windows SAPI-WAV of Linux eSpeak-WAV waar beschikbaar, anders gTTS MP3.
+- `GET /api/vehicles/status` / `POST /api/vehicles/sync` — voertuigcache.
+- `GET /api/vehicle-overrides` — handmatige correcties.
+- `POST /api/test-message` — test naar verbonden lichtkrant.
+- `GET /api/test-status?token=...` — bevestiging van afspelen/test.
+- `GET /api/update/status` — updaterstatus.
+- `POST /api/system/restart` — backend zelf herstarten.
 
-## Parser / kaart / omroep
-
-- `POST /api/parser/debug` met `{"raw":"..."}` — test één ruwe P2000-regel met de landelijke parser.
-- `GET /api/geocode?city=...&location=...` — PDOK/BGT-geocoding voor de kaart.
-- `POST /api/test-message` — stuur een testmelding, omroeptest of stop-opdracht naar het lichtkrant-tabblad.
-- `GET /api/test-status?token=...` — vraag de echte afspeelbevestiging of fout van een eerder verzonden audio-/omroeptest op.
-- `POST /api/test-result` — interne terugmelding van het lichtkrant-tabblad voor een testopdracht.
-- `POST /api/tts` met tekst/service/snelheid — render Nederlandse omroepaudio; geeft WAV terug wanneer lokale Windows-TTS beschikbaar is en gebruikt de ingebouwde Nederlandse fallbackroute waar nodig.
-- `GET /api/tts/status` — status van Nederlandse TTS-rendering en gebruikte stem/engine.
-
-## Voertuigen
-
-- `GET /vehicles.json` — kleine meegeleverde offline seed; niet de volledige runtimecatalogus.
-- `GET /api/vehicles` — samengevoegde O(1)-runtimecatalogus voor alleen de geselecteerde brandweerregio’s, inclusief metadata per regionale cache.
-- `GET /api/vehicles/status` — status, geselecteerde regiocodes, aantallen, laatste refresh en eventuele bronfout.
-- `POST /api/vehicles/sync` met `{"force":true}` — start een geforceerde **achtergrond**sync. De HTTP-call wacht niet op alle regio-downloads.
-- `GET /api/unknown-vehicles` — nog niet exact bekende landelijke brandweerroepnummers die tijdens gebruik zijn gezien.
-- `GET /api/vehicle-overrides` — alle persistente handmatige roepnummercorrecties.
-- `POST /api/vehicle-overrides/upsert` — voeg een correctie toe of wijzig deze (`callsign`, `type`, `station`, `display`, `label`).
-- `POST /api/vehicle-overrides/delete` — verwijder een correctie met `digits` of `callsign`.
-
-Regionale caches staan onder `data/vehicles/<regiocode>.json` en worden standaard dagelijks gecontroleerd. Een netwerk- of bronfout laat de RSS/SSE-verwerking ongemoeid: de laatst bekende cache blijft bruikbaar en onbekende voertuigen worden onmiddellijk via het landelijke nummerplan weergegeven. Handmatige correcties staan apart in `data/vehicles/overrides.json` en worden altijd als laatste toegepast.
-
-
-## Achtergrondfoto
-- `GET /api/background/info` – status van de lokaal opgeslagen achtergrondfoto.
-- `GET /api/background/image?v=<versie>` – geeft de lokale JPG/PNG/WebP terug.
-- `POST /api/background/upload` – raw image body, maximaal 15 MB; alleen JPG/PNG/WebP.
-- `POST /api/background/remove` – verwijdert de lokale achtergrondfoto.
-
-## GitHub Releases updates (v4.2.0)
-
-- `GET /api/update/github/settings` — huidige GitHub update-instellingen.
-- `POST /api/update/github/settings` — `{github_repo, github_auto_check, github_auto_install, github_check_minutes}`.
-- `GET /api/update/status` — huidige/laatste update-status, beschikbare versie en release-informatie.
-- `POST /api/update/github/check` — `{install:false}` controleert; `{install:true}` downloadt, valideert, back-upt en installeert de nieuwste release.
-- `POST /api/update/rollback` — herstelt de nieuwste lokale programmabackup en herstart de backend.
-- `POST /api/update/upload` — bestaande handmatige ZIP-update blijft beschikbaar voor lokale beheerclients.
-
-GitHub-updates ondersteunen openbare repositories en gebruiken de nieuwste gepubliceerde GitHub Release. De release moet een complete `.zip` asset bevatten. Config/data worden niet overschreven.
+Browsermutaties met gevolgen worden alleen vanaf lokale/private clients en same-origin browserrequests geaccepteerd waar van toepassing.

@@ -1,40 +1,23 @@
-# GitHub-updates en centrale instellingen publiceren
+# GitHub-updates — v4.4.2
 
-## Release of gewone push
+De monitor kan zowel Releases als gewone pushes op de ingestelde branch volgen. Branchupdates worden op exacte commit-SHA herkend, ook wanneer `VERSION` gelijk blijft.
 
-Vanaf v4.2.1 kan de monitor een complete Release-ZIP installeren én gewone pushes op de ingestelde branch volgen. Vanaf v4.2.5 vergelijkt hij behalve `VERSION` ook de exacte commit-SHA. Daardoor wordt iedere nieuwe push op de gekozen branch herkend, zelfs wanneer het versienummer hetzelfde blijft. De geïnstalleerde SHA wordt lokaal bewaard zodat dezelfde commit niet opnieuw wordt geïnstalleerd.
+Aanbevolen Release-asset:
 
-Verhoog `VERSION` en `APP_VERSION` nog steeds bij een echte uitgave: dat maakt versies voor gebruikers herkenbaar en zorgt dat oudere installaties de update ook kunnen herkennen. Kleine reparatiepushes binnen dezelfde versie werken vanaf v4.2.5 echter ook zonder versieverhoging.
+```text
+P2000_Monitor_MultiPlatform_v4.4.2.zip
+```
 
-Vanaf v4.2.4 controleert de monitor circa tien seconden na het opstarten en daarna standaard iedere vijf minuten. Het minimale automatische interval is vijf minuten, zodat de openbare GitHub API niet onnodig wordt belast.
+De assetselectie geeft voorrang aan `multiplatform`/`multi-platform`. Als er meerdere OS-assets bestaan kiest Windows liever een Windows-ZIP en Linux liever een Linux-ZIP.
 
-## Centrale instellingen
+De validator accepteert alleen een complete monitorstructuur met onder andere:
 
-1. Bewerk `p2000-settings.json` in de hoofdmap van de repository.
-2. Commit en push het bestand naar de ingestelde branch.
-3. Zet op iedere monitor bij **Instellingen → Centrale instellingen** de automatische synchronisatie aan.
+- `backend/server.py`
+- `frontend/index.html`
+- `frontend/control.html`
 
-De monitor past alleen bekende velden onder `display_settings` toe. Onbekende velden worden genegeerd en waarden worden opnieuw server-side gevalideerd. Database, setup/regioselectie, lokale achtergrondfoto en geüploade audiobestanden blijven behouden. Zet geen wachtwoorden of tokens in dit openbare bestand.
+Symlinks, path traversal, te grote archives en ongeldige structuren worden geweigerd. Bij Release-assets wordt een door GitHub opgegeven SHA-256 digest gecontroleerd.
 
-1. Zet de P2000 Monitor in een **openbaar GitHub repository**.
-2. Maak voor iedere uitgave een GitHub **Release**, bijvoorbeeld tag `v4.2.0`.
-3. Upload de complete distributie-ZIP als Release asset, bij voorkeur `P2000_Monitor_Windows_v4.2.0.zip`.
-4. Open op iedere monitor **Instellingen → Updates** en vul `xSophie1119/lichtkrant` in.
-5. Zet **Automatisch controleren** aan. Zet desgewenst ook **Nieuwe versie automatisch installeren** aan.
+Bij installatie blijven `config/config.json` en `data/` behouden. Eerst wordt een programmabackup gemaakt onder `data/updates/backups/`; maximaal drie backups blijven staan.
 
-De monitor vraagt `releases/latest` op en kiest een `.zip`-asset waarbij `P2000`, `Monitor` en `Windows` in de bestandsnaam voorrang krijgen. Een source-code ZIP zonder complete monitorstructuur wordt door de validator geweigerd.
-
-## Wat blijft behouden bij updates?
-
-- `config/config.json`
-- `data/p2000.sqlite3`
-- achtergrondfoto
-- voertuigcaches
-- TTS-cache
-- straat/geocodecache
-
-Voor de overige programmabestanden wordt eerst een lokale backup gemaakt in `data/updates/backups`.
-
-## Noodherstel
-
-Als een verkeerde release de backend niet meer laat starten: dubbelklik `HERSTEL_VORIGE_VERSIE.bat`. Dit herstelt de nieuwste programmabackup zonder config/data te verwijderen.
+Linux-launchers krijgen na een update opnieuw execute-rechten wanneer de ZIP Unix-modebits bevat of wanneer het om een bekende `.sh` launcher gaat.
