@@ -8,7 +8,7 @@ if not exist "%~dp0backend\server.py" goto :fatal_extract
 if not exist "%~dp0frontend\index.html" goto :fatal_extract
 if not exist "%~dp0ENSURE_PYTHON.bat" goto :fatal_extract
 title P2000 Monitor - instellingen
-set "P2000_VERSION=4.4.10"
+set "P2000_VERSION=4.4.11"
 set "P2000_LOGDIR=%LOCALAPPDATA%\P2000-Monitor\Logs"
 if not exist "%P2000_LOGDIR%" mkdir "%P2000_LOGDIR%" >nul 2>&1
 

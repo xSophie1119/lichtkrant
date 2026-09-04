@@ -7,19 +7,20 @@ never becomes healthy.
 """
 from __future__ import annotations
 
-import argparse, json, os, signal, subprocess, sys, time, urllib.request
+import argparse, hashlib, json, os, signal, subprocess, sys, time, urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
 STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.10'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.11'
 LOG=DATA/'supervisor.log'
 _runtime_base=Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
 if not _runtime_base.exists() or not os.access(_runtime_base, os.W_OK | os.X_OK): _runtime_base=Path('/tmp')
 RUNDIR=_runtime_base/f"p2000-monitor-{getattr(os, 'getuid', lambda: 0)()}"
 STARTED=time.monotonic()
+INSTALL_ID=hashlib.sha256(os.path.realpath(str(ROOT)).encode('utf-8')).hexdigest()[:16]
 
 def now_iso(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def log(msg):
@@ -77,7 +78,7 @@ def start_backend():
     end=time.monotonic()+18
     while time.monotonic()<end:
         r=api('/api/runtime',1)
-        if r and r.get('app')=='P2000 Monitor':return True
+        if r and r.get('app')=='P2000 Monitor' and str(r.get('version'))==VERSION and str(r.get('install_id') or '')==INSTALL_ID:return True
         time.sleep(.5)
     return False
 
@@ -168,7 +169,7 @@ def main():
 
             loop_now=time.monotonic()
             runtime=api('/api/runtime',.8)
-            backend_ok=bool(runtime and runtime.get('app')=='P2000 Monitor')
+            backend_ok=bool(runtime and runtime.get('app')=='P2000 Monitor' and str(runtime.get('version'))==VERSION and str(runtime.get('install_id') or '')==INSTALL_ID)
             # /api/health scans cache/database/process metrics and used to run every
             # five seconds. Cache it at supervisor level; runtime is the cheap
             # liveness probe and stays frequent for fast crash recovery.

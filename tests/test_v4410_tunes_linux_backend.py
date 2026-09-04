@@ -11,7 +11,9 @@ html=(ROOT/'frontend/control.html').read_text('utf-8')
 probe=(ROOT/'tools/runtime_probe.py').read_text('utf-8')
 start=(ROOT/'START_P2000.sh').read_text('utf-8')
 start_backend=(ROOT/'START_BACKEND.sh').read_text('utf-8')
-checks['version_4410']=(ROOT/'VERSION').read_text().strip()=='4.4.10' and 'APP_VERSION = "4.4.10"' in server_text
+version=(ROOT/'VERSION').read_text().strip()
+parts=tuple(int(x) for x in version.split('.')[:3])
+checks['version_4410']=parts >= (4,4,10) and f'APP_VERSION = "{version}"' in server_text
 checks['dedicated_tune_store']='TUNE_SETTINGS_PATH = TUNE_DIR / "settings.json"' in server_text
 checks['tune_api_get_post']=server_text.count('parsed.path == "/api/tune/settings"')>=2
 checks['settings_merge_safe']='merged = dict(existing)' in server_text and 'merged.update(clean)' in server_text
@@ -45,4 +47,4 @@ with tempfile.TemporaryDirectory() as td:
 failed=[k for k,v in checks.items() if not v]
 print(json.dumps(checks,ensure_ascii=False,indent=2))
 if failed:raise SystemExit('FAIL: '+', '.join(failed))
-print(f'OK: {len(checks)}/{len(checks)} v4.4.10 deuntjes/Linux backend checks')
+print(f'OK: {len(checks)}/{len(checks)} v4.4.10+ deuntjes/Linux backend checks')

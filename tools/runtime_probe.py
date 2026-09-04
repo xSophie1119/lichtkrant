@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Cross-platform launcher helper for P2000 Monitor."""
 from __future__ import annotations
-import argparse, json, os, re, signal, subprocess, sys, time, urllib.request
+import argparse, hashlib, json, os, re, signal, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 URL="http://127.0.0.1:8765/api/runtime"; PORT="8765"
+INSTALL_ID=hashlib.sha256(os.path.realpath(str(ROOT)).encode("utf-8")).hexdigest()[:16]
 
 def runtime(timeout:float=.8)->dict|None:
     try:
@@ -14,7 +15,7 @@ def runtime(timeout:float=.8)->dict|None:
     except Exception:return None
 
 def is_current(expected:str)->bool:
-    obj=runtime();return bool(obj and obj.get("app")=="P2000 Monitor" and str(obj.get("version"))==expected)
+    obj=runtime();return bool(obj and obj.get("app")=="P2000 Monitor" and str(obj.get("version"))==expected and str(obj.get("install_id") or "")==INSTALL_ID)
 
 def _run(argv):
     try:return subprocess.run(argv,capture_output=True,text=True,encoding="utf-8",errors="replace",timeout=8,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
@@ -155,7 +156,7 @@ def terminate_pids(pids:set[int])->bool:
 
 def kill_stale(expected:str)->bool:
     obj=runtime()
-    if obj and obj.get("app")=="P2000 Monitor" and str(obj.get("version"))==expected:
+    if is_current(expected):
         return True
     pids=listener_pids()
     if obj and obj.get("app")=="P2000 Monitor":
@@ -180,14 +181,51 @@ def kill_stale(expected:str)->bool:
     print(f"Poort 8765 is bezet door een ander proces: {describe_listener_pids(pids)}")
     return False
 
+def _other_p2000_supervisor_pids()->set[int]:
+    if os.name=="nt" or not os.path.isdir("/proc"):
+        return set()
+    out=set(); me=os.getpid()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit(): continue
+        pid=int(entry.name)
+        if pid==me: continue
+        cmd=_proc_cmdline(pid)
+        if not cmd or "tools/supervisor.py" not in cmd.replace("\\","/"): continue
+        # Only touch recognizable P2000 project supervisors owned by this user.
+        try:
+            if (Path("/proc")/str(pid)).stat().st_uid != os.getuid(): continue
+        except Exception:
+            continue
+        for token in cmd.split():
+            if token.endswith("tools/supervisor.py"):
+                try:
+                    project=Path(token).resolve().parent.parent
+                    if (project/"VERSION").is_file() and (project/"frontend"/"index.html").is_file():
+                        out.add(pid); break
+                except Exception: pass
+    return out
+
+def stop_all_p2000()->bool:
+    ok=True
+    obj=runtime()
+    if obj and obj.get("app")=="P2000 Monitor":
+        pids=listener_pids()
+        if pids: ok=terminate_pids(pids) and ok
+    supers=_other_p2000_supervisor_pids()
+    if supers:
+        print(f"Oude P2000 supervisor(s) stoppen: {', '.join(map(str,sorted(supers)))}")
+        ok=terminate_pids(supers) and ok
+    return ok
+
 def stop_any()->bool:
     obj=runtime()
     if not obj or obj.get("app")!="P2000 Monitor":return True
     pids=listener_pids();return terminate_pids(pids) if pids else False
 
 def main()->int:
-    ap=argparse.ArgumentParser();ap.add_argument("--version",default="");ap.add_argument("--wait",type=float,default=0);ap.add_argument("--kill-stale",action="store_true");ap.add_argument("--stop",action="store_true");ap.add_argument("--describe-port",action="store_true")
+    ap=argparse.ArgumentParser();ap.add_argument("--version",default="");ap.add_argument("--wait",type=float,default=0);ap.add_argument("--kill-stale",action="store_true");ap.add_argument("--stop",action="store_true");ap.add_argument("--stop-all",action="store_true");ap.add_argument("--describe-port",action="store_true")
     a=ap.parse_args()
+    if a.stop_all:return 0 if stop_all_p2000() else 2
     if a.stop:return 0 if stop_any() else 2
     if a.describe_port:
         pids=listener_pids();print(describe_listener_pids(pids));return 0 if not pids else 1

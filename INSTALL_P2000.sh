@@ -28,7 +28,18 @@ find "$DEST/tools" -maxdepth 1 -type f -name '*.py' -exec chmod +x {} + 2>/dev/n
 P2000_TRY_INSTALL_PYTHON=1 "$DEST/ENSURE_PYTHON.sh"
 # shellcheck source=/dev/null
 source "$DEST/ENSURE_PYTHON.sh"
+# A previous portable/Downloads build may still have its own supervisor alive.
+# Stop all same-user P2000 backends/supervisors before installing new shortcuts.
+"$P2000_PYTHON" "$DEST/tools/runtime_probe.py" --stop-all >/dev/null 2>&1 || true
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
+# Remove stale per-user launchers that explicitly point at an extracted P2000 copy.
+for d in "$HOME/.local/share/applications" "${XDG_CONFIG_HOME:-$HOME/.config}/autostart"; do
+  [[ -d "$d" ]] || continue
+  while IFS= read -r -d '' f; do
+    [[ "$f" == "$HOME/.local/share/applications/p2000-monitor.desktop" || "$f" == "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/p2000-monitor.desktop" ]] && continue
+    if grep -qiE 'P2000(_Monitor| Monitor)|START_P2000\.sh' "$f" 2>/dev/null; then rm -f -- "$f"; fi
+  done < <(find "$d" -maxdepth 1 -type f -name '*p2000*.desktop' -print0 2>/dev/null)
+done
 ln -sfn "$DEST/START_P2000.sh" "$HOME/.local/bin/p2000-monitor"
 desktop_quote(){ local s="$1"; s=${s//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "$s"; }
 write_desktop(){

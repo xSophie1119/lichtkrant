@@ -111,11 +111,22 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.4.10"
+APP_VERSION = "4.4.11"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
+
+# Used by vehicle-cache loading during module initialization.  Keep this helper
+# above every startup-time catalog function: real installations may already
+# contain a SW Mediaproducties cache before the backend imports the parser.
+def normalize_space(s: str) -> str:
+    return re.sub(r"\s+", " ", s or "").strip()
+
+# Distinguishes two copies of the same version started from different folders.
+# This prevents an old Downloads build and the canonical installation from
+# treating each other as the same healthy backend on port 8765.
+INSTALL_ID = hashlib.sha256(os.path.realpath(str(ROOT)).encode("utf-8")).hexdigest()[:16]
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
 ALARMERINGEN_TRAUMA_URL = f"{ALARMERINGEN_BASE}/discipline/trauma.rss"
@@ -2001,9 +2012,6 @@ def choose_monitor(selector: str | None, monitors: list[dict] | None = None) -> 
 def choose_windows_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
     return choose_monitor(selector, monitors)
 
-
-def normalize_space(s: str) -> str:
-    return re.sub(r"\s+", " ", s or "").strip()
 
 _cached_places,_cached_places_meta=load_nl_place_cache()
 _set_nl_place_index(_cached_places)
@@ -4999,8 +5007,13 @@ class AppState:
             if r["digits"] in self.known_vehicle_keys: continue
             item=dict(r);digits=str(item.get("digits") or "")
             if len(digits)==6 and digits[:2] in FIRE_REGION_LABELS:
-                suggested=FIRE_TYPE_DIGIT.get(digits[4],"Brandweer")
-                item.update({"suggested_type":suggested,"suggested_region":FIRE_REGION_LABELS.get(digits[:2],""),"suggested_callsign":format_vehicle_callsign(digits)})
+                suggested_code, suggested_label = fire_vehicle_type("", digits)
+                item.update({
+                    "suggested_type": suggested_label or "Brandweer",
+                    "suggested_function_code": suggested_code or "BRW",
+                    "suggested_region": FIRE_REGION_LABELS.get(digits[:2], ""),
+                    "suggested_callsign": format_vehicle_callsign(digits),
+                })
             out.append(item)
         return out
 
@@ -7884,6 +7897,7 @@ class Handler(BaseHTTPRequestHandler):
                 "server_instance": self.state.server_instance,
                 "started_at": self.state.started_at,
                 "platform": runtime_platform(),
+                "install_id": INSTALL_ID,
             })
         if parsed.path == "/api/setup":
             return self.send_json({"ok": True, "setup": self.state.setup_view()})
@@ -8049,6 +8063,7 @@ class Handler(BaseHTTPRequestHandler):
                 "version": APP_VERSION,
                 "server_instance": self.state.server_instance,
                 "started_at": self.state.started_at,
+                "install_id": INSTALL_ID,
             }, ensure_ascii=False, separators=(",", ":"))
             self.wfile.write(f"data: {runtime}\n\n".encode("utf-8"))
             self.wfile.flush()
