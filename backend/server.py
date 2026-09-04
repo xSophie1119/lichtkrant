@@ -47,7 +47,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse, quote, urljoin, unquote
+from urllib.parse import parse_qs, urlparse, quote, urljoin, unquote, urlencode
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,6 +59,9 @@ VEHICLE_DB_PATH = FRONTEND_DIR / "vehicles.json"
 VEHICLE_CACHE_DIR = DATA_DIR / "vehicles"
 VEHICLE_OVERRIDES_PATH = VEHICLE_CACHE_DIR / "overrides.json"
 VEHICLE_HISTORY_PATH = VEHICLE_CACHE_DIR / "history.jsonl"
+SW_VEHICLE_CACHE_PATH = VEHICLE_CACHE_DIR / "swmediaproducties.json"
+SECRETS_DIR = DATA_DIR / "secrets"
+SW_API_SECRET_PATH = SECRETS_DIR / "sw-roepnummer-api.json"
 VENDOR_DIR = ROOT / "vendor"
 TTS_CACHE_DIR = DATA_DIR / "tts-cache"
 BACKGROUND_DIR = DATA_DIR / "background"
@@ -80,7 +83,7 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.4.5"
+APP_VERSION = "4.4.6"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -88,6 +91,12 @@ ALARMERINGEN_TRAUMA_URL = f"{ALARMERINGEN_BASE}/discipline/trauma.rss"
 ALARMERINGEN_KNRM_URL = f"{ALARMERINGEN_BASE}/discipline/knrm.rss"
 NU112_ALL_RSS = "https://112-nu.nl/hulpdiensten/rss"
 NU112_SITE_URL = "https://112-nu.nl/"
+SW_ROEPNUMMER_API_BASE = "https://swmediaproducties.nl/roepnummers-api/v1"
+SW_ROEPNUMMER_SYNC_SECONDS = 5 * 60
+SW_ROEPNUMMER_PAGE_LIMIT = 500
+SW_ROEPNUMMER_MAX_PAGES = 250
+SW_ROEPNUMMER_TIMEOUT_SECONDS = 6.0
+SW_ROEPNUMMER_RESOLVE_TIMEOUT_SECONDS = 3.0
 
 # Landelijke brandweervoertuigendatabase.  De monitor houdt de statische seed klein
 # en synchroniseert alleen de brandweerregio's die de gebruiker heeft gekozen.
@@ -485,6 +494,104 @@ FIRE_INCIDENT_HINT_RE = re.compile(
 )
 
 
+def _chmod_private(path: Path, directory: bool = False) -> None:
+    """Best-effort owner-only permissions for local secrets/cache metadata."""
+    if os.name == "nt":
+        return
+    try:
+        path.chmod(0o700 if directory else 0o600)
+    except OSError:
+        pass
+
+
+def _windows_dpapi_protect(raw: bytes) -> bytes:
+    if os.name != "nt":
+        return raw
+    import ctypes
+    from ctypes import wintypes
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+    buf = ctypes.create_string_buffer(raw)
+    in_blob = DATA_BLOB(len(raw), ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)))
+    out_blob = DATA_BLOB()
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    if not crypt32.CryptProtectData(ctypes.byref(in_blob), "P2000 Roepnummer API", None, None, None, 0, ctypes.byref(out_blob)):
+        raise OSError("Windows DPAPI kon de API-key niet beveiligen")
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    finally:
+        kernel32.LocalFree(out_blob.pbData)
+
+
+def _windows_dpapi_unprotect(raw: bytes) -> bytes:
+    if os.name != "nt":
+        return raw
+    import ctypes
+    from ctypes import wintypes
+    class DATA_BLOB(ctypes.Structure):
+        _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_ubyte))]
+    buf = ctypes.create_string_buffer(raw)
+    in_blob = DATA_BLOB(len(raw), ctypes.cast(buf, ctypes.POINTER(ctypes.c_ubyte)))
+    out_blob = DATA_BLOB()
+    crypt32 = ctypes.windll.crypt32
+    kernel32 = ctypes.windll.kernel32
+    if not crypt32.CryptUnprotectData(ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)):
+        raise OSError("Windows DPAPI kon de API-key niet ontsleutelen")
+    try:
+        return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+    finally:
+        kernel32.LocalFree(out_blob.pbData)
+
+
+def read_sw_api_key() -> str:
+    """Read the backend-only API key. It is never included in frontend settings."""
+    env = str(os.environ.get("SWM_ROEPNUMMER_API_KEY") or "").strip()
+    if env:
+        return env
+    try:
+        payload = json.loads(SW_API_SECRET_PATH.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            return ""
+        storage = str(payload.get("storage") or "")
+        if storage == "dpapi":
+            raw = base64.b64decode(str(payload.get("data") or ""), validate=True)
+            return _windows_dpapi_unprotect(raw).decode("utf-8").strip()
+        if storage == "file-0600":
+            return str(payload.get("api_key") or "").strip()
+    except Exception:
+        return ""
+    return ""
+
+
+def write_sw_api_key(api_key: str) -> None:
+    """Persist the API key outside config.json/GitHub settings.
+
+    Windows uses per-user DPAPI. Linux/Unix uses an owner-only 0600 secret file;
+    this keeps the key backend-only without introducing an external keyring
+    dependency that could break unattended kiosk boots.
+    """
+    key = str(api_key or "").strip()
+    if not key:
+        try:
+            SW_API_SECRET_PATH.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return
+    SECRETS_DIR.mkdir(parents=True, exist_ok=True)
+    _chmod_private(SECRETS_DIR, directory=True)
+    if os.name == "nt":
+        protected = _windows_dpapi_protect(key.encode("utf-8"))
+        payload = {"version": 1, "storage": "dpapi", "data": base64.b64encode(protected).decode("ascii")}
+    else:
+        payload = {"version": 1, "storage": "file-0600", "api_key": key}
+    tmp = SW_API_SECRET_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    _chmod_private(tmp)
+    tmp.replace(SW_API_SECRET_PATH)
+    _chmod_private(SW_API_SECRET_PATH)
+
+
 def normalize_vehicle_digits(value: str) -> str:
     """Normalize a supported fire callsign to its digit key."""
     text = str(value or "").strip()
@@ -555,6 +662,189 @@ def format_vehicle_callsign(digits: str) -> str:
     if len(digits) == 6:
         return f"{digits[:2]}-{digits[2:]}"
     return ""
+
+
+def normalize_sw_lookup_key(value: str) -> str:
+    """Canonical SW API lookup key; 209471 and 20-9471 intentionally collide."""
+    digits = normalize_vehicle_digits(value)
+    if digits:
+        return digits
+    return re.sub(r"[^a-z0-9]", "", str(value or "").lower())[:80]
+
+
+def _pick_text(row: dict, *keys: str, limit: int = 240) -> str:
+    for key in keys:
+        value = row.get(key)
+        if value is not None and str(value).strip():
+            return normalize_space(str(value))[:limit]
+    return ""
+
+
+def canonical_sw_unit(row: dict) -> tuple[str, dict] | tuple[None, None]:
+    """Normalize one SW Mediaproducties API unit without assuming one envelope schema."""
+    if not isinstance(row, dict):
+        return None, None
+    callsign = _pick_text(row, "callsign", "roepnummer", "call_sign", limit=40)
+    lookup_raw = _pick_text(row, "lookup_key", "lookupKey", limit=80) or callsign
+    lookup_key = normalize_sw_lookup_key(lookup_raw)
+    if not lookup_key:
+        return None, None
+    function_code = _pick_text(row, "function_code", "functionCode", "type_code", "type", limit=64)
+    function_name = _pick_text(row, "function_name", "functionName", "function", "description", "label", limit=180)
+    station_name = _pick_text(row, "station_name", "stationName", "station", "post", "kazerne", limit=160)
+    region_code = _pick_text(row, "region_code", "regionCode", "region", limit=32)
+    discipline = _pick_text(row, "discipline", limit=40)
+    if not callsign:
+        digits = normalize_vehicle_digits(lookup_raw)
+        callsign = format_vehicle_callsign(digits) or lookup_raw
+    canonical = {
+        "lookup_key": lookup_key,
+        "api_lookup_key": lookup_raw,
+        "callsign": callsign,
+        "region_code": region_code,
+        "station_name": station_name,
+        "function_code": function_code,
+        "function_name": function_name,
+        "discipline": discipline,
+        "status": _pick_text(row, "status", limit=60),
+        "verified": row.get("verified") if isinstance(row.get("verified"), bool) else None,
+    }
+    # Keep small useful optional identifiers when the API supplies them.
+    for key in ("station_code", "city", "function_detail", "notes", "source_name", "source_url"):
+        value = _pick_text(row, key, limit=240)
+        if value:
+            canonical[key] = value
+    return lookup_key, canonical
+
+
+def extract_sw_units_payload(payload) -> list[dict]:
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("units", "data", "results", "items"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [x for x in value if isinstance(x, dict)]
+        if isinstance(value, dict):
+            for nested in ("units", "data", "results", "items"):
+                rows = value.get(nested)
+                if isinstance(rows, list):
+                    return [x for x in rows if isinstance(x, dict)]
+    return []
+
+
+def extract_sw_resolve_unit(payload) -> dict | None:
+    if isinstance(payload, dict):
+        # Direct unit response.
+        if any(k in payload for k in ("callsign", "lookup_key", "function_code", "station_name")):
+            return payload
+        for key in ("unit", "data", "result"):
+            value = payload.get(key)
+            if isinstance(value, dict):
+                nested = extract_sw_resolve_unit(value)
+                return nested or value
+        rows = extract_sw_units_payload(payload)
+        return rows[0] if rows else None
+    if isinstance(payload, list) and payload and isinstance(payload[0], dict):
+        return payload[0]
+    return None
+
+
+def sw_payload_has_more(payload, page: int, row_count: int, limit: int) -> tuple[bool, int | None]:
+    """Handle common pagination envelopes while still working with a plain list."""
+    containers = []
+    if isinstance(payload, dict):
+        containers.append(payload)
+        for key in ("pagination", "meta"):
+            if isinstance(payload.get(key), dict):
+                containers.append(payload[key])
+        if isinstance(payload.get("data"), dict):
+            containers.append(payload["data"])
+    for obj in containers:
+        if "has_more" in obj:
+            return bool(obj.get("has_more")), None
+        if "hasMore" in obj:
+            return bool(obj.get("hasMore")), None
+        last = obj.get("last_page", obj.get("lastPage", obj.get("total_pages", obj.get("totalPages"))))
+        try:
+            if last is not None:
+                last_i = int(last)
+                return page < last_i, page + 1 if page < last_i else None
+        except (TypeError, ValueError):
+            pass
+        nxt = obj.get("next_page", obj.get("nextPage"))
+        if nxt not in (None, "", False):
+            try:
+                return True, int(nxt)
+            except (TypeError, ValueError):
+                return True, page + 1
+    return row_count >= limit, (page + 1 if row_count >= limit else None)
+
+
+def load_sw_vehicle_cache() -> tuple[dict[str, dict], dict]:
+    try:
+        data = json.loads(SW_VEHICLE_CACHE_PATH.read_text(encoding="utf-8"))
+        units = data.get("units", {}) if isinstance(data, dict) else {}
+        meta = data.get("meta", {}) if isinstance(data, dict) else {}
+        if not isinstance(units, dict):
+            return {}, dict(meta) if isinstance(meta, dict) else {}
+        clean = {}
+        for key, row in units.items():
+            if not isinstance(row, dict):
+                continue
+            lookup = normalize_sw_lookup_key(str(key)) or normalize_sw_lookup_key(str(row.get("lookup_key") or row.get("callsign") or ""))
+            if lookup:
+                clean[lookup] = dict(row)
+        return clean, dict(meta) if isinstance(meta, dict) else {}
+    except Exception:
+        return {}, {}
+
+
+def write_sw_vehicle_cache(units: dict[str, dict], meta: dict) -> None:
+    VEHICLE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"version": 1, "meta": meta, "units": units}
+    tmp = SW_VEHICLE_CACHE_PATH.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+    tmp.replace(SW_VEHICLE_CACHE_PATH)
+
+
+def sw_units_to_vehicle_catalog(units: dict[str, dict]) -> dict[str, dict]:
+    catalog: dict[str, dict] = {}
+    for lookup, unit in units.items():
+        if not isinstance(unit, dict):
+            continue
+        discipline = str(unit.get("discipline") or "").strip().lower()
+        # The API is currently primarily a fire-service catalogue. If it later
+        # gains other disciplines, do not misclassify those as brandweer units.
+        if discipline and discipline not in {"brandweer", "fire", "brw"}:
+            continue
+        digits = normalize_vehicle_digits(str(unit.get("callsign") or unit.get("lookup_key") or lookup))
+        if len(digits) not in {6, 7}:
+            continue
+        function_code = normalize_space(str(unit.get("function_code") or ""))[:64]
+        function_name = normalize_space(str(unit.get("function_name") or ""))[:180]
+        station_name = normalize_space(str(unit.get("station_name") or ""))[:160]
+        inferred_code, inferred_name = fire_vehicle_type(function_name or function_code, digits)
+        type_code = function_code or inferred_code
+        label = function_name or inferred_name
+        display = " • ".join(x for x in (type_code, label, station_name) if x)
+        catalog[digits] = {
+            "lookup_key": str(unit.get("lookup_key") or lookup),
+            "callsign": normalize_space(str(unit.get("callsign") or format_vehicle_callsign(digits)))[:40],
+            "type": type_code,
+            "label": label,
+            "station": station_name,
+            "display": display or label or type_code or "Brandweervoertuig",
+            "region": normalize_space(str(unit.get("region_code") or digits[:2]))[:32],
+            "function_code": type_code,
+            "function_name": label,
+            "station_name": station_name,
+            "source": "SW Mediaproducties Roepnummer API",
+            "verified": unit.get("verified"),
+            "api_primary": True,
+        }
+    return catalog
 
 
 def sanitize_vehicle_override(payload: dict) -> tuple[str, dict]:
@@ -675,8 +965,16 @@ def load_vehicle_catalog(config: dict | None = None) -> tuple[dict[str, dict], d
             catalog.update(vehicles)
         if meta:
             metas[code] = meta
-    # User corrections are deliberately applied last and therefore always win
-    # over both online sources and the bundled seed.
+    # SW Mediaproducties is the primary exact catalogue. The older regional
+    # caches/seed above remain available when its cache is empty or stale.
+    sw_units, sw_meta = load_sw_vehicle_cache()
+    sw_catalog = sw_units_to_vehicle_catalog(sw_units)
+    if wanted:
+        sw_catalog = {k: v for k, v in sw_catalog.items() if k[:2] in wanted or k[:2] in {"26", "28"}}
+    catalog.update(sw_catalog)
+    if sw_meta:
+        metas["sw-api"] = sw_meta
+    # User corrections remain the final authority for exceptional local fixes.
     catalog.update(load_vehicle_overrides())
     return catalog, metas
 
@@ -2544,6 +2842,25 @@ class AppState:
             "running": False, "last_started": None, "last_finished": None, "last_error": None,
             "regions": {}, "count": len(self.vehicle_catalog),
         }
+        self.sw_vehicle_sync_lock = threading.Lock()
+        self.sw_vehicle_cache_lock = threading.RLock()
+        self.sw_resolve_lock = threading.RLock()
+        self.sw_resolve_inflight: set[str] = set()
+        self.sw_resolve_retry_after: dict[str, float] = {}
+        sw_units, sw_meta = load_sw_vehicle_cache()
+        self.sw_vehicle_status: dict = {
+            "running": False,
+            "online": None,
+            "key_valid": None,
+            "key_configured": bool(read_sw_api_key()),
+            "unit_count": len(sw_units),
+            "last_started": None,
+            "last_sync": sw_meta.get("updated_at"),
+            "last_error": None,
+            "last_http_status": None,
+            "pages": sw_meta.get("pages"),
+            "source": "SW Mediaproducties Roepnummer API",
+        }
         self.started_monotonic = time.monotonic()
         self.api_requests = 0
         self.api_errors = 0
@@ -2970,7 +3287,8 @@ class AppState:
                 "selected_regions": selected_fire_region_codes(self.config),
                 "region_meta": metas,
                 "override_count": len(load_vehicle_overrides()),
-                "source": "handmatige overrides + Brandbase-regiocache + landelijke nummerplan-fallback",
+                "source": "handmatige overrides + SW Mediaproducties Roepnummer API + regionale/hardcoded fallback",
+                "sw_api": self.sw_api_status_view(),
             },
             "vehicles": vehicles,
         }
@@ -2985,6 +3303,8 @@ class AppState:
             status["region_meta"] = dict(self.vehicle_region_meta)
             status["force_pending"] = bool(self.vehicle_sync_force_pending)
             status["override_count"] = len(load_vehicle_overrides())
+        status["sw_api"] = self.sw_api_status_view()
+        status["running"] = bool(status.get("running") or status["sw_api"].get("running"))
         return status
 
     def vehicle_overrides_view(self) -> dict:
@@ -3054,12 +3374,221 @@ class AppState:
             return dict(row) if row else None
 
     def _refresh_vehicle_catalog(self):
+        global KNOWN_FIRE_VEHICLE_KEYS
         catalog, metas = load_vehicle_catalog(self.config)
         with self.vehicle_catalog_lock:
             self.vehicle_catalog = catalog
             self.vehicle_region_meta = metas
             self.known_vehicle_keys = set(catalog)
+            KNOWN_FIRE_VEHICLE_KEYS = set(catalog)
             self.vehicle_sync_status["count"] = len(catalog)
+
+    def sw_api_status_view(self) -> dict:
+        with self.sw_vehicle_cache_lock:
+            status = dict(self.sw_vehicle_status)
+        status["key_configured"] = bool(read_sw_api_key())
+        status["base_url"] = SW_ROEPNUMMER_API_BASE
+        status["sync_interval_seconds"] = SW_ROEPNUMMER_SYNC_SECONDS
+        status["secret_storage"] = "Windows DPAPI" if os.name == "nt" else "backend-only 0600-bestand"
+        return status
+
+    def sw_api_config_view(self) -> dict:
+        status = self.sw_api_status_view()
+        return {
+            "base_url": SW_ROEPNUMMER_API_BASE,
+            "key_configured": status.get("key_configured", False),
+            "key_valid": status.get("key_valid"),
+            "secret_storage": status.get("secret_storage"),
+            "sync_interval_seconds": SW_ROEPNUMMER_SYNC_SECONDS,
+        }
+
+    def save_sw_api_config(self, payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            raise ValueError("Ongeldige API-instellingen")
+        if bool(payload.get("clear_key")):
+            write_sw_api_key("")
+            with self.sw_vehicle_cache_lock:
+                self.sw_vehicle_status.update({"key_configured": False, "key_valid": None, "last_error": None})
+            return self.sw_api_config_view()
+        if "api_key" in payload:
+            api_key = str(payload.get("api_key") or "").strip()
+            if not api_key:
+                raise ValueError("API-key is leeg")
+            if len(api_key) > 512:
+                raise ValueError("API-key is te lang")
+            write_sw_api_key(api_key)
+            with self.sw_vehicle_cache_lock:
+                self.sw_vehicle_status.update({"key_configured": True, "key_valid": None, "last_error": None})
+            self.start_sw_vehicle_api_sync(force=True)
+        return self.sw_api_config_view()
+
+    def _sw_api_json(self, path: str, params: dict | None = None, *, timeout: float = SW_ROEPNUMMER_TIMEOUT_SECONDS):
+        api_key = read_sw_api_key()
+        if not api_key:
+            raise RuntimeError("SW Mediaproducties API-key is niet ingesteld")
+        url = f"{SW_ROEPNUMMER_API_BASE.rstrip('/')}/{path.lstrip('/')}"
+        if params:
+            url += "?" + urlencode({k: v for k, v in params.items() if v is not None})
+        req = urllib.request.Request(url, headers={
+            "X-API-Key": api_key,
+            "Accept": "application/json",
+            "User-Agent": f"P2000-Lichtkrant/{APP_VERSION}",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                status = int(getattr(resp, "status", 200) or 200)
+                raw = resp.read(8_000_000)
+            return json.loads(raw.decode("utf-8", "replace") or "null"), status
+        except urllib.error.HTTPError as exc:
+            # Preserve status without ever echoing request headers/API key.
+            raise RuntimeError(f"HTTP {exc.code}") from exc
+
+    def sync_sw_vehicle_api(self, force: bool = False) -> dict:
+        if not self.sw_vehicle_sync_lock.acquire(blocking=False):
+            return self.sw_api_status_view()
+        started = utcnow_iso()
+        try:
+            key = read_sw_api_key()
+            with self.sw_vehicle_cache_lock:
+                self.sw_vehicle_status.update({
+                    "running": True, "last_started": started, "last_error": None,
+                    "key_configured": bool(key),
+                })
+            if not key:
+                with self.sw_vehicle_cache_lock:
+                    self.sw_vehicle_status.update({"running": False, "online": None, "key_valid": None, "last_error": "API-key niet ingesteld"})
+                return self.sw_api_status_view()
+            units: dict[str, dict] = {}
+            page = 1
+            pages = 0
+            last_http = None
+            while page and pages < SW_ROEPNUMMER_MAX_PAGES and not self.stop_event.is_set():
+                payload, status = self._sw_api_json("units", {"page": page, "limit": SW_ROEPNUMMER_PAGE_LIMIT})
+                last_http = status
+                rows = extract_sw_units_payload(payload)
+                for row in rows:
+                    lookup, unit = canonical_sw_unit(row)
+                    if lookup and unit:
+                        units[lookup] = unit
+                pages += 1
+                more, next_page = sw_payload_has_more(payload, page, len(rows), SW_ROEPNUMMER_PAGE_LIMIT)
+                if not more:
+                    break
+                if pages >= SW_ROEPNUMMER_MAX_PAGES:
+                    raise RuntimeError("API-paginering overschrijdt de veiligheidslimiet; bestaande cache behouden")
+                page = next_page or (page + 1)
+            if not units:
+                raise RuntimeError("API gaf geen herkenbare eenheden terug")
+            meta = {
+                "updated_at": utcnow_iso(), "count": len(units), "pages": pages,
+                "source": "SW Mediaproducties Roepnummer API", "base_url": SW_ROEPNUMMER_API_BASE,
+            }
+            with self.sw_vehicle_cache_lock:
+                old_units, _old_meta = load_sw_vehicle_cache()
+                # Record only meaningful changes for callsigns used by the display.
+                old_catalog = sw_units_to_vehicle_catalog(old_units)
+                new_catalog = sw_units_to_vehicle_catalog(units)
+                for digits in sorted(set(old_catalog) | set(new_catalog)):
+                    if old_catalog.get(digits) != new_catalog.get(digits):
+                        append_vehicle_history(digits, old_catalog.get(digits), new_catalog.get(digits), "SW Mediaproducties API sync")
+                write_sw_vehicle_cache(units, meta)
+                self.sw_vehicle_status.update({
+                    "running": False, "online": True, "key_valid": True, "unit_count": len(units),
+                    "last_sync": meta["updated_at"], "last_error": None, "last_http_status": last_http, "pages": pages,
+                })
+            self._refresh_vehicle_catalog()
+            self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
+            return self.sw_api_status_view()
+        except Exception as exc:
+            message = str(exc)[:500]
+            code_match = re.search(r"HTTP\s+(\d{3})", message)
+            code = int(code_match.group(1)) if code_match else None
+            with self.sw_vehicle_cache_lock:
+                cached, meta = load_sw_vehicle_cache()
+                self.sw_vehicle_status.update({
+                    "running": False,
+                    "online": bool(code),
+                    "key_valid": False if code in {401, 403} else self.sw_vehicle_status.get("key_valid"),
+                    "unit_count": len(cached),
+                    "last_sync": meta.get("updated_at") or self.sw_vehicle_status.get("last_sync"),
+                    "last_error": message,
+                    "last_http_status": code,
+                })
+            # Important: never replace/remove the previous cache on timeout/error.
+            self._refresh_vehicle_catalog()
+            self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
+            return self.sw_api_status_view()
+        finally:
+            self.sw_vehicle_sync_lock.release()
+
+    def start_sw_vehicle_api_sync(self, force: bool = False):
+        threading.Thread(target=self.sync_sw_vehicle_api, kwargs={"force": force}, daemon=True, name="sw-vehicle-api-sync").start()
+
+    def _cache_sw_resolved_unit(self, row: dict) -> dict | None:
+        lookup, unit = canonical_sw_unit(row)
+        if not lookup or not unit:
+            return None
+        with self.sw_vehicle_cache_lock:
+            units, meta = load_sw_vehicle_cache()
+            units[lookup] = unit
+            meta = dict(meta)
+            meta["updated_at"] = utcnow_iso()
+            meta["count"] = len(units)
+            meta["source"] = "SW Mediaproducties Roepnummer API"
+            write_sw_vehicle_cache(units, meta)
+            self.sw_vehicle_status.update({"online": True, "key_valid": True, "unit_count": len(units), "last_error": None})
+        self._refresh_vehicle_catalog()
+        self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
+        digits = normalize_vehicle_digits(str(unit.get("callsign") or unit.get("lookup_key") or lookup))
+        return self.vehicle_catalog.get(digits) if digits else None
+
+    def resolve_sw_vehicle(self, callsign: str) -> dict | None:
+        lookup = normalize_sw_lookup_key(callsign)
+        if not lookup:
+            return None
+        cached, _ = load_sw_vehicle_cache()
+        if lookup in cached:
+            digits = normalize_vehicle_digits(str(cached[lookup].get("callsign") or cached[lookup].get("lookup_key") or lookup))
+            return self.vehicle_catalog.get(digits) if digits else None
+        payload, status = self._sw_api_json(
+            "resolve", {"callsign": callsign, "source": "lichtkrant"}, timeout=SW_ROEPNUMMER_RESOLVE_TIMEOUT_SECONDS
+        )
+        row = extract_sw_resolve_unit(payload)
+        with self.sw_vehicle_cache_lock:
+            self.sw_vehicle_status.update({"online": True, "key_valid": True, "last_http_status": status})
+        return self._cache_sw_resolved_unit(row) if row else None
+
+    def queue_sw_vehicle_resolve(self, callsign: str) -> None:
+        lookup = normalize_sw_lookup_key(callsign)
+        if not lookup or not read_sw_api_key():
+            return
+        cached, _ = load_sw_vehicle_cache()
+        if lookup in cached:
+            return
+        now = time.monotonic()
+        with self.sw_resolve_lock:
+            if lookup in self.sw_resolve_inflight or now < float(self.sw_resolve_retry_after.get(lookup, 0.0)):
+                return
+            self.sw_resolve_inflight.add(lookup)
+        def worker():
+            try:
+                self.resolve_sw_vehicle(callsign)
+            except Exception as exc:
+                msg = str(exc)[:300]
+                code_match = re.search(r"HTTP\s+(\d{3})", msg)
+                code = int(code_match.group(1)) if code_match else None
+                with self.sw_vehicle_cache_lock:
+                    self.sw_vehicle_status.update({
+                        "online": bool(code),
+                        "key_valid": False if code in {401, 403} else self.sw_vehicle_status.get("key_valid"),
+                        "last_error": msg, "last_http_status": code,
+                    })
+                with self.sw_resolve_lock:
+                    self.sw_resolve_retry_after[lookup] = time.monotonic() + 60.0
+            finally:
+                with self.sw_resolve_lock:
+                    self.sw_resolve_inflight.discard(lookup)
+        threading.Thread(target=worker, daemon=True, name=f"sw-resolve-{lookup[:16]}").start()
 
     def _fetch_vehicle_url(self, url: str, timeout: float = 6.0) -> str:
         req = urllib.request.Request(url, headers={
@@ -4196,6 +4725,8 @@ class AppState:
                 continue
             if digits in self.known_vehicle_keys:
                 continue
+            # Resolve one-off misses against SW without blocking RSS ingestion.
+            self.queue_sw_vehicle_resolve(callsign)
             now = message.published or utcnow_iso()
             line = raw_line_for_callsign(message, digits)
             con.execute(
@@ -4394,6 +4925,21 @@ class AppState:
         with self.sub_lock:
             if q in self.subscribers:
                 self.subscribers.remove(q)
+
+
+class SWVehicleApiWorker(threading.Thread):
+    daemon = True
+
+    def __init__(self, state: AppState):
+        super().__init__(name="sw-vehicle-api-worker")
+        self.state = state
+
+    def run(self):
+        # Full download immediately after backend startup, then every five minutes.
+        while not self.state.stop_event.is_set():
+            self.state.sync_sw_vehicle_api(force=False)
+            if self.state.stop_event.wait(SW_ROEPNUMMER_SYNC_SECONDS):
+                break
 
 
 class FeedPoller(threading.Thread):
@@ -6718,9 +7264,23 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": False, "error": str(exc)}, 400)
             except Exception as exc:
                 return self.send_json({"ok": False, "error": str(exc)}, 500)
+        if parsed.path == "/api/roepnummer-api/config":
+            try:
+                return self.send_json({"ok": True, "config": self.state.save_sw_api_config(payload), "status": self.state.sw_api_status_view()})
+            except ValueError as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 400)
+            except Exception as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 500)
+        if parsed.path == "/api/roepnummer-api/sync":
+            self.state.start_sw_vehicle_api_sync(force=True)
+            return self.send_json({"ok": True, "status": self.state.sw_api_status_view()})
         if parsed.path == "/api/vehicles/sync":
             force = bool(payload.get("force", True))
-            self.state.start_vehicle_sync(force=force)
+            self.state.start_sw_vehicle_api_sync(force=force)
+            # Legacy regional sources are fallback only. Do not hammer those on
+            # every manual refresh when an SW API key is configured.
+            if not read_sw_api_key():
+                self.state.start_vehicle_sync(force=force)
             return self.send_json({"ok": True, "status": self.state.vehicle_sync_view()})
         if parsed.path == "/api/vehicle-overrides/upsert":
             try:
@@ -6893,6 +7453,10 @@ class Handler(BaseHTTPRequestHandler):
             })
         if parsed.path == "/api/setup":
             return self.send_json({"ok": True, "setup": self.state.setup_view()})
+        if parsed.path == "/api/roepnummer-api/config":
+            return self.send_json({"ok": True, "config": self.state.sw_api_config_view(), "status": self.state.sw_api_status_view()})
+        if parsed.path == "/api/roepnummer-api/status":
+            return self.send_json({"ok": True, "status": self.state.sw_api_status_view()})
         if parsed.path == "/api/vehicles":
             return self.send_json(self.state.vehicle_catalog_payload())
         if parsed.path == "/api/vehicles/status":
@@ -7256,10 +7820,15 @@ def main():
     else:
         state.feed_status = "disabled"
 
-    # Vehicle sync is intentionally asynchronous. The monitor is usable within
-    # milliseconds with the local seed/number plan while selected regional exact
-    # labels are refreshed quietly in the background.
-    state.start_vehicle_sync(force=False)
+    # SW Mediaproducties is the primary vehicle source. Its last local cache is
+    # loaded synchronously above, while a full authenticated refresh happens in
+    # the background immediately and then every five minutes. Legacy regional
+    # sources remain an asynchronous fallback and never block the lichtkrant.
+    SWVehicleApiWorker(state).start()
+    # Legacy online sources are fallback-only once the SW API is configured.
+    # Their existing local shards and bundled seed remain available at all times.
+    if not read_sw_api_key():
+        state.start_vehicle_sync(force=False)
     threading.Thread(target=github_update_worker, args=(state,), daemon=True, name="github-update-worker").start()
     threading.Thread(target=github_settings_worker, args=(state,), daemon=True, name="github-settings-worker").start()
 

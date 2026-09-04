@@ -1,8 +1,20 @@
-# P2000 Monitor — MultiPlatform v4.4.5
+# P2000 Monitor — MultiPlatform v4.4.6
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+
+## Nieuw in v4.4.6 — SW Mediaproducties Roepnummer API
+
+- Primaire roepnummerbron: `https://swmediaproducties.nl/roepnummers-api/v1`.
+- Backend-authenticatie via `X-API-Key`; de key wordt nooit naar de lichtkrantfrontend of GitHub-settings teruggestuurd.
+- Volledige `/units?page=N&limit=500` synchronisatie direct bij opstarten en daarna iedere 5 minuten.
+- Lokale cache in `data/vehicles/swmediaproducties.json`; bij storing blijft de laatst geldige cache actief.
+- Onbekende roepnummers worden asynchroon opgezocht via `/resolve?callsign=...&source=lichtkrant`.
+- `lookup_key` wordt genormaliseerd zodat `209471` en `20-9471` dezelfde eenheid vinden.
+- Beheer toont API online, geldigheid van de key, aantal SW-eenheden en laatste synchronisatie.
+- Handmatige overrides blijven winnen; Brandbase/Hulpdienst/seed blijven als fallback aanwezig.
+
 
 ## Hotfix v4.4.5 — updater + schermwissel
 
@@ -165,7 +177,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.5.zip
+P2000_Monitor_MultiPlatform_v4.4.6.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.

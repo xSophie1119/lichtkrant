@@ -194,15 +194,24 @@
       <p id="testStatus" class="hint">Live preview gebruikt exact dezelfde parser als de lichtkrant. Tests worden niet als echte P2000-melding opgeslagen.</p>
     </section>
 
-    <section class="control-card">
-      <div class="panel-head compact"><div><span class="eyebrow">VOERTUIGEN</span><h3>Roepnummerdatabase</h3></div><button id="syncVehiclesBtn" class="secondary-btn">Nu bijwerken</button></div>
+    <section class="control-card wide" id="roepnummerApiCard">
+      <div class="panel-head compact"><div><span class="eyebrow">VOERTUIGEN</span><h3>SW Mediaproducties Roepnummer API</h3></div><button id="syncVehiclesBtn" class="secondary-btn">Nu synchroniseren</button></div>
       <div class="status-grid compact-grid">
-        <div><dt>Bekend</dt><dd id="vehicleCount">—</dd></div>
+        <div><dt>API</dt><dd id="swApiOnline">—</dd></div>
+        <div><dt>API-key</dt><dd id="swApiKeyStatus">—</dd></div>
+        <div><dt>SW-eenheden</dt><dd id="swApiUnitCount">—</dd></div>
+        <div><dt>Laatste sync</dt><dd id="swApiLastSync">—</dd></div>
+        <div><dt>Totaal bekend</dt><dd id="vehicleCount">—</dd></div>
         <div><dt>Versie</dt><dd id="vehicleVersion">—</dd></div>
-        <div><dt>Regio-cache</dt><dd id="vehicleRegionStatus">—</dd></div>
+        <div><dt>Fallback-cache</dt><dd id="vehicleRegionStatus">—</dd></div>
       </div>
-      <p id="vehicleSyncDetail" class="hint">De regionale voertuigcache wordt op de achtergrond bijgewerkt. Hier verschijnt de gebruikte bron of een concrete foutmelding.</p>
-      <p class="hint">Bronvolgorde: handmatige correctie → regionale online cache → statische/landelijke fallback. Handmatige correcties winnen altijd.</p>
+      <div class="two-col">
+        <label class="field"><span>API-key</span><input id="swApiKeyInput" type="password" maxlength="512" autocomplete="new-password" placeholder="Nieuwe API-key invoeren"><small id="swApiSecretHint">De key blijft backend-only en wordt nooit naar GitHub of de lichtkrantfrontend gestuurd.</small></label>
+        <label class="field"><span>Base URL</span><input id="swApiBaseUrl" type="text" value="https://swmediaproducties.nl/roepnummers-api/v1" readonly><small>Vaste API voor de Lichtkrant. Synchronisatie: iedere 5 minuten.</small></label>
+      </div>
+      <div class="button-row"><button id="saveSwApiKeyBtn" class="primary-btn" type="button">API-key opslaan & testen</button><button id="clearSwApiKeyBtn" class="secondary-btn" type="button">API-key verwijderen</button></div>
+      <p id="vehicleSyncDetail" class="hint">SW Mediaproducties is de primaire roepnummerbron. Bij storing blijft de laatst geldige lokale cache actief.</p>
+      <p class="hint">Bronvolgorde: handmatige correctie → SW Mediaproducties API/cache → regionale online cache → meegeleverde hardcoded fallback.</p>
       <details><summary>Laatste wijzigingen in voertuigdatabase</summary><div id="vehicleHistoryList" class="vehicle-history"><div class="history-row">laden…</div></div></details>
     </section>
 

@@ -1,4 +1,4 @@
-# P2000 Monitor lokale API — v4.4.5
+# P2000 Monitor lokale API — v4.4.6
 
 De API is op Windows en Linux gelijk en luistert standaard op poort `8765`.
 
@@ -21,3 +21,16 @@ Belangrijkste endpoints:
 - `POST /api/system/restart` — backend zelf herstarten.
 
 Browsermutaties met gevolgen worden alleen vanaf lokale/private clients en same-origin browserrequests geaccepteerd waar van toepassing.
+
+
+## SW Mediaproducties Roepnummer API-integratie
+
+De externe API-key is uitsluitend backend-side. De lokale control-API geeft nooit de key zelf terug.
+
+- `GET /api/roepnummer-api/config` — base URL, key ingesteld ja/nee, opslagmethode en synchronisatie-interval.
+- `GET /api/roepnummer-api/status` — online-status, geldigheid API-key, aantal geladen eenheden, laatste sync en foutstatus.
+- `POST /api/roepnummer-api/config` met `{ "api_key": "..." }` — key veilig opslaan en direct synchroniseren.
+- `POST /api/roepnummer-api/config` met `{ "clear_key": true }` — key verwijderen; bestaande voertuigcache blijft behouden.
+- `POST /api/roepnummer-api/sync` — handmatige volledige synchronisatie starten.
+
+Extern gebruikt de backend `X-API-Key`, `/units?page=N&limit=500` en voor cache-misses `/resolve?callsign={roepnummer}&source=lichtkrant`.

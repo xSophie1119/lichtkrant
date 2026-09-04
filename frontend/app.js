@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.5';
+const CLIENT_VERSION='4.4.6';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -290,6 +290,13 @@ async function loadVehicleDb(){
     console.warn('Voertuigdatabase niet geladen; nummerplan-fallback actief',e);
   }
 }
+function vehicleDisplayLabel(v){
+  if(!v)return '';
+  if(v.api_primary||String(v.source||'').includes('SW Mediaproducties')){
+    return [v.function_code||v.type,v.function_name||v.label,v.station_name||v.station].map(x=>String(x||'').trim()).filter(Boolean).join(' • ');
+  }
+  return String(v.display||[v.type,v.station].filter(Boolean).join(' '));
+}
 function vehicleSpeechLabel(v){
   if(!v)return '';
   const type=String(v.type||'').toUpperCase();
@@ -332,7 +339,7 @@ function vehicleDetails(m){
   for(const match of hay.matchAll(/(?<!\d)(\d{2})[- ](\d{2})[- ](\d{3})(?!\d)/g)){
     const digits=`${match[1]}${match[2]}${match[3]}`,v=vehicleByDigits(digits),callsign=v?.callsign||`${match[1]}-${match[2]}-${match[3]}`;
     if(!fireService&&!v)continue;
-    if(v){const type=String(v.type||'BRW').toUpperCase();add(digits,`${callsign} - ${v.display||[v.type,v.station].filter(Boolean).join(' ')}`,vehicleSpeechLabel(v),{type,station:v.station||''})}
+    if(v){const type=String(v.type||'BRW').toUpperCase();add(digits,`${callsign} - ${vehicleDisplayLabel(v)}`,vehicleSpeechLabel(v),{type,station:v.station||''})}
     else add(digits,`${callsign} - Brandweer ${FIRE_REGION_LABELS[match[1]]||''}`.trim(),`brandweervoertuig ${FIRE_REGION_LABELS[match[1]]||''}`.trim(),{type:'BRW'});
   }
   for(const match of hay.matchAll(/(?<!\d)(\d{2})[- ]?(\d{4})(?!\d)/g)){
@@ -340,7 +347,7 @@ function vehicleDetails(m){
     if(!fireService&&!exact)continue;
     const v=exact||inferredFireVehicle(digits),callsign=v?.callsign||`${match[1]}-${match[2]}`;
     if(v){
-      let header=`${callsign} - ${v.display||[v.type,v.station].filter(Boolean).join(' ')}`;
+      let header=`${callsign} - ${vehicleDisplayLabel(v)}`;
       let speech=vehicleSpeechLabel(v);
       if(digits==='200064'&&/\bASS\.?\s*AMBU\s*\(\s*REDDINGSKUSSEN\s*\)/i.test(norm(hay))){header=`${callsign} - Sprongredder Breda`;speech='sprongredder Breda'}
       const type=String(v.type||'').toUpperCase();
@@ -353,7 +360,7 @@ function vehicleDetails(m){
     const digits=`${match[1]}${match[2]}`,v=vehicleByDigits(digits),callsign=v?.callsign||`${match[1]}-${match[2]}`;
     if(v){
       const type=String(v.type||'AMB').toUpperCase();
-      add(digits,`${callsign} - ${v.display||[v.type,v.station].filter(Boolean).join(' ')}`,vehicleSpeechLabel(v),{type,station:v.station||''});
+      add(digits,`${callsign} - ${vehicleDisplayLabel(v)}`,vehicleSpeechLabel(v),{type,station:v.station||''});
     }else add(digits,`${callsign} - Ambulance`,'ambulance',{type:'AMB'});
   }
   for(const raw of (m?.units||[])){
@@ -1483,7 +1490,7 @@ async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.di
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
 async function refresh(){try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){const ordered=[...state.messages].sort((a,b)=>-compareMessageNewest(a,b));ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m)});state.started=true;considerLatestAtStartup()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds();freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(m=>{if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)})}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}}
 function incoming(m){if(!m||state.knownIds.has(m.id))return;state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
-function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb()}else if(p.type==='test'){handleTest(p.payload||{})}else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
+function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'){handleTest(p.payload||{})}else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
 function tick(){
   const now=Date.now();
