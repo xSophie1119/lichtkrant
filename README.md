@@ -1,8 +1,18 @@
-# P2000 Monitor — MultiPlatform v4.4.2
+# P2000 Monitor — MultiPlatform v4.4.3
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+
+## Nieuw in v4.4.3 — 112-nu + landelijke parser + eigen rustscherm
+
+- **112-nu.nl** is toegevoegd als optionele landelijke racebron (`https://112-nu.nl/hulpdiensten/rss`). Eén request per pollcyclus racet tegen de bestaande feeds; dezelfde ruwe P2000-regel wordt bron-onafhankelijk gededupliceerd.
+- De lichtkrant toont standaard de **originele P2000-regel groot**. De samengevatte incidentweergave blijft als optie beschikbaar.
+- Regionale brandweerkanaalcodes zoals `BZB-01`, `BNH-01`, `BGM-01`, `Sxx-..` en `KAZ-..` worden als kanaalmetadata herkend en niet uitgesproken als locatie.
+- Rijkswegspraak begrijpt o.a. `Li` = links, `Re` = rechts, `Kp` = knooppunt en `St.` = Sint. De originele tekst op het scherm blijft ongewijzigd.
+- Het rustscherm heeft een eigen builder met gecentreerd, links, split of minimaal ontwerp, eigen kop/onderregel, klokgrootte en schakelaars voor datum/seconden/status.
+- Brandweerregio kan landelijk uit het eerste twee-cijferige roepnummer worden afgeleid wanneer een nationale RSS-feed geen regio meestuurt.
+
 
 ## Linux-start hotfix v4.4.2
 
@@ -145,7 +155,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.2.zip
+P2000_Monitor_MultiPlatform_v4.4.3.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.

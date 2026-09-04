@@ -26,6 +26,15 @@
     "nightStart": "23:00",
     "nightEnd": "07:00",
     "backgroundStyle": "black",
-    "kioskMonitor": "primary"
+    "kioskMonitor": "primary",
+    "messageDisplayMode": "raw",
+    "idleLayout": "center",
+    "idleHeadline": "",
+    "idleSubline": "P2000 MELDINGEN HEBBEN DIRECT VOORRANG",
+    "idleShowName": true,
+    "idleShowDate": true,
+    "idleShowSeconds": true,
+    "idleShowStatus": true,
+    "idleClockScale": 100
   }
 }

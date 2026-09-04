@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# P2000 Monitor Linux launcher - v4.4.2
+# P2000 Monitor Linux launcher - v4.4.3
 set -u
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.2')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.3')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
 BASE_RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" ]]; then BASE_RUNTIME=/tmp; fi

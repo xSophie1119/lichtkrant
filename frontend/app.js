@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.2';
+const CLIENT_VERSION='4.4.3';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -16,7 +16,7 @@ const DEFAULTS={
   services:['brandweer','ambulance','politie','lifeliner','knrm'],
   cities:[],keywords:[],
   nightMode:true,nightStart:'23:00',nightEnd:'07:00',
-  idleStyle:'normal',idleDimEnabled:true,idleDimStart:'21:30',idleDimEnd:'07:00',idleDimMin:0.42,
+  idleStyle:'normal',idleLayout:'center',idleHeadline:'',idleSubline:'P2000 MELDINGEN HEBBEN DIRECT VOORRANG',idleShowName:true,idleShowDate:true,idleShowSeconds:true,idleShowStatus:true,idleClockScale:100,messageDisplayMode:'raw',idleDimEnabled:true,idleDimStart:'21:30',idleDimEnd:'07:00',idleDimMin:0.42,
   idleSunsetDim:false,idleDimEarliest:'20:30',smartSilenceEnabled:true,smartSilenceMinutes:30,postIncidentQuietEnabled:true,postIncidentQuietSeconds:20,
   messageMinutes:3,maxAgeMinutes:5,
   dateFormat:'dd-mm-yyyy',idleCentered:true,
@@ -237,7 +237,8 @@ function latestMessage(){return filteredMessages()[0]||null}
 function cleanCandidate(value,m){let s=norm(value||'');const ll=llNumber(m),ovd=ovdgNumber(m);s=s.replace(/\(\s*DIA\s*:\s*(?:JA|NEE)\s*\)/g,' ').replace(/\bDIA\s*:?\s*(?:JA|NEE)?\b/g,' ');s=s.replace(/\b(?:P\s*[123]|A[012]|B[12])\b/g,' ');s=s.replace(/\b(?:AMBU|AMBULANCE|BRW|BRANDWEER|POLITIE|P2000)\b/g,' ');s=s.replace(/\b(?:RIT|BON)\s*:?\s*\d+\b/g,' ').replace(/\bREGIO\s*\d+\b/g,' ');s=s.replace(/\b\d{4}\s*[A-Z]{2}\b/g,' ');s=s.replace(/\b(?:13991|13901|17992|17902|17901|08993|08903|1220803|1220804|1220805)\b/g,' ');s=s.replace(/\b12[- ]?2080[345]\b/g,' ');s=s.replace(/\b[A-Z]{2,5}-\d{2}\b/g,' ');s=s.replace(/\b\d{5,8}\b/g,' ');s=s.replace(/\b(?:INZET|MELDING)\b(?=\s*$)/g,' ');s=s.replace(/\s+/g,' ').trim();if(ovd){s=s.replace(/\bOVD-?G\b/g,' ').replace(/\s+/g,' ').trim();s=`OVD-G ${ovd} ${s}`}if(ll&&!s.includes(`LIFELINER ${ll}`))s=`LIFELINER ${ll} ${s.replace(/\bMMT\s*(?:2|3)?\b/g,' ')}`;for(let i=0;i<3;i++)s=s.replace(/\b([A-Z0-9-]{2,})\s+\1\b/g,'$1');return norm(s)}
 function cleanedCore(m){const title=cleanCandidate(m.title,m);const summary=cleanCandidate(m.summary,m);const generic=/^(?:MMT|LIFELINER [23])?(?: INZET)?$/;let s=title;if(summary&&!generic.test(summary)&&summary.length>title.length*.7){const titleWords=new Set(title.split(' '));const overlap=summary.split(' ').filter(w=>titleWords.has(w)).length;if(overlap>=Math.min(3,summary.split(' ').length))s=title.length>=summary.length?title:summary}return s||summary||norm(m.city||'MELDING')}
 function rawScore(value){const s=norm(value||'');if(!s)return -999;let score=0;if(/^(?:P\s*[123]|A[012]|B[12])\b/.test(s))score+=8;if(/\b(?:B[A-Z]{2}-\d+|DIA|RIT\s*:|DIRECTE INZET|BR\s|OMS\s|MELDKAMER|OC\s|GRIP\s*[1-5])\b/.test(s))score+=5;if(/\b(?:\d{6,8}|\d{5,6})\b/.test(s))score+=3;if(/\b(?:TS|HV|HW|AL|RV|OVD|HOVD|AGS|VEBS|WTS?|WTH|MMT|AMBU?)?[- ]?\d{5,6}\b/.test(s))score+=2;if(/\b(?:MET SPOED NAAR|GEALARMEERD VOOR INCIDENT|ONGEVAL MET LETSEL OP|BRAND OP)\b/.test(s))score-=7;if(/^(?:AMBULANCE|BRANDWEER|TRAUMAHELI) MET SPOED/.test(s))score-=8;return score}
-function originalMessage(m){const title=norm(m.title||''),summary=norm(m.summary||'');const ts=rawScore(title),ss=rawScore(summary);if(ss>ts)return summary;if(ts>ss)return title;if(summary&&summary!==title){if(summary.length>title.length*1.25)return summary}return title||summary||norm(m.city||'MELDING')}
+function rawDisplayText(v){return String(v??'').replace(/[\r\n\t]+/g,' ').replace(/\s+/g,' ').trim()}
+function originalMessage(m){const title=rawDisplayText(m?.title||''),summary=rawDisplayText(m?.summary||''),titleNorm=norm(title),summaryNorm=norm(summary);if(/^(?:P\s*[1-5]|PRIO\s*[1-5]|A[012]|B[12])\b/i.test(title))return title;const ts=rawScore(titleNorm),ss=rawScore(summaryNorm);if(ss>ts)return summary;if(ts>ss)return title;if(summary&&summary!==title&&summary.length>title.length*1.25)return summary;return title||summary||rawDisplayText(m?.city||'MELDING')}
 
 // De meegeleverde JSON is slechts een optionele seed-cache. Onbekende landelijke
 // brandweerroepnummers blijven generiek leesbaar en worden in Diagnose verzameld,
@@ -475,8 +476,15 @@ function stormDamageType(m){
 }
 function naturalRoadSpeechLocation(v){
   let s=String(v||'').trim();
-  s=s.replace(/\b([AN]\d{1,3})\s+li\s+(\d{1,3})[,.](\d)\b/i,'$1 links hectometer $2 komma $3');
-  s=s.replace(/\b([AN]\d{1,3})\s+re\s+(\d{1,3})[,.](\d)\b/i,'$1 rechts hectometer $2 komma $3');
+  // Rijkswegnotatie is landelijk compact. Spreek de betekenis uit zonder de
+  // originele P2000-regel op het scherm te herschrijven.
+  s=s.replace(/\b([AN]\d{1,3})\s+li\s+(\d{1,3})[,.](\d)\b/ig,'$1 links hectometer $2 komma $3');
+  s=s.replace(/\b([AN]\d{1,3})\s+re\s+(\d{1,3})[,.](\d)\b/ig,'$1 rechts hectometer $2 komma $3');
+  s=s.replace(/\b([AN]\d{1,3})\s+li\b/ig,'$1 links');
+  s=s.replace(/\b([AN]\d{1,3})\s+re\b/ig,'$1 rechts');
+  s=s.replace(/(^|[\s-])kp\.?\s+/ig,'$1knooppunt ');
+  s=s.replace(/\bst\.\s*(?=[a-zà-ÿ])/ig,'Sint ');
+  s=s.replace(/\s+-\s+/g,' - ').replace(/\s+/g,' ').trim();
   return s;
 }
 function contextualFireType(m,base){
@@ -653,7 +661,7 @@ function speechLocation(m,info=speechIncidentInfo(m),city=speechCity(m)){
     .replace(/^\s*(?:P\s*[123]|A[012]|B[12])\b\s*/i,' ')
     .replace(/^\s*\(\s*DIA(?:\s*:\s*(?:JA|NEE))?\s*\)\s*/i,' ')
     .replace(/^\s*DIA(?:\s*:\s*(?:JA|NEE))?\b\s*/i,' ')
-    .replace(/\bB[A-Z]{2}-\d+\b/ig,' ')
+    .replace(/\b(?:B[A-Z]{2}|S[A-Z]{2}|KAZ)-\d{1,3}\b/ig,' ')
     .replace(/\(\s*GRIP\s*[1-5]\s*\)/ig,' ')
     .replace(/\(\s*(?:MIDDEL|GROTE|GR\.?|ZEER\s+(?:GROTE|GR\.?))\s+(?:BR|BRAND)\s*\)/ig,' ')
     .replace(/\bGRIP\s*[1-5]\b/ig,' ')
@@ -1144,6 +1152,7 @@ function drawPill(text,x,y,{fontSize=14,padX=14,height=34,fill='rgba(255,255,255
   ctx.font=`${weight} ${fontSize}px system-ui,Arial,sans-serif`;const width=ctx.measureText(text).width+padX*2;
   canvasRoundRect(x,y,width,height,height/2);ctx.fillStyle=fill;ctx.fill();ctx.strokeStyle=stroke;ctx.lineWidth=1;ctx.stroke();ctx.fillStyle=color;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(text,x+padX,y+height/2+.5);return width;
 }
+function canvasWrappedLines(text,maxWidth,maxLines,font){ctx.font=font;const words=rawDisplayText(text).split(' ').filter(Boolean),lines=[];let line='';for(const word of words){const next=line?`${line} ${word}`:word;if(!line||ctx.measureText(next).width<=maxWidth){line=next;continue}lines.push(line);line=word;if(lines.length>=maxLines-1)break}if(line&&lines.length<maxLines)lines.push(line);const consumed=lines.join(' ').split(' ').length;if(consumed<words.length&&lines.length){let last=lines[lines.length-1];while(last.length>8&&ctx.measureText(last+'…').width>maxWidth)last=last.slice(0,-1);lines[lines.length-1]=last+'…'}return lines}
 function drawActiveSolid(w,h){
   const m=state.activeMessage;
   const mapReserve=state.mapVisible&&mapCanRender()?Math.min(w*.34,620):0;
@@ -1163,16 +1172,26 @@ function drawActiveSolid(w,h){
   const region=messageRegion(m);if(region&&pillX<right-150)pillX+=drawPill(region.toUpperCase(),pillX,pillY,{fontSize:Math.max(9,pillFont-1),height:pillH,fill:'rgba(255,255,255,.035)',stroke:'rgba(255,255,255,.10)',color:'rgba(218,232,238,.78)',weight:750})+8;
   ctx.textAlign='right';ctx.font=`800 ${Math.max(24,Math.min(42,w*.022))}px ui-monospace,SFMono-Regular,Menlo,monospace`;ctx.fillStyle=theme.accent;ctx.fillText(hhmm(m.published),right,headerY);
 
-  // Incident hierarchy: type -> street/object -> city.
-  const incidentTitle=String(info?.type||'P2000-melding').toUpperCase();
-  const titleY=h*.225;const titleSize=fitOneLineFont(incidentTitle,contentW,Math.min(54,w*.030),24,900);ctx.textAlign='left';ctx.font=`900 ${titleSize}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentStrong;ctx.fillText(incidentTitle,left,titleY);
-  const locationY=h*.355;const locationSize=fitOneLineFont(loc.location,contentW,Math.min(88,w*.046),34,850);ctx.font=`850 ${locationSize}px system-ui,Arial,sans-serif`;ctx.fillStyle='#f6f8f9';ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=8;ctx.fillText(loc.location,left,locationY);ctx.shadowBlur=0;
-  if(loc.city){ctx.font=`800 ${Math.max(22,Math.min(38,w*.020))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(211,225,231,.68)';ctx.fillText(loc.city.toUpperCase(),left,h*.425);}
+  // By default the lightkrant shows the actual pager row prominently. Parsed
+  // fields remain underneath for readability, but the source message is not
+  // rewritten into a synthetic headline.
+  const rawDisplayMode=String(state.settings.messageDisplayMode||'raw')!=='parsed',rawOriginal=rawDisplayText(originalMessage(m));
+  if(rawDisplayMode){
+    const labelY=h*.205;ctx.textAlign='left';ctx.font=`900 ${Math.max(16,Math.min(25,w*.013))}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentStrong;ctx.fillText('ORIGINELE P2000-MELDING',left,labelY);
+    let rawSize=Math.max(28,Math.min(47,w*.0245)),lines=[];for(;rawSize>=27;rawSize-=2){const font=`780 ${rawSize}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;lines=canvasWrappedLines(rawOriginal,contentW,3,font);if(lines.length<=2||rawSize<=31){ctx.font=font;break}}
+    const startY=h*.285,lh=rawSize*1.28;ctx.fillStyle='#f7fbfc';ctx.shadowColor='rgba(0,0,0,.72)';ctx.shadowBlur=8;lines.forEach((line,i)=>ctx.fillText(line,left,startY+i*lh));ctx.shadowBlur=0;
+    const parsed=[String(info?.type||'P2000-melding'),loc.location,loc.city].filter(Boolean).join('  •  ');ctx.font=`750 ${Math.max(16,Math.min(25,w*.013))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(207,225,232,.68)';ctx.fillText(parsed,left,h*.505);
+  }else{
+    const incidentTitle=String(info?.type||'P2000-melding').toUpperCase();
+    const titleY=h*.225;const titleSize=fitOneLineFont(incidentTitle,contentW,Math.min(54,w*.030),24,900);ctx.textAlign='left';ctx.font=`900 ${titleSize}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentStrong;ctx.fillText(incidentTitle,left,titleY);
+    const locationY=h*.355;const locationSize=fitOneLineFont(loc.location,contentW,Math.min(88,w*.046),34,850);ctx.font=`850 ${locationSize}px system-ui,Arial,sans-serif`;ctx.fillStyle='#f6f8f9';ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=8;ctx.fillText(loc.location,left,locationY);ctx.shadowBlur=0;
+    if(loc.city){ctx.font=`800 ${Math.max(22,Math.min(38,w*.020))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(211,225,231,.68)';ctx.fillText(loc.city.toUpperCase(),left,h*.425);}
+  }
 
   // Units get their own quiet card so they remain legible without competing with the incident.
-  let afterUnits=h*.49;
+  let afterUnits=rawDisplayMode?h*.61:h*.49;
   if(state.settings.vehicleHeader!==false){
-    const boxTop=h*.475,lh=Math.max(21,Math.min(29,h*.029));
+    const boxTop=rawDisplayMode?h*.585:h*.475,lh=Math.max(21,Math.min(29,h*.029));
     let size=Math.max(12,Math.min(18,w*.0094));
     let vehicleLines=vehicleHeaderLines(m,Math.max(120,contentW-32),size,4);
     while(size>11&&vehicleLines.some(x=>{ctx.font=`720 ${size}px system-ui,Arial,sans-serif`;return ctx.measureText(x).width>contentW-32})){size--;vehicleLines=vehicleHeaderLines(m,Math.max(120,contentW-32),size,4)}
@@ -1189,7 +1208,7 @@ function drawActiveSolid(w,h){
   // locatie staan hierboven al groot; dezelfde tekst nogmaals pagineren was
   // vooral visuele ruis en kon op 1080p tegen de footer aanlopen.
   const raw=String(originalMessage(m)||'').trim();
-  if(raw){
+  if(raw&&!rawDisplayMode){
     const rawY=Math.min(h*.855,Math.max(afterUnits+h*.025,h*.72));
     ctx.font=`650 ${Math.max(13,Math.min(18,w*.0092))}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='rgba(183,201,209,.46)';
     const prefix='P2000  •  ';let shown=raw;const maxW=Math.max(120,contentW-ctx.measureText(prefix).width);
@@ -1216,33 +1235,30 @@ function ensureIdleStaticCanvas(){
   if(idleStaticCanvas)return;
   idleStaticCanvas=document.createElement('canvas');idleStaticCanvas.width=1920;idleStaticCanvas.height=1080;idleStaticContext=idleStaticCanvas.getContext('2d',{alpha:false});
 }
-function idleStaticSignature(now,mode,clockOnly,dim,shift){const minute=Math.floor(now.getTime()/60000);return [minute,mode,clockOnly?'1':'0',Math.round(dim*100),shift.join(','),state.settings.name||'',state.settings.backgroundStyle||'black',state.settings.backgroundColor||'',state.settings.backgroundPhotoVersion||0,state.settings.backgroundPhotoDarkness??.60,state.settings.backgroundPhotoFit||'cover'].join('|')}
+function idleStaticSignature(now,mode,clockOnly,dim,shift){const minute=Math.floor(now.getTime()/60000);return [minute,mode,clockOnly?'1':'0',Math.round(dim*100),shift.join(','),state.settings.name||'',state.settings.idleLayout||'center',state.settings.idleHeadline||'',state.settings.idleSubline||'',state.settings.idleShowName!==false?'1':'0',state.settings.idleShowDate!==false?'1':'0',state.settings.idleShowSeconds!==false?'1':'0',state.settings.idleShowStatus!==false?'1':'0',state.settings.idleClockScale||100,state.settings.backgroundStyle||'black',state.settings.backgroundColor||'',state.settings.backgroundPhotoVersion||0,state.settings.backgroundPhotoDarkness??.60,state.settings.backgroundPhotoFit||'cover'].join('|')}
 function drawSpacedTextOn(c,text,x,y,spacing,{align='center'}={}){
   text=String(text||'');const widths=[...text].map(ch=>c.measureText(ch).width),total=widths.reduce((a,b)=>a+b,0)+Math.max(0,text.length-1)*spacing;
   let px=align==='left'?x:align==='right'?x-total:x-total/2;c.textAlign='left';for(let i=0;i<text.length;i++){c.fillText(text[i],px,y);px+=widths[i]+spacing}
 }
+function idleLayoutConfig(clockOnly=false){
+  let layout=String(state.settings.idleLayout||'center');if(!['center','left','split','minimal'].includes(layout))layout='center';if(clockOnly)layout='minimal';
+  return {layout,headline:rawDisplayText(state.settings.idleHeadline||'')||state.settings.name||'P2000 Monitor',subline:rawDisplayText(state.settings.idleSubline||'')||'P2000 MELDINGEN HEBBEN DIRECT VOORRANG',showName:!clockOnly&&layout!=='minimal'&&state.settings.idleShowName!==false,showDate:!clockOnly&&layout!=='minimal'&&state.settings.idleShowDate!==false,showStatus:!clockOnly&&layout!=='minimal'&&state.settings.idleShowStatus!==false,showSeconds:state.settings.idleShowSeconds!==false,scale:Math.max(.65,Math.min(1.35,Number(state.settings.idleClockScale||100)/100))};
+}
 function rebuildIdleStaticLayer(now,mode,clockOnly,dim,shift,key){
-  ensureIdleStaticCanvas();const c=idleStaticContext,W=1920,H=1080,weekend=now.getDay()===0||now.getDay()===6;
+  ensureIdleStaticCanvas();const c=idleStaticContext,W=1920,H=1080,weekend=now.getDay()===0||now.getDay()===6,cfg=idleLayoutConfig(clockOnly);
   c.save();c.setTransform(1,0,0,1,0,0);c.globalAlpha=1;drawMonitorBackground(c,W,H);
-  c.globalAlpha=dim;const glowY=solarGlowY(now),glow=c.createRadialGradient(960,glowY,0,960,glowY,940);glow.addColorStop(0,'rgba(30,126,169,.105)');glow.addColorStop(.58,'rgba(8,38,54,.026)');glow.addColorStop(1,'rgba(0,0,0,0)');c.fillStyle=glow;c.fillRect(0,0,W,H);
+  c.globalAlpha=dim;const glowX=cfg.layout==='left'||cfg.layout==='split'?520:960,glowY=solarGlowY(now),glow=c.createRadialGradient(glowX,glowY,0,glowX,glowY,940);glow.addColorStop(0,'rgba(30,126,169,.105)');glow.addColorStop(.58,'rgba(8,38,54,.026)');glow.addColorStop(1,'rgba(0,0,0,0)');c.fillStyle=glow;c.fillRect(0,0,W,H);
   c.translate(shift[0],shift[1]);c.textBaseline='middle';
-  if(!clockOnly&&mode!=='minimal'){
-    c.textAlign='left';c.fillStyle='rgba(91,216,255,.70)';c.font='800 18px system-ui,Arial,sans-serif';c.fillText(state.settings.name||'P2000 Monitor',92,82);
-    c.fillStyle='rgba(83,112,126,.42)';c.fillRect(92,112,1736,1);
-  }
-  if(!clockOnly){
-    const months=['JANUARI','FEBRUARI','MAART','APRIL','MEI','JUNI','JULI','AUGUSTUS','SEPTEMBER','OKTOBER','NOVEMBER','DECEMBER'],days=['ZONDAG','MAANDAG','DINSDAG','WOENSDAG','DONDERDAG','VRIJDAG','ZATERDAG'];
-    const dateText=`${days[now.getDay()]} ${String(now.getDate()).padStart(2,'0')} ${months[now.getMonth()]} ${now.getFullYear()}`;
-    c.globalAlpha=dim;c.fillStyle=weekend?'rgba(216,231,237,.92)':'rgba(195,216,225,.80)';c.font=`${weekend?720:650} ${weekend?52:44}px system-ui,Arial,sans-serif`;drawSpacedTextOn(c,dateText,960,690,weekend?2.9:2.2,{align:'center'});
-    if(mode==='normal'){c.globalAlpha=dim*.40;c.fillStyle='rgba(79,111,126,.88)';c.font='650 15px system-ui,Arial,sans-serif';c.textAlign='center';c.fillText('P2000 MELDINGEN HEBBEN DIRECT VOORRANG',960,931)}
-  }
+  const leftAligned=cfg.layout==='left'||cfg.layout==='split',anchorX=leftAligned?104:960,align=leftAligned?'left':'center';
+  if(cfg.showName){c.textAlign=align;c.fillStyle='rgba(91,216,255,.72)';c.font='850 22px system-ui,Arial,sans-serif';c.fillText(cfg.headline,anchorX,94);c.fillStyle='rgba(83,112,126,.42)';c.fillRect(leftAligned?104:92,125,leftAligned?980:1736,1)}
+  if(cfg.showDate){const months=['JANUARI','FEBRUARI','MAART','APRIL','MEI','JUNI','JULI','AUGUSTUS','SEPTEMBER','OKTOBER','NOVEMBER','DECEMBER'],days=['ZONDAG','MAANDAG','DINSDAG','WOENSDAG','DONDERDAG','VRIJDAG','ZATERDAG'],dateText=`${days[now.getDay()]} ${String(now.getDate()).padStart(2,'0')} ${months[now.getMonth()]} ${now.getFullYear()}`;c.globalAlpha=dim;c.fillStyle=weekend?'rgba(216,231,237,.92)':'rgba(195,216,225,.80)';const fs=cfg.layout==='split'?38:(weekend?52:44);c.font=`${weekend?720:650} ${fs}px system-ui,Arial,sans-serif`;if(cfg.layout==='split'){c.textAlign='left';c.fillText(dateText,1270,470)}else drawSpacedTextOn(c,dateText,anchorX,cfg.layout==='left'?735:690,leftAligned?1.5:(weekend?2.9:2.2),{align})}
+  if(cfg.showStatus){c.globalAlpha=dim*.46;c.fillStyle='rgba(105,145,162,.92)';c.font='650 16px system-ui,Arial,sans-serif';c.textAlign=align;c.fillText(cfg.subline,cfg.layout==='split'?1270:anchorX,cfg.layout==='split'?550:931)}
   c.restore();drawIdleClockBase(c,now,dim,mode,clockOnly,shift);idleStaticKey=key;
 }
 function idleClockGeometry(c,now,mode,clockOnly){
-  const rawTime=hhmm(now),parts=rawTime.split(':'),leftDigits=parts[0]||'00',rightDigits=parts[1]||'00',timeY=mode==='minimal'||clockOnly?455:450,timeSize=mode==='minimal'||clockOnly?342:326;
-  const clockFont=`760 ${timeSize}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;c.font=clockFont;
-  const leftW=c.measureText(leftDigits).width,rightW=c.measureText(rightDigits).width,colonW=c.measureText(':').width,totalW=leftW+colonW+rightW,startX=960-totalW/2;
-  return {leftDigits,rightDigits,timeY,clockFont,leftW,rightW,colonW,totalW,startX};
+  const cfg=idleLayoutConfig(clockOnly),rawTime=hhmm(now),parts=rawTime.split(':'),leftDigits=parts[0]||'00',rightDigits=parts[1]||'00',base=mode==='minimal'||clockOnly?342:326,timeSize=Math.round(base*cfg.scale),timeY=cfg.layout==='left'?475:cfg.layout==='split'?500:455;
+  const clockFont=`760 ${timeSize}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;c.font=clockFont;const leftW=c.measureText(leftDigits).width,rightW=c.measureText(rightDigits).width,colonW=c.measureText(':').width,totalW=leftW+colonW+rightW,startX=(cfg.layout==='left'||cfg.layout==='split')?104:960-totalW/2;
+  return {leftDigits,rightDigits,timeY,clockFont,leftW,rightW,colonW,totalW,startX,cfg};
 }
 function drawIdleClockBase(c,now,dim,mode,clockOnly,shift){
   c.save();c.translate(shift[0],shift[1]);c.textBaseline='middle';c.globalAlpha=dim;const g=idleClockGeometry(c,now,mode,clockOnly);
@@ -1253,7 +1269,7 @@ function drawIdleClockDigits(now,dim,mode,clockOnly,shift){
   const hourBoost=now.getMinutes()===0&&now.getSeconds()<4?1+(.12*(1-now.getSeconds()/4)):1;
   if(hourBoost>1){ctx.globalAlpha=dim;ctx.shadowColor='rgba(83,210,247,.12)';ctx.shadowBlur=15*hourBoost;ctx.fillStyle=`rgba(244,249,251,${Math.min(1,.97*hourBoost)})`;ctx.textAlign='left';ctx.fillText(g.leftDigits,g.startX,g.timeY);ctx.fillText(g.rightDigits,g.startX+g.leftW+g.colonW,g.timeY);ctx.shadowBlur=0}
   const breathe=.52+.30*(.5+.5*Math.sin((now.getSeconds()%4)/4*Math.PI*2));ctx.save();ctx.globalAlpha=dim*breathe;ctx.fillStyle='rgba(126,215,241,.92)';ctx.font=g.clockFont;ctx.textAlign='left';ctx.fillText(':',g.startX+g.leftW,g.timeY);ctx.restore();
-  ctx.globalAlpha=dim;ctx.fillStyle='rgba(91,216,255,.46)';ctx.font='800 47px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace';ctx.textAlign='left';ctx.fillText(String(now.getSeconds()).padStart(2,'0'),960+g.totalW/2+24,g.timeY+67);ctx.restore();
+  if(g.cfg.showSeconds){ctx.globalAlpha=dim;ctx.fillStyle='rgba(91,216,255,.46)';ctx.font=`800 ${Math.max(30,Math.round(47*g.cfg.scale))}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;ctx.textAlign='left';ctx.fillText(String(now.getSeconds()).padStart(2,'0'),g.startX+g.totalW+24,g.timeY+Math.max(48,67*g.cfg.scale));}ctx.restore();
 }
 function drawClockIdleModern(w,h){
   const now=new Date(),mode=['minimal','normal','informative'].includes(state.settings.idleStyle)?state.settings.idleStyle:'normal',clockOnly=smartSilenceActive(now)||postIncidentQuietActive(now.getTime()),dim=idleDimFactor(now),shift=burnOffset(),r=idleDesignRect(w,h),key=idleStaticSignature(now,mode,clockOnly,dim,shift);
@@ -1263,7 +1279,7 @@ function drawClockIdleModern(w,h){
   else{
     // Restore only the clock rectangle from the cached static layer. This keeps
     // the one-second clock update cheap on a fixed kiosk display.
-    const sx=265,sy=245,sw=1390,sh=390,dx=r.x+sx*r.w/1920,dy=r.y+sy*r.h/1080,dw=sw*r.w/1920,dh=sh*r.h/1080;
+    const sx=35,sy=205,sw=1585,sh=500,dx=r.x+sx*r.w/1920,dy=r.y+sy*r.h/1080,dw=sw*r.w/1920,dh=sh*r.h/1080;
     ctx.drawImage(idleStaticCanvas,sx,sy,sw,sh,dx,dy,dw,dh);
   }
   ctx.save();ctx.translate(r.x,r.y);ctx.scale(r.w/1920,r.h/1080);drawIdleClockDigits(now,dim,mode,clockOnly,shift);ctx.restore();idleLastFrameWasClock=true;
@@ -1418,8 +1434,9 @@ function drawHeader(layout,w,h,shift){
 }
 function perfNow(){return typeof globalThis.performance?.now==='function'?globalThis.performance.now():Date.now()}
 function recordRenderPerf(started){const ms=Math.max(0,perfNow()-started),rows=state.renderPerf.samples;state.renderPerf.lastMs=ms;rows.push(ms);if(rows.length>120)rows.splice(0,rows.length-120)}
+function syncSourceAttribution(){const el=$('#sourceAttribution');if(!el)return;const show=activeVisible()&&String(state.activeMessage?.source||'').toLowerCase().includes('112-nu');el.hidden=!show}
 function draw(){
-  const perfStarted=perfNow(),r=canvas.getBoundingClientRect(),w=r.width,h=r.height;
+  syncSourceAttribution();const perfStarted=perfNow(),r=canvas.getBoundingClientRect(),w=r.width,h=r.height;
   if(Date.now()<state.testBlackoutUntil){idleLastFrameWasClock=false;ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);recordRenderPerf(perfStarted);return}
   if(activeVisible()){idleLastFrameWasClock=false;drawActiveSolid(w,h);recordRenderPerf(perfStarted);return}
   const layout=idleDisplay();

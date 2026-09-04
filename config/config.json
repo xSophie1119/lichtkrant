@@ -31,5 +31,6 @@
   "github_settings_minutes": 5,
   "feed_race_enabled": true,
   "feed_parallel_workers": 6,
-  "supplemental_feed_urls": []
+  "supplemental_feed_urls": [],
+  "feed_112nu_enabled": true
 }

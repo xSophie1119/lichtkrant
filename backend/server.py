@@ -80,12 +80,14 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.4.2"
+APP_VERSION = "4.4.3"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
 ALARMERINGEN_TRAUMA_URL = f"{ALARMERINGEN_BASE}/discipline/trauma.rss"
 ALARMERINGEN_KNRM_URL = f"{ALARMERINGEN_BASE}/discipline/knrm.rss"
+NU112_ALL_RSS = "https://112-nu.nl/hulpdiensten/rss"
+NU112_SITE_URL = "https://112-nu.nl/"
 
 # Landelijke brandweervoertuigendatabase.  De monitor houdt de statische seed klein
 # en synchroniseert alleen de brandweerregio's die de gebruiker heeft gekozen.
@@ -100,6 +102,7 @@ FIRE_REGION_CODES = {
     "zuid-holland-zuid":"18", "zeeland":"19", "midden-en-west-brabant":"20", "brabant-noord":"21",
     "brabant-zuidoost":"22", "limburg-noord":"23", "limburg-zuid":"24", "flevoland":"25",
 }
+FIRE_REGION_CODE_TO_SLUG = {code: slug for slug, code in FIRE_REGION_CODES.items()}
 FIRE_REGION_SHEETS = {
     "01":"01 Groningen", "02":"02 Fryslân", "03":"03 Drenthe", "04":"04 IJsseland", "05":"05 Twente",
     "06":"06 Noord-Oost Gelderland", "07":"07 Gelderland Midden", "08":"08 Gelderland Zuid", "09":"09 Utrecht",
@@ -283,12 +286,24 @@ def region_slug_from_article_url(url: str) -> str | None:
 
 
 def city_from_article_url(url: str) -> str:
-    """Best-effort city fallback for feeds that omit a usable city category."""
+    """Best-effort city fallback for feeds that omit a usable city category.
+
+    Alarmeringen places the region in the URL. 112-nu uses
+    ``/melding/<id>/<plaats>/...``; handling both formats makes the national
+    race feed usable without a hard-coded city list.
+    """
     try:
-        parts = [unquote(x).strip() for x in urlparse(url).path.strip("/").split("/") if x]
+        parsed = urlparse(url)
+        parts = [unquote(x).strip() for x in parsed.path.strip("/").split("/") if x]
     except Exception:
         return ""
+    host = (parsed.hostname or "").lower()
     lower = [x.lower() for x in parts]
+    if host.endswith("112-nu.nl") and len(parts) >= 3 and lower[0] == "melding" and re.fullmatch(r"\d+", parts[1]):
+        raw = parts[2]
+        text = re.sub(r"[-_]+", " ", raw).strip()
+        if text and text.lower() not in {"nederland", "onbekend"}:
+            return re.sub(r"^'S(?=[ -])", "'s", text.title())
     region_idx = next((i for i, part in enumerate(lower) if part in REGION_CATALOG), -1)
     if region_idx < 0:
         return ""
@@ -318,6 +333,73 @@ def source_name_for_url(url: str) -> str:
     if host.endswith("zwaailicht.nl"):
         return "Zwaailicht.nl"
     return host or SOURCE_NAME
+
+RAW_DISPATCH_START_RE = re.compile(r"(?<!\w)(?:P\s*[1-5]|PRIO\s*[1-5]|A[012]|B[12])\b", re.I)
+RAW_DISPATCH_END_RE = re.compile(r"\s+(?:Tijdstip|Datum|Meldingnummer|Lees meer|Bekijk (?:de )?melding|Bron)\s*:", re.I)
+
+def dispatch_channel_code(value: str) -> str:
+    """Return a regional fire incident/speech channel code such as BZB-01.
+
+    The prefix differs per region. Keep the matcher syntax-based rather than
+    maintaining a fragile list of region-specific channel names.
+    """
+    m = FIRE_DISPATCH_CODE_RE.search(normalize_space(value or ""))
+    return m.group(0).upper() if m else ""
+
+def strip_dispatch_channel(value: str) -> str:
+    return normalize_space(FIRE_DISPATCH_CODE_RE.sub(" ", normalize_space(value or "")))
+
+def extract_raw_dispatch_text(title: str, summary: str) -> str:
+    """Pick the original P2000 line from an enriched RSS item.
+
+    112-nu and similar feeds may put a human title in ``title`` and the raw
+    pager row after an ``Originele Melding`` label in ``description``. The
+    lightkrant deliberately keeps that raw row byte-for-byte readable (apart
+    from HTML/whitespace normalization), while parsing and TTS work on derived
+    fields.
+    """
+    candidates: list[str] = []
+    for original in (title, summary):
+        text = normalize_space(original or "")
+        if not text:
+            continue
+        for marker in ("originele melding", "origineel bericht", "p2000 melding", "p2000-bericht"):
+            idx = text.lower().find(marker)
+            if idx >= 0:
+                tail = text[idx + len(marker):].lstrip(" :–—-")
+                if tail:
+                    candidates.append(tail)
+        m = RAW_DISPATCH_START_RE.search(text)
+        if m:
+            candidates.append(text[m.start():])
+        candidates.append(text)
+    best = ""; best_score = -1
+    for raw in candidates:
+        raw = normalize_space(raw).strip(" |")
+        m_end = RAW_DISPATCH_END_RE.search(raw)
+        if m_end:
+            raw = normalize_space(raw[:m_end.start()])
+        if len(raw) > 1400:
+            raw = raw[:1400].rstrip()
+        score = 0
+        if re.match(r"^(?:P\s*[1-5]|PRIO\s*[1-5]|A[012]|B[12])\b", raw, re.I): score += 40
+        if FIRE_DISPATCH_CODE_RE.search(raw): score += 25
+        if FIRE_CALLSIGN_RE.search(raw) or FIRE_EXTENDED_CALLSIGN_RE.search(raw): score += 20
+        if FIRE_INCIDENT_HINT_RE.search(raw) or POLICE_BUNDLE_RE.search(raw) or AMBULANCE_RAW_RE.search(raw): score += 15
+        if score > best_score:
+            best, best_score = raw, score
+    return best if best_score >= 40 else normalize_space(title or summary)
+
+def canonical_message_id(raw_text: str, published: str, fallback: str) -> str:
+    """Deduplicate the same dispatch when multiple RSS sources race each other."""
+    raw = normalize_space(raw_text or "")
+    if raw and RAW_DISPATCH_START_RE.match(raw):
+        day = str(published or "")[:10]
+        signature = re.sub(r"\s+", " ", raw.casefold())
+        base = f"p2000|{day}|{signature}"
+    else:
+        base = fallback
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()[:24]
 LOCAL_TZ_NAME = os.environ.get("P2000_TIMEZONE", "Europe/Amsterdam")
 try:
     LOCAL_TZ = ZoneInfo(LOCAL_TZ_NAME)
@@ -376,6 +458,22 @@ FIRE_DISPATCH_CODE_RE = re.compile(r"\b(?:B[A-Z]{2}|S[A-Z]{2}|KAZ)-\d{1,3}\b", r
 # Seven-digit hyphenated roepnummers are seen in the northern regions
 # (for example 01-18-849). Keep them separate from six-digit callsigns.
 FIRE_EXTENDED_CALLSIGN_RE = re.compile(r"(?<!\d)(\d{2})[- ](\d{2})[- ](\d{3})(?!\d)", re.I)
+
+def infer_fire_region_slug(title: str, summary: str = "", units: list[str] | None = None) -> str | None:
+    """Infer the safety region from Dutch fire-service callsign numbering.
+
+    The first two digits of a six/seven-digit brandweer roepnummer map to the
+    25 safety regions. This is especially useful for national RSS sources that
+    do not expose a region category themselves.
+    """
+    hay = normalize_space(" ".join([title or "", summary or "", " ".join(units or [])]))
+    if not is_fire_dispatch_context(title, summary, units):
+        return None
+    for regex in (FIRE_EXTENDED_CALLSIGN_RE, FIRE_CALLSIGN_RE):
+        m = regex.search(hay)
+        if m:
+            return FIRE_REGION_CODE_TO_SLUG.get(m.group(1))
+    return None
 
 FIRE_INCIDENT_HINT_RE = re.compile(
     r"\b(?:BR(?:AND)?(?:\s|$)|OMS|PAC|ROOKMELDER|CO-MELDER|BRANDGERUCHT|NACONTROLE|"
@@ -1163,6 +1261,8 @@ def config_allows_message(config: dict, message: "Message") -> bool:
     if wanted not in {"brandweer", "ambulance", "politie", "knrm", "lifeliner"}:
         return False
     region_slug = message_region_slug(message.categories, message.url)
+    if not region_slug and wanted == "brandweer":
+        region_slug = infer_fire_region_slug(message.title, message.summary, message.units)
     if not region_slug:
         # A national RSS item can occasionally lack a usable region marker.
         # Only accept that ambiguity when the user explicitly selected this
@@ -1663,6 +1763,48 @@ def detect_scale(title: str, summary: str) -> tuple[str, int]:
     return (" + ".join(labels), max(scores)) if labels else ("", 0)
 
 
+def infer_dispatch_tail_city(title: str) -> str:
+    """Conservative city fallback for raw Dutch dispatch rows.
+
+    Feeds normally supply the city as a category or URL. For pasted/raw rows we
+    can still recover the final locality before brandweer roepnummers. Common
+    Dutch multi-word place connectors (``aan den``, ``op``, ``en``...) are
+    grouped without maintaining a nationwide hard-coded place database.
+    """
+    raw = normalize_space(title or "")
+    if not raw or not is_fire_dispatch_context(raw, ""):
+        return ""
+    tail = re.sub(r"(?:\s+(?:\d{6}|\d{2}[- ]?\d{4}|\d{2}[- ]\d{2}[- ]\d{3}))+\s*$", "", raw, flags=re.I)
+    tail = normalize_space(tail.strip(" ,-–—#"))
+    if not tail:
+        return ""
+    words = tail.split()
+    if not words:
+        return ""
+    # A locality is at the end of native fire rows. Start with the final token
+    # and grow left only across patterns that strongly indicate a place name.
+    start = len(words)-1
+    connectors = {"aan","op","bij","in","en","van","den","de","der","het","ter","ten"}
+    prefixes = {"sint","st.","st","nieuw","nieuwe","oud","oude","den","de","'s","’s"}
+    while start > 0:
+        prev = words[start-1].strip(".,").casefold()
+        if prev in connectors:
+            start -= 1
+            if start > 0:
+                start -= 1
+            continue
+        if prev in prefixes:
+            start -= 1
+            continue
+        break
+    city = " ".join(words[start:]).strip(" ,-–—#")
+    # Refuse obvious road/object endings; these are more harmful than returning
+    # no city at all and letting the live feed category/URL resolve it.
+    if re.fullmatch(r"(?:[AN]\d{1,3}|\d+[,.]\d|LI|RE|KP|AFRIT)", city, re.I):
+        return ""
+    return re.sub(r"^'S(?=[ -])", "'s", normalize_location_display_case(city))[:120]
+
+
 def infer_city(categories: list[str], title: str) -> str:
     # Feed docs specify categories for service and city. Remove known service terms.
     candidates = []
@@ -1709,7 +1851,9 @@ def infer_city(categories: list[str], title: str) -> str:
         if "," in tail:
             return tail.rsplit(",", 1)[-1].strip()
     m = re.search(r"\bin\s+([A-ZÀ-ÖØ-Þ][\wÀ-ÿ'’ .-]{2,})$", title, re.I)
-    return normalize_space(m.group(1)) if m else ""
+    if m:
+        return normalize_space(m.group(1))
+    return infer_dispatch_tail_city(title)
 
 
 def _title_before_city(value: str, city: str) -> str:
@@ -2193,7 +2337,8 @@ def parse_raw_p2000_line(state: "AppState", raw: str, categories: list[str] | No
         "service": service,
         "priority": priority,
         "incident_type": incident_type_label(title, ""),
-        "region": next((normalize_space(c[6:]) for c in cats if c.lower().startswith("regio ")), "") or region_for_city(city),
+        "dispatch_channel": dispatch_channel_code(title),
+        "region": next((normalize_space(c[6:]) for c in cats if c.lower().startswith("regio ")), "") or (REGION_CATALOG.get(infer_fire_region_slug(title, "", units) or "", {}).get("label", "")) or region_for_city(city),
         "city": city,
         "location": location,
         "normalized_location": normalize_location_token(location, alias_map),
@@ -2479,6 +2624,12 @@ class AppState:
             if discipline in wanted:
                 url=NATIONAL_DISCIPLINE_URLS.get(discipline)
                 if url and url not in (self.config.get("feed_urls") or []): urls.append(url)
+        # One nationwide 112-nu request races the existing sources. We
+        # deliberately do not poll five service-specific 112-nu endpoints: one
+        # request is enough, keeps fair-use load low and is easier to dedupe.
+        if self.config.get("feed_112nu_enabled", True) and wanted.intersection({"brandweer","ambulance","politie","lifeliner"}):
+            if NU112_ALL_RSS not in urls and NU112_ALL_RSS not in (self.config.get("feed_urls") or []):
+                urls.append(NU112_ALL_RSS)
         return urls
 
     def feed_config_view(self) -> dict:
@@ -2488,6 +2639,7 @@ class AppState:
             "supplemental_feed_urls": list(self.config.get("supplemental_feed_urls") or []),
             "fallback_feed_urls": list(self.config.get("fallback_feed_urls") or []),
             "feed_race_enabled": bool(self.config.get("feed_race_enabled", True)),
+            "feed_112nu_enabled": bool(self.config.get("feed_112nu_enabled", True)),
             "feed_parallel_workers": int(self.config.get("feed_parallel_workers",6)),
             "poll_interval_seconds": int(self.config.get("poll_interval_seconds",10)),
             "watchdog_stale_seconds": int(self.config.get("watchdog_stale_seconds",600)),
@@ -2501,11 +2653,13 @@ class AppState:
         fallback=self._clean_feed_urls(payload.get("fallback_feed_urls", self.config.get("fallback_feed_urls") or []), maximum=6, exclude=primary|set(supplemental))
         watchdog=bounded_int(payload.get("watchdog_stale_seconds", self.config.get("watchdog_stale_seconds",600)),600,180,86400)
         race_enabled=bool(payload.get("feed_race_enabled", self.config.get("feed_race_enabled", True)))
+        nu112_enabled=bool(payload.get("feed_112nu_enabled", self.config.get("feed_112nu_enabled", True)))
         workers=bounded_int(payload.get("feed_parallel_workers", self.config.get("feed_parallel_workers",6)),6,1,12)
         with self.config_lock:
             self.config["supplemental_feed_urls"]=supplemental
             self.config["fallback_feed_urls"]=fallback
             self.config["feed_race_enabled"]=race_enabled
+            self.config["feed_112nu_enabled"]=nu112_enabled
             self.config["feed_parallel_workers"]=workers
             self.config["watchdog_stale_seconds"]=watchdog
             disk={}
@@ -2517,6 +2671,7 @@ class AppState:
             disk["supplemental_feed_urls"]=supplemental
             disk["fallback_feed_urls"]=fallback
             disk["feed_race_enabled"]=race_enabled
+            disk["feed_112nu_enabled"]=nu112_enabled
             disk["feed_parallel_workers"]=workers
             disk["watchdog_stale_seconds"]=watchdog
             CONFIG_PATH.parent.mkdir(parents=True,exist_ok=True)
@@ -3127,7 +3282,7 @@ class AppState:
             "speechEnabled", "speechMode", "masterVolume", "speechCities", "speechRate", "speechEngine", "speechPitch",
             "speechDeviceVolumeDay", "speechDeviceVolumeNight", "speechDeviceVolumeUrgent",
             "mapEnabled", "mapZoom", "locationAliases", "ttsDictionary", "capcodeMap",
-            "idleStyle", "idleDimEnabled", "idleDimStart", "idleDimEnd", "idleDimMin",
+            "idleStyle", "idleLayout", "idleHeadline", "idleSubline", "idleShowName", "idleShowDate", "idleShowSeconds", "idleShowStatus", "idleClockScale", "messageDisplayMode", "idleDimEnabled", "idleDimStart", "idleDimEnd", "idleDimMin",
             "idleDimEarliest", "smartSilenceEnabled", "smartSilenceMinutes",
             "postIncidentQuietEnabled", "postIncidentQuietSeconds",
             "backgroundStyle", "backgroundColor", "backgroundPhotoVersion", "backgroundPhotoDarkness", "backgroundPhotoFit", "kioskMonitor",
@@ -3142,7 +3297,7 @@ class AppState:
         bool_keys = (
             "nightMode", "idleCentered", "burnInProtection", "autoTextSize",
             "vehicleHeader", "displaySleep", "speechEnabled",
-            "mapEnabled", "idleDimEnabled",
+            "mapEnabled", "idleDimEnabled", "idleShowName", "idleShowDate", "idleShowSeconds", "idleShowStatus",
             "smartSilenceEnabled", "postIncidentQuietEnabled", "dispatchTuneEnabled",
         )
         for key in bool_keys:
@@ -3165,6 +3320,7 @@ class AppState:
             "masterVolume": (0, 100, int),
             "dispatchTuneVolume": (0, 100, int),
             "dispatchTuneCustomVersion": (0, 9_999_999_999_999, int),
+            "idleClockScale": (65, 135, int),
         }
         for key, (lo, hi, caster) in numeric_ranges.items():
             if key not in clean:
@@ -3233,6 +3389,13 @@ class AppState:
                 clean.pop("mapZoom", None)
         if "idleStyle" in clean and clean["idleStyle"] not in ("minimal", "normal", "informative"):
             clean["idleStyle"] = "normal"
+        if "idleLayout" in clean and clean["idleLayout"] not in ("center", "left", "split", "minimal"):
+            clean["idleLayout"] = "center"
+        if "messageDisplayMode" in clean and clean["messageDisplayMode"] not in ("raw", "parsed"):
+            clean["messageDisplayMode"] = "raw"
+        for text_key, limit in (("idleHeadline", 90), ("idleSubline", 160)):
+            if text_key in clean:
+                clean[text_key] = normalize_space(str(clean[text_key] or ""))[:limit]
         if "idleDimMin" in clean:
             try:
                 clean["idleDimMin"] = max(0.2, min(1.0, float(clean["idleDimMin"])))
@@ -3244,7 +3407,7 @@ class AppState:
                     clean[num_key] = max(lo, min(hi, int(clean[num_key])))
                 except Exception:
                     clean.pop(num_key, None)
-        for key in ("nightStart", "nightEnd", "dateFormat", "speechEngine", "idleStyle", "idleDimStart", "idleDimEnd", "idleDimEarliest"):
+        for key in ("nightStart", "nightEnd", "dateFormat", "speechEngine", "idleStyle", "idleLayout", "messageDisplayMode", "idleDimStart", "idleDimEnd", "idleDimEarliest"):
             if key in clean:
                 clean[key] = str(clean[key])[:20]
         if "backgroundStyle" in clean:
@@ -4146,8 +4309,9 @@ class FeedPoller(threading.Thread):
                 channel = root
             items = channel.findall("item")
             for item in items:
-                title = strip_html(item.findtext("title", default=""))
+                feed_title = strip_html(item.findtext("title", default=""))
                 summary = strip_html(item.findtext("description", default=""))
+                title = extract_raw_dispatch_text(feed_title, summary)
                 url = normalize_space(item.findtext("link", default=""))
                 guid = normalize_space(item.findtext("guid", default=""))
                 published = parse_dt(item.findtext("pubDate", default=""))
@@ -4164,6 +4328,10 @@ class FeedPoller(threading.Thread):
                 city = infer_city(categories, title) or city_from_article_url(url)
                 location = infer_location(title, summary, city)
                 units = infer_units(summary, title)
+                if not message_region_slug(categories, url) and service == "brandweer":
+                    inferred_region = infer_fire_region_slug(title, summary, units)
+                    if inferred_region:
+                        categories.append(f"Regio {REGION_CATALOG[inferred_region]['label']}")
                 ll = detect_lifeliner_number(title, summary, units)
                 mmt_resource = detect_mmt_resource(title, summary, units)
                 if mmt_resource:
@@ -4172,7 +4340,7 @@ class FeedPoller(threading.Thread):
                 # Prefer the canonical article URL so the same item appearing in both
                 # RSS feeds gets one database id. GUID is only a fallback.
                 raw_id = url or guid or f"{published}|{title}|{summary}"
-                msg_id = hashlib.sha256(raw_id.encode("utf-8")).hexdigest()[:24]
+                msg_id = canonical_message_id(title, published, raw_id)
                 ikey = incident_key(service, city, location, title, alias_map)
                 confidence, parser_notes = parser_confidence_details(title, summary, categories, service, priority, city, location, units, scale)
                 messages.append(Message(
@@ -4186,10 +4354,11 @@ class FeedPoller(threading.Thread):
 
         # Atom fallback (kept so existing test fixtures and imports remain harmless).
         for entry in root.findall("a:entry", ATOM_NS):
-            title = strip_html(entry.findtext("a:title", default="", namespaces=ATOM_NS))
+            feed_title = strip_html(entry.findtext("a:title", default="", namespaces=ATOM_NS))
             summary = strip_html(entry.findtext("a:summary", default="", namespaces=ATOM_NS))
             if not summary:
                 summary = strip_html(entry.findtext("a:content", default="", namespaces=ATOM_NS))
+            title = extract_raw_dispatch_text(feed_title, summary)
             atom_id = normalize_space(entry.findtext("a:id", default="", namespaces=ATOM_NS))
             published = parse_dt(entry.findtext("a:published", default="", namespaces=ATOM_NS))
             updated = parse_dt(entry.findtext("a:updated", default=published, namespaces=ATOM_NS))
@@ -4210,13 +4379,17 @@ class FeedPoller(threading.Thread):
             city = infer_city(categories, title) or city_from_article_url(url)
             location = infer_location(title, summary, city)
             units = infer_units(summary, title)
+            if not message_region_slug(categories, url) and service == "brandweer":
+                inferred_region = infer_fire_region_slug(title, summary, units)
+                if inferred_region:
+                    categories.append(f"Regio {REGION_CATALOG[inferred_region]['label']}")
             ll = detect_lifeliner_number(title, summary, units)
             mmt_resource = detect_mmt_resource(title, summary, units)
             if mmt_resource:
                 service = "lifeliner" if mmt_resource.get("kind") == "helicopter" else "ambulance"
             scale, scale_score = detect_scale(title, summary)
             raw_id = url or atom_id or f"{published}|{title}|{summary}"
-            msg_id = hashlib.sha256(raw_id.encode("utf-8")).hexdigest()[:24]
+            msg_id = canonical_message_id(title, published, raw_id)
             ikey = incident_key(service, city, location, title, alias_map)
             confidence, parser_notes = parser_confidence_details(title, summary, categories, service, priority, city, location, units, scale)
             messages.append(Message(id=msg_id,published=published,updated=updated,title=title,summary=summary,url=url,service=service,priority=priority,city=city,location=location,units=units,categories=list(dict.fromkeys(categories)),scale=scale,scale_score=scale_score,incident_key=ikey,source=source_label,parser_confidence=confidence,parser_notes=parser_notes))
@@ -6770,6 +6943,7 @@ def load_config() -> dict:
         "supplemental_feed_urls": [],
         "fallback_feed_urls": [],
         "feed_race_enabled": True,
+        "feed_112nu_enabled": True,
         "feed_parallel_workers": 6,
         "poll_interval_seconds": 10,
         "request_timeout_seconds": 15,
@@ -6805,6 +6979,7 @@ def load_config() -> dict:
     default["port"] = bounded_int(default.get("port"), 8765, 1, 65535)
     default["poll_interval_seconds"] = 10 if legacy_default_poll else bounded_int(default.get("poll_interval_seconds"), 10, 8, 3600)
     default["feed_race_enabled"] = default.get("feed_race_enabled") is not False
+    default["feed_112nu_enabled"] = default.get("feed_112nu_enabled") is not False
     default["feed_parallel_workers"] = bounded_int(default.get("feed_parallel_workers"),6,1,12)
     default["request_timeout_seconds"] = bounded_int(default.get("request_timeout_seconds"), 15, 5, 60)
     default["max_feed_bytes"] = bounded_int(default.get("max_feed_bytes"), 2_000_000, 100_000, 10_000_000)

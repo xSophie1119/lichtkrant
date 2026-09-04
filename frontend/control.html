@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071018">
   <title>P2000 Monitor • Instellingen</title>
-  <link rel="stylesheet" href="/styles.css?v=4400">
+  <link rel="stylesheet" href="/styles.css?v=4430">
   <style>
     .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
     .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
@@ -21,6 +21,7 @@
     .mode-btn.active{outline:2px solid rgba(91,216,255,.7);background:rgba(91,216,255,.15)}.danger-btn{border-color:rgba(255,100,100,.38)!important}
     .live-preview{margin-top:12px;padding:18px;border-radius:16px;background:#020506;border:1px solid rgba(255,255,255,.10);min-height:130px}.live-preview .preview-priority{font-weight:900;font-size:.86rem;letter-spacing:.08em}.live-preview h4{font-size:1.35rem;margin:8px 0 4px}.live-preview p{margin:3px 0;opacity:.86}.preview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.preview-grid span{padding:8px;border-radius:10px;background:rgba(255,255,255,.05);font-size:.82rem}
     .vehicle-history{display:grid;gap:7px;margin-top:10px;max-height:260px;overflow:auto}.history-row{padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.04);font-size:.86rem}.history-row small{opacity:.65}
+    .idle-builder-preview{min-height:245px;border-radius:18px;background:radial-gradient(circle at 50% 40%,rgba(26,102,136,.22),#020506 66%);border:1px solid rgba(255,255,255,.10);padding:22px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;overflow:hidden}.idle-builder-preview[data-layout="left"]{align-items:flex-start;text-align:left}.idle-builder-preview[data-layout="split"]{display:grid;grid-template-columns:1.25fr .75fr;align-content:center;text-align:left}.idle-builder-preview[data-layout="minimal"] .idle-preview-name,.idle-builder-preview[data-layout="minimal"] .idle-preview-date,.idle-builder-preview[data-layout="minimal"] .idle-preview-status{display:none}.idle-preview-name{font-weight:900;letter-spacing:.06em;color:#5bd8ff;margin-bottom:16px}.idle-preview-time{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:800;line-height:1;color:#f4f9fb}.idle-preview-time small{font-size:.32em;color:#5bd8ff;margin-left:8px}.idle-preview-date{margin-top:14px;font-weight:700;opacity:.78;letter-spacing:.05em}.idle-preview-status{margin-top:22px;font-size:.75rem;opacity:.46;letter-spacing:.06em}
     @media(max-width:760px){.control-shell{padding:10px}.control-header{gap:14px}.header-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.header-actions #saveBtn{grid-column:1/-1}.quick-card{position:relative;z-index:2}.quick-actions{grid-template-columns:1fr 1fr}.quick-actions button{min-height:52px;font-size:.95rem}.quick-status{grid-template-columns:1fr 1fr}.preview-grid{grid-template-columns:1fr 1fr}.button-row{display:grid!important;grid-template-columns:1fr 1fr}.button-row button{min-height:46px}.field input,.field select,.field textarea{font-size:16px}.status-grid.compact-grid{grid-template-columns:1fr 1fr}}
   </style>
 </head>
@@ -69,6 +70,7 @@
     <section class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">WEERGAVE</span><h3>Monitor</h3></div></div>
       <label class="field"><span>Titel</span><input id="nameInput" type="text" maxlength="30" placeholder="P2000 Monitor"></label>
+      <label class="field"><span>Meldingweergave</span><select id="messageDisplayModeInput"><option value="raw">Originele P2000-regel groot</option><option value="parsed">Samengevatte incidentweergave</option></select><small>“Origineel” toont de echte P2000-regel prominent; parserdata en voertuigen blijven eronder beschikbaar.</small></label>
       <div class="two-col">
         <label class="field"><span>Melding zichtbaar (min)</span><input id="messageMinutesInput" type="number" min="0.25" max="15" step="0.25"></label>
         <label class="field"><span>Max. leeftijd (min)</span><input id="maxAgeMinutesInput" type="number" min="0.25" max="30" step="0.25"></label>
@@ -89,6 +91,28 @@
         <p id="backgroundPhotoStatus" class="hint">Nog geen foto gekozen.</p>
       </div>
       <p class="hint">Kies een donkere kleur of een lokale JPG/PNG/WebP. Foto's worden lokaal op deze computer opgeslagen; de donkere laag houdt de P2000-tekst leesbaar.</p>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">RUSTSCHERM</span><h3>Eigen indeling wanneer er geen melding is</h3></div><span class="status-pill">LIVE PREVIEW</span></div>
+      <div class="two-col">
+        <div>
+          <label class="field"><span>Indeling</span><select id="idleLayoutInput"><option value="center">Gecentreerd</option><option value="left">Links uitgelijnd</option><option value="split">Gesplitst</option><option value="minimal">Alleen klok</option></select></label>
+          <label class="field"><span>Eigen koptekst</span><input id="idleHeadlineInput" type="text" maxlength="90" placeholder="Leeg = naam van de monitor"></label>
+          <label class="field"><span>Onderregel</span><input id="idleSublineInput" type="text" maxlength="160" placeholder="P2000 MELDINGEN HEBBEN DIRECT VOORRANG"></label>
+          <label class="field"><span>Klokgrootte <b id="idleClockScaleValue">100</b>%</span><input id="idleClockScaleInput" type="range" min="65" max="135" step="5" value="100"></label>
+          <div class="service-grid">
+            <label><input id="idleShowNameInput" type="checkbox"> Koptekst</label>
+            <label><input id="idleShowDateInput" type="checkbox"> Datum</label>
+            <label><input id="idleShowSecondsInput" type="checkbox"> Seconden</label>
+            <label><input id="idleShowStatusInput" type="checkbox"> Onderregel</label>
+          </div>
+          <p class="hint">Achtergrondkleur/foto uit de monitorinstellingen blijft gelden. Burn-in-bescherming en nacht-dimming blijven automatisch actief.</p>
+        </div>
+        <div id="idleBuilderPreview" class="idle-builder-preview" data-layout="center">
+          <div class="idle-preview-name">P2000 MONITOR</div><div class="idle-preview-time">15:44<small>32</small></div><div class="idle-preview-date">VRIJDAG 04 SEPTEMBER 2026</div><div class="idle-preview-status">P2000 MELDINGEN HEBBEN DIRECT VOORRANG</div>
+        </div>
+      </div>
     </section>
 
     <section class="control-card">
@@ -156,8 +180,9 @@
 
     <section class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">FEED-RACE</span><h3>P2000-bronnen & snelheid</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
+      <label class="switch-row"><span><b>112-nu snelle racebron</b><small>Één landelijke RSS-feed wordt parallel met de bestaande bronnen opgehaald. Eerste unieke melding wint.</small></span><input id="feed112nuInput" type="checkbox" checked></label>
       <div id="feedList" class="feed-list"><div class="feed-row">laden…</div></div>
-      <p class="hint">Regionale feeds en landelijke disciplinefeeds worden parallel opgehaald. De eerste unieke kopie van een melding wint; duplicaten worden door SQLite genegeerd. Latency en bron-wins worden hieronder live gemeten.</p>
+      <p class="hint">Regionale feeds, landelijke disciplinefeeds en optioneel 112-nu worden parallel opgehaald. Exact dezelfde P2000-regel wordt bron-onafhankelijk gededupliceerd. Latency en bron-wins worden live gemeten.</p>
     </section>
 
     <section class="control-card wide">

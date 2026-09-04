@@ -1,11 +1,11 @@
-# GitHub-updates — v4.4.2
+# GitHub-updates — v4.4.3
 
 De monitor kan zowel Releases als gewone pushes op de ingestelde branch volgen. Branchupdates worden op exacte commit-SHA herkend, ook wanneer `VERSION` gelijk blijft.
 
 Aanbevolen Release-asset:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.2.zip
+P2000_Monitor_MultiPlatform_v4.4.3.zip
 ```
 
 De assetselectie geeft voorrang aan `multiplatform`/`multi-platform`. Als er meerdere OS-assets bestaan kiest Windows liever een Windows-ZIP en Linux liever een Linux-ZIP.
