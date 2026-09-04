@@ -168,14 +168,14 @@
     <section class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">SCHERM</span><h3>Scherm & slaapstand</h3></div><span id="displayStatus" class="status-pill">controleren…</span></div>
       <label class="field"><span>Lichtkrant openen op</span><select id="kioskMonitorInput"><option value="primary">Primair scherm</option></select></label>
-      <p class="hint" id="kioskMonitorHint">Aangesloten schermen worden automatisch gedetecteerd. De keuze wordt toegepast bij de volgende kioskstart.</p>
+      <p class="hint" id="kioskMonitorHint">Aangesloten schermen worden automatisch gedetecteerd. Een nieuwe keuze wordt direct opgeslagen en de kiosk wordt meteen opnieuw op het gekozen scherm geplaatst.</p>
       <label class="switch-row"><span><b>Scherm automatisch uit</b><small>Windows gebruikt SC_MONITORPOWER. Linux gebruikt waar mogelijk X11 DPMS (xset) of wlroots Wayland (wlr-randr).</small></span><input id="displaySleepInput" type="checkbox"></label>
       <label class="switch-row"><span><b>Nachtstand</b><small>Gebruik de onderstaande tijden voor de donkere stand/slaapstand.</small></span><input id="nightModeInput" type="checkbox"></label>
       <div class="two-col">
         <label class="field"><span>Vanaf</span><input id="nightStartInput" type="time"></label>
         <label class="field"><span>Tot</span><input id="nightEndInput" type="time"></label>
       </div>
-      <div class="button-row"><button id="displayOffBtn" class="secondary-btn">Scherm uit</button><button id="displayOnBtn" class="secondary-btn">Scherm aan</button><button id="detectDisplayBtn" class="secondary-btn">Controleer scherm</button></div>
+      <div class="button-row"><button id="applyDisplayBtn" class="secondary-btn">Nu toepassen</button><button id="displayOffBtn" class="secondary-btn">Scherm uit</button><button id="displayOnBtn" class="secondary-btn">Scherm aan</button><button id="detectDisplayBtn" class="secondary-btn">Controleer scherm</button></div>
     </section>
 
     <section class="control-card wide">

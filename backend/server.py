@@ -80,7 +80,7 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.4.3"
+APP_VERSION = "4.4.4"
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -1398,43 +1398,88 @@ def _linux_xrandr_monitors() -> list[dict]:
 
 
 def _linux_wlr_monitors() -> list[dict]:
+    """Enumerate wlroots outputs.
+
+    Some wlr-randr builds support --json, many stable distro builds do not.
+    The old monitor selector returned no outputs on those systems.  Try JSON
+    first and transparently fall back to parsing the regular text output.
+    """
     exe = shutil.which("wlr-randr")
     if not exe or not os.environ.get("WAYLAND_DISPLAY"):
         return []
+
+    data = None
     cp = _run_quiet([exe, "--json"], 3)
-    if not cp or cp.returncode != 0:
-        return []
-    try:
-        data=json.loads(cp.stdout.decode("utf-8","replace") or "[]")
-    except Exception:
-        return []
-    if isinstance(data,dict):
-        data=data.get("outputs") or data.get("monitors") or []
-    if not isinstance(data,list):
-        return []
+    if cp and cp.returncode == 0:
+        try:
+            data = json.loads(cp.stdout.decode("utf-8", "replace") or "[]")
+        except Exception:
+            data = None
+    if isinstance(data, dict):
+        data = data.get("outputs") or data.get("monitors") or []
+
     rows=[]
-    for item in data:
-        if not isinstance(item,dict) or item.get("enabled") is False:
-            continue
-        dev=str(item.get("name") or item.get("output") or "").strip()
-        if not dev:
-            continue
-        pos=item.get("position") or item.get("pos") or {}
-        mode=item.get("current_mode") or item.get("mode") or {}
-        if isinstance(mode,str):
-            mm=re.search(r"(\d+)x(\d+)",mode); mode={"width":int(mm.group(1)),"height":int(mm.group(2))} if mm else {}
-        w=int(mode.get("width") or item.get("width") or 1920)
-        h=int(mode.get("height") or item.get("height") or 1080)
-        x=int(pos.get("x") or item.get("x") or 0) if isinstance(pos,dict) else 0
-        y=int(pos.get("y") or item.get("y") or 0) if isinstance(pos,dict) else 0
-        row={"id":dev,"device":dev,"x":x,"y":y,"width":w,"height":h,"primary":bool(item.get("primary") or item.get("focused")),
-             "make":str(item.get("make") or item.get("manufacturer") or ""),"model":str(item.get("model") or item.get("description") or ""),"serial":str(item.get("serial") or "")}
-        row["fingerprint"]=monitor_fingerprint(row)
-        rows.append(row)
-    if rows and not any(r["primary"] for r in rows): rows[0]["primary"]=True
-    rows.sort(key=lambda m:(not m["primary"],m["x"],m["y"],m["device"]))
+    if isinstance(data, list):
+        for item in data:
+            if not isinstance(item,dict) or item.get("enabled") is False:
+                continue
+            dev=str(item.get("name") or item.get("output") or "").strip()
+            if not dev:
+                continue
+            pos=item.get("position") or item.get("pos") or {}
+            mode=item.get("current_mode") or item.get("mode") or {}
+            if isinstance(mode,str):
+                mm=re.search(r"(\d+)x(\d+)",mode); mode={"width":int(mm.group(1)),"height":int(mm.group(2))} if mm else {}
+            w=int(mode.get("width") or item.get("width") or 1920)
+            h=int(mode.get("height") or item.get("height") or 1080)
+            x=int(pos.get("x") or item.get("x") or 0) if isinstance(pos,dict) else 0
+            y=int(pos.get("y") or item.get("y") or 0) if isinstance(pos,dict) else 0
+            row={"id":dev,"device":dev,"x":x,"y":y,"width":w,"height":h,"primary":bool(item.get("primary") or item.get("focused")),
+                 "make":str(item.get("make") or item.get("manufacturer") or ""),"model":str(item.get("model") or item.get("description") or ""),"serial":str(item.get("serial") or "")}
+            row["fingerprint"]=monitor_fingerprint(row)
+            rows.append(row)
+
+    if not rows:
+        cp = _run_quiet([exe], 3)
+        if not cp or cp.returncode != 0:
+            return []
+        text=cp.stdout.decode("utf-8", "replace")
+        current=None
+        for raw in text.splitlines():
+            if raw and not raw[0].isspace():
+                m=re.match(r"^(\S+)(?:\s+\"([^\"]*)\")?", raw.strip())
+                if not m:
+                    current=None; continue
+                current={"id":m.group(1),"device":m.group(1),"x":0,"y":0,"width":1920,"height":1080,"primary":False,
+                         "make":"","model":m.group(2) or "","serial":""}
+                rows.append(current); continue
+            if not current:
+                continue
+            line=raw.strip()
+            key,val=(line.split(":",1)+[""])[:2] if ":" in line else ("","")
+            lk=key.strip().lower(); val=val.strip()
+            if lk=="enabled" and val.lower() in {"no","false","off"}:
+                current["disabled"]=True
+            elif lk=="make": current["make"]=val
+            elif lk=="model": current["model"]=val
+            elif lk=="serial": current["serial"]=val
+            elif lk=="position":
+                mm=re.search(r"(-?\d+)\s*[, ]\s*(-?\d+)",val)
+                if mm: current["x"],current["y"]=int(mm.group(1)),int(mm.group(2))
+            elif ("current" in line.lower() or "preferred" in line.lower()) and re.search(r"\d+x\d+",line):
+                mm=re.search(r"(\d+)x(\d+)",line)
+                if mm: current["width"],current["height"]=int(mm.group(1)),int(mm.group(2))
+        rows=[r for r in rows if not r.pop("disabled",False)]
+
+    if rows and not any(r.get("primary") for r in rows):
+        # wlroots has no universal 'primary' concept.  The output containing the
+        # desktop origin is the least surprising primary fallback.
+        primary=next((r for r in rows if int(r.get("x",0))==0 and int(r.get("y",0))==0),rows[0])
+        primary["primary"]=True
+    rows.sort(key=lambda m:(not m.get("primary"),int(m.get("x",0)),int(m.get("y",0)),str(m.get("device") or "")))
     for i,row in enumerate(rows,1):
-        row["label"]=f"Scherm {i} • {row['device']} • {row['width']}×{row['height']}" + (" • primair" if row["primary"] else "")
+        row["fingerprint"]=monitor_fingerprint(row)
+        row["label"]=f"Scherm {i} • {row['device']} • {row['width']}×{row['height']}" + (" • primair" if row.get("primary") else "")
     return rows
 
 
@@ -1486,17 +1531,30 @@ def enumerate_windows_monitors() -> list[dict]:
     return enumerate_monitors()
 
 
-def choose_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
+def resolve_monitor(selector: str | None, monitors: list[dict] | None = None) -> tuple[dict, bool]:
+    """Resolve a monitor selector and report whether it matched explicitly.
+
+    The boolean matters for the settings API: silently falling back to primary
+    when a user clicked another monitor made screen switching look successful
+    while nothing actually changed.
+    """
     rows=list(monitors or enumerate_monitors())
     wanted=re.sub(r"\s+"," ",str(selector or "primary")).strip()
-    if wanted.lower() not in {"primary","primair","auto"}:
-        for row in rows:
-            if wanted.lower() in {str(row.get("id") or "").lower(),str(row.get("device") or "").lower(),str(row.get("fingerprint") or "").lower()}:
-                return row
-        if wanted.isdigit():
-            idx=int(wanted)-1
-            if 0 <= idx < len(rows): return rows[idx]
-    return next((row for row in rows if row.get("primary")), rows[0] if rows else _fallback_monitor())
+    if wanted.lower() in {"primary","primair","auto",""}:
+        return next((row for row in rows if row.get("primary")), rows[0] if rows else _fallback_monitor()), True
+    for row in rows:
+        aliases={str(row.get("id") or "").lower(),str(row.get("device") or "").lower(),str(row.get("fingerprint") or "").lower()}
+        if wanted.lower() in aliases:
+            return row, True
+    if wanted.isdigit():
+        idx=int(wanted)-1
+        if 0 <= idx < len(rows):
+            return rows[idx], True
+    return next((row for row in rows if row.get("primary")), rows[0] if rows else _fallback_monitor()), False
+
+
+def choose_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
+    return resolve_monitor(selector, monitors)[0]
 
 
 def choose_windows_monitor(selector: str | None, monitors: list[dict] | None = None) -> dict:
@@ -3438,6 +3496,10 @@ class AppState:
                 "INSERT INTO kv(key,value) VALUES('display:settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (json.dumps(clean, ensure_ascii=False, separators=(",", ":")),),
             )
+        # Monitor selection and power helpers cache enumeration briefly.  A
+        # settings save (especially kioskMonitor) must be visible immediately.
+        self.display_info_cache = None
+        self.display_info_monotonic = 0.0
         self.broadcast({"type": "settings", "settings": clean})
         return clean
 
@@ -4042,6 +4104,22 @@ class AppState:
         self.display_info_cache = dict(result)
         self.display_info_monotonic = time.monotonic()
         return result
+
+    def select_display(self, selector: str | None) -> dict:
+        """Persist an exact monitor selection and return the resolved geometry."""
+        monitors=enumerate_monitors()
+        selected,matched=resolve_monitor(selector,monitors)
+        wanted=normalize_space(str(selector or "primary")) or "primary"
+        if not matched:
+            raise ValueError(f"Scherm '{wanted}' is niet aangesloten of kon niet exact worden herkend")
+        stable=str(selected.get("fingerprint") or selected.get("device") or selected.get("id") or "primary")
+        current=self.get_display_settings()
+        current["kioskMonitor"]=stable
+        saved=self.save_display_settings(current)
+        # save_display_settings invalidates the monitor cache; force a fresh
+        # response so the caller gets the exact coordinates that the kiosk will use.
+        info=self.display_info(force=True)
+        return {"selector":stable,"settings":saved,"display":info,"selected_monitor":info.get("selected_monitor") or selected}
 
     def set_display_power(self, mode: str, manual: bool = False) -> dict:
         mode = (mode or "").lower()
@@ -5814,7 +5892,8 @@ def github_check_and_maybe_install(state: "AppState", install: bool = False) -> 
         incoming.unlink(missing_ok=True); incoming = None
         if _version_key(package_version) != _version_key(release["version"]):
             raise ValueError(f"ZIP-versie {package_version} komt niet overeen met GitHub-versie {release['version']}")
-        _write_update_status(state="staged", target_version=package_version, message="GitHub update klaar voor installatie", **base)
+        staged_status = {**base, "target_version": package_version}
+        _write_update_status(state="staged", message="GitHub update klaar voor installatie", **staged_status)
         install_meta = {
             "repo": repo, "branch": release.get("tag"), "revision": revision,
             "version": package_version, "source_kind": release.get("source_kind"),
@@ -6150,6 +6229,30 @@ def supervisor_status() -> dict:
         row["heartbeat_age_seconds"]=round(age,1) if age is not None else None;row["running"]=bool(age is not None and age<25)
         return row
     except Exception as exc: return {"running":False,"state":"invalid","error":str(exc)}
+
+
+def ensure_supervisor_running(timeout: float = 3.5) -> dict:
+    """Make backend display actions independent of how the app was started."""
+    status=supervisor_status()
+    if status.get("running"):
+        return status
+    script=ROOT / "tools" / "supervisor.py"
+    if not script.exists():
+        return {"running":False,"state":"missing","error":"supervisor.py ontbreekt"}
+    try:
+        flags=getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0
+        subprocess.Popen([sys.executable,str(script)],cwd=ROOT,env=os.environ.copy(),stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,creationflags=flags,
+                         start_new_session=(os.name!="nt"))
+    except Exception as exc:
+        return {"running":False,"state":"start-error","error":str(exc)}
+    end=time.monotonic()+max(.5,timeout)
+    while time.monotonic()<end:
+        time.sleep(.15)
+        status=supervisor_status()
+        if status.get("running"):
+            return status
+    return supervisor_status()
 
 
 MIME = {
@@ -6554,7 +6657,27 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/tts/stop":
             return self.send_json({"ok": True, "stopped": stop_host_tts()})
         if parsed.path == "/api/settings":
-            return self.send_json({"settings": self.state.save_display_settings(payload)})
+            # Treat monitor changes as an action, not merely a preference.  This
+            # makes API/backend saves behave the same as the dedicated screen UI.
+            old_selector=str(self.state.get_display_settings().get("kioskMonitor") or "primary")
+            requested_selector=str(payload.get("kioskMonitor") or old_selector) if isinstance(payload,dict) else old_selector
+            display_changed="kioskMonitor" in (payload or {}) and requested_selector != old_selector
+            if display_changed:
+                monitors=enumerate_monitors();selected,matched=resolve_monitor(requested_selector,monitors)
+                if not matched:
+                    return self.send_json({"ok":False,"error":f"Scherm '{requested_selector}' is niet aangesloten of kon niet exact worden herkend","display":self.state.display_info(force=True)},409)
+                payload=dict(payload);payload["kioskMonitor"]=str(selected.get("fingerprint") or selected.get("device") or selected.get("id") or "primary")
+            saved=self.state.save_display_settings(payload)
+            response={"settings":saved,"display_reposition_requested":False}
+            if display_changed:
+                sup=ensure_supervisor_running()
+                response["supervisor"]=sup
+                if sup.get("running"):
+                    response["display_reposition_requested"]=True
+                    response["command"]=queue_supervisor_command("restart-kiosk")
+                else:
+                    response["display_warning"]="Schermkeuze opgeslagen, maar kiosk-supervisor kon niet worden gestart"
+            return self.send_json(response)
         if parsed.path == "/api/setup":
             try:
                 return self.send_json({"ok": True, "setup": self.state.save_setup(payload)})
@@ -6658,8 +6781,21 @@ class Handler(BaseHTTPRequestHandler):
                 delivered=self.state.broadcast({"type":"replay","message":rows[0],"speak":bool(payload.get("speak",True))})
                 return self.send_json({"ok":delivered>0,"clients":delivered,"action":action},200 if delivered else 409)
             if action in {"restart-kiosk","restart-backend"}:
-                return self.send_json({"ok":True,"command":queue_supervisor_command(action)})
+                sup=ensure_supervisor_running()
+                if not sup.get("running"):
+                    return self.send_json({"ok":False,"error":"Supervisor kon niet worden gestart","supervisor":sup},503)
+                return self.send_json({"ok":True,"command":queue_supervisor_command(action),"supervisor":sup})
             return self.send_json({"ok":False,"error":"Onbekende snelactie"},400)
+        if parsed.path == "/api/display/select":
+            try:
+                result=self.state.select_display(payload.get("selector") or payload.get("kioskMonitor") or "primary")
+            except ValueError as exc:
+                return self.send_json({"ok":False,"error":str(exc),"display":self.state.display_info(force=True)},409)
+            sup=ensure_supervisor_running()
+            if not sup.get("running"):
+                return self.send_json({"ok":False,"saved":True,"error":"Schermkeuze is opgeslagen, maar de kiosk-supervisor kon niet worden gestart","supervisor":sup,**result},503)
+            command=queue_supervisor_command("restart-kiosk")
+            return self.send_json({"ok":True,"saved":True,"reposition_requested":True,"command":command,"supervisor":sup,**result})
         if parsed.path == "/api/display/power":
             return self.send_json(self.state.set_display_power(str(payload.get("state", "")), bool(payload.get("manual", False))))
         if parsed.path == "/api/feeds/reconnect":

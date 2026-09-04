@@ -4,7 +4,7 @@ ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('p2000_v440',ROOT/'backend'/'server.py');mod=importlib.util.module_from_spec(spec);sys.modules[spec.name]=mod;spec.loader.exec_module(mod)
 server=(ROOT/'backend'/'server.py').read_text(encoding='utf-8');app=(ROOT/'frontend'/'app.js').read_text(encoding='utf-8');control=(ROOT/'frontend'/'control.js').read_text(encoding='utf-8');html=(ROOT/'frontend'/'control.html').read_text(encoding='utf-8')
 checks={
- 'version_440':mod.APP_VERSION=='4.4.3' and (ROOT/'VERSION').read_text().strip()=='4.4.3',
+ 'version_440':mod.APP_VERSION=='4.4.4' and (ROOT/'VERSION').read_text().strip()=='4.4.4',
  'supervisor':(ROOT/'tools'/'supervisor.py').is_file() and 'pending-health.json' in (ROOT/'tools'/'supervisor.py').read_text(),
  'installers':all((ROOT/x).is_file() for x in ['INSTALL_P2000.bat','INSTALL_P2000.ps1','INSTALL_P2000.sh','UNINSTALL_P2000.bat','UNINSTALL_P2000.ps1','UNINSTALL_P2000.sh']),
  'feed_race':'ThreadPoolExecutor' in server and 'feed_race_enabled' in server and 'race_feed_urls' in server,

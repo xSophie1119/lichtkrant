@@ -1,8 +1,17 @@
-# P2000 Monitor — MultiPlatform v4.4.3
+# P2000 Monitor — MultiPlatform v4.4.4
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+
+## Hotfix v4.4.4 — updater + schermwissel
+
+- Fix voor dubbele `target_version` in de update-status bij het klaarzetten van een GitHub-release.
+- Schermkeuze wordt nu direct backend-side toegepast: valideren, stabiele monitor-ID opslaan en kiosk opnieuw plaatsen.
+- De backend start de supervisor automatisch als die voor een schermwissel nog niet draait.
+- Een tijdelijk losgekoppelde monitor blijft als keuze bewaard in plaats van terug te springen naar `primary`.
+- Linux `wlr-randr` werkt nu ook met distroversies zonder `--json`.
+- Updatepad en schermwissel opnieuw regressiegetest.
 
 ## Nieuw in v4.4.3 — 112-nu + landelijke parser + eigen rustscherm
 
@@ -129,11 +138,12 @@ Als autoplay bij een handmatig geopend tabblad wordt geblokkeerd verschijnt **OM
 
 ## Schermen
 
-In **Instellingen → Scherm & slaapstand** kies je op welk scherm de kiosk bij de volgende start moet openen.
+In **Instellingen → Scherm & slaapstand** kies je op welk scherm de kiosk moet staan. Een andere keuze wordt **direct toegepast**: de backend slaat de stabiele monitor-ID op en laat de kiosk opnieuw op de juiste coördinaten starten.
 
 - Windows: native monitorcoördinaten en resoluties.
 - Linux/X11: `xrandr`.
-- Linux/wlroots-Wayland: `wlr-randr --json`.
+- Linux/wlroots-Wayland: `wlr-randr`, met JSON- én tekstparser.
+- Een tijdelijk losgekoppeld gekozen scherm blijft opgeslagen en wordt weer gebruikt zodra het terugkomt.
 - Geen ondersteunde detectietool: veilige primaire 1920×1080 fallback; de monitor blijft bruikbaar.
 
 De monitor verandert geen desktopresolutie en herschrijft geen permanente displayconfiguratie.
@@ -155,7 +165,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.3.zip
+P2000_Monitor_MultiPlatform_v4.4.4.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.

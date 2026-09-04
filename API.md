@@ -1,4 +1,4 @@
-# P2000 Monitor lokale API — v4.4.3
+# P2000 Monitor lokale API — v4.4.4
 
 De API is op Windows en Linux gelijk en luistert standaard op poort `8765`.
 

@@ -1,4 +1,4 @@
-P2000 MONITOR v4.4.3 — WINDOWS + LINUX
+P2000 MONITOR v4.4.4 — WINDOWS + LINUX
 ======================================
 
 WINDOWS
@@ -45,7 +45,7 @@ Monitor:      http://127.0.0.1:8765/
 Instellingen: http://127.0.0.1:8765/control
 Wizard:       http://127.0.0.1:8765/setup.html?edit=1
 
-SNELBEDIENING v4.4.3
+SNELBEDIENING v4.4.4
 - Normaal / Alleen prioriteit / STIL
 - mastervolume, stop/replay omroep, testtoon/testomroep
 - scherm aan/uit, kiosk/backend herstart

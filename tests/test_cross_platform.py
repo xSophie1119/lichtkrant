@@ -7,7 +7,7 @@ spec=importlib.util.spec_from_file_location('p2000_server_cross_platform',ROOT/'
 server=importlib.util.module_from_spec(spec); sys.modules[spec.name]=server; spec.loader.exec_module(server)
 
 checks={}
-checks['version_430']=server.APP_VERSION=='4.4.3'
+checks['version_430']=server.APP_VERSION=='4.4.4'
 checks['runtime_platform']=server.runtime_platform() in {'windows','linux','macos'}
 monitors=server.enumerate_monitors()
 checks['monitor_enumeration']=isinstance(monitors,list) and len(monitors)>=1
@@ -38,7 +38,7 @@ checks['rollback_cross_platform']='SIGTERM' in rollback and 'taskkill' in rollba
 kiosk=(ROOT/'tools'/'kiosk_display.py').read_text('utf-8')
 checks['kiosk_cross_platform']='--shell' in kiosk and '"cmd"' in kiosk and '"sh"' in kiosk
 readme=(ROOT/'README.md').read_text('utf-8')
-checks['readme_multiplatform']='MultiPlatform v4.4.3' in readme and './START_P2000.sh' in readme and 'START_P2000.bat' in readme
+checks['readme_multiplatform']='MultiPlatform v4.4.4' in readme and './START_P2000.sh' in readme and 'START_P2000.bat' in readme
 failed=[k for k,v in checks.items() if not v]
 print({'tests':len(checks),'passed':len(checks)-len(failed),'failures':len(failed),'failed':failed})
 raise SystemExit(1 if failed else 0)

@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
 STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.3'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.4'
 LOG=DATA/'supervisor.log'
 _runtime_base=Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
 if not _runtime_base.exists() or not os.access(_runtime_base, os.W_OK | os.X_OK): _runtime_base=Path('/tmp')
