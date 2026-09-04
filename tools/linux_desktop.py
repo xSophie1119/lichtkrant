@@ -144,11 +144,15 @@ def runtime_dir(explicit: str = "") -> Path:
             target = base / f"p2000-monitor-{os.getuid()}"
     else:
         base_env = os.environ.get("XDG_RUNTIME_DIR")
-        base = Path(base_env) if base_env else Path("/tmp")
+        base = Path(base_env) if base_env else Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "p2000-monitor" / "runtime"
         if not base.exists() or not os.access(base, os.W_OK | os.X_OK):
-            base = Path("/tmp")
+            base = Path(os.environ.get("XDG_CACHE_HOME") or HOME / ".cache") / "p2000-monitor" / "runtime"
         target = base / f"p2000-monitor-{os.getuid()}"
     target.mkdir(parents=True, exist_ok=True)
+    try:
+        target.chmod(0o700)
+    except OSError:
+        pass
     return target
 
 
@@ -201,6 +205,26 @@ def _is_p2000_browser_cmd(cmd: str) -> bool:
     if not profile_marker:
         return False
     return not any(x in low for x in ("linux_desktop.py", "supervisor.py", "runtime_probe.py"))
+
+
+def _is_p2000_kiosk_cmd(cmd: str) -> bool:
+    """Match only the dedicated kiosk profile, never control/wizard windows."""
+    if not _is_p2000_browser_cmd(cmd):
+        return False
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        tokens = cmd.split()
+    profile = ""
+    for index, token in enumerate(tokens):
+        low = token.lower()
+        if low.startswith("--user-data-dir="):
+            profile = token.split("=", 1)[1]
+            break
+        if low in {"--profile", "-profile"} and index + 1 < len(tokens):
+            profile = tokens[index + 1]
+            break
+    return bool(profile and Path(profile.strip('"\'')).name.lower().endswith("-kiosk"))
 
 def matching_pids(profile: Path | None = None, url: str = "") -> list[int]:
     profile_s = str(profile) if profile else ""
@@ -365,18 +389,21 @@ def _launch(c: Candidate, profile: Path, url: str, kiosk: bool, position: str,
                 continue
         (rundir / ("browser.pid" if kiosk else "control-browser.pid")).write_text(str(proc.pid), encoding="utf-8")
         end = time.monotonic() + max(0.6, probe_seconds)
+        exit_code = None
         while time.monotonic() < end:
-            if proc.poll() is None or matching_pids(profile, url):
-                time.sleep(0.15)
-                if proc.poll() is None or matching_pids(profile, url):
-                    if kiosk and mode=="x11": _force_x11_geometry(profile,position,size,log_path)
-                    return True, f"{c.label} ({mode})"
+            # Wrappers (Snap/Flatpak) may exit after handing off to the actual
+            # browser.  That handoff is success only when the profile process is
+            # visible.  A still-running parent must survive the complete probe
+            # window; returning after 150 ms hid many brief open/close failures.
+            current = proc.poll()
+            if current is not None:
+                exit_code = current
             time.sleep(0.15)
-        if matching_pids(profile, url):
+        if proc.poll() is None or matching_pids(profile, url):
             if kiosk and mode=="x11": _force_x11_geometry(profile,position,size,log_path)
             return True, f"{c.label} ({mode})"
         with log_path.open("a", encoding="utf-8") as log:
-            log.write(f"browser stopte direct, exit={proc.poll()}\n")
+            log.write(f"browser stopte tijdens startcontrole, exit={exit_code if exit_code is not None else proc.poll()}\n")
         _clean_profile_locks(profile)
     return False, c.label
 
@@ -416,12 +443,15 @@ def stop_kiosk(rundir_path: str = "") -> int:
     rd = runtime_dir(rundir_path)
     pids: set[int] = set()
     pf = rd / "browser.pid"
+    rows = dict(_proc_cmdlines())
     try:
-        pids.add(int(pf.read_text().strip()))
+        saved_pid = int(pf.read_text().strip())
+        if _is_p2000_kiosk_cmd(rows.get(saved_pid, "")):
+            pids.add(saved_pid)
     except Exception:
         pass
-    for pid, cmd in _proc_cmdlines():
-        if _is_p2000_browser_cmd(cmd) and "127.0.0.1:8765" in cmd:
+    for pid, cmd in rows.items():
+        if _is_p2000_kiosk_cmd(cmd):
             pids.add(pid)
     stopped = 0
     for pid in sorted(pids):

@@ -8,7 +8,8 @@ if not exist "%~dp0backend\server.py" goto :fatal_extract
 if not exist "%~dp0frontend\index.html" goto :fatal_extract
 if not exist "%~dp0ENSURE_PYTHON.bat" goto :fatal_extract
 title P2000 Monitor - configuratiewizard
-set "P2000_VERSION=4.4.11"
+set "P2000_VERSION=4.4.12"
+if exist "%~dp0VERSION" set /p P2000_VERSION=<"%~dp0VERSION"
 set "P2000_LOGDIR=%LOCALAPPDATA%\P2000-Monitor\Logs"
 if not exist "%P2000_LOGDIR%" mkdir "%P2000_LOGDIR%" >nul 2>&1
 
@@ -17,18 +18,32 @@ call "%~dp0ENSURE_PYTHON.bat" /nopause
 if errorlevel 1 goto :fatal_python
 
 echo [2/3] Backend controleren...
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" >nul 2>&1
-if errorlevel 1 (
-  >"%P2000_LOGDIR%\backend.log" echo ==== P2000 backend gestart %date% %time% ====
-  start "P2000 Monitor Backend" /min "%~dp0RUN_BACKEND.bat"
-)
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 15 >nul 2>&1
+call :ensure_backend
 if errorlevel 1 goto :fatal_backend
 
 echo [3/3] Configuratiewizard openen...
 start "" "http://127.0.0.1:8765/setup.html?edit=1"
 timeout /t 2 /nobreak >nul
+exit /b 0
+
+:ensure_backend
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
+if errorlevel 1 exit /b 1
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" >nul 2>&1
+if not errorlevel 1 exit /b 0
+call :start_backend_once
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 15 >nul 2>&1
+if not errorlevel 1 exit /b 0
+if exist "%P2000_LOGDIR%\backend.log" type "%P2000_LOGDIR%\backend.log" >>"%P2000_LOGDIR%\startup.log"
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
+if errorlevel 1 exit /b 1
+call :start_backend_once
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 18 >nul 2>&1
+exit /b %errorlevel%
+
+:start_backend_once
+>>"%P2000_LOGDIR%\backend.log" echo ==== P2000 backend gestart %date% %time% ====
+start "P2000 Monitor Backend" /min "%~dp0RUN_BACKEND.bat"
 exit /b 0
 
 :fatal_python

@@ -60,23 +60,33 @@ def _proc_listener_pids(port: str) -> set[int]:
     return out
 
 def _proc_cmdline(pid:int)->str:
-    if os.name=="nt": return ""
+    if os.name=="nt":
+        # Query only the requested PID.  netstat can identify the listener, but
+        # its command line is required before we may safely terminate it.
+        ps=(f'$p=Get-CimInstance Win32_Process -Filter "ProcessId = {int(pid)}" '
+            '-ErrorAction SilentlyContinue; if($p.CommandLine){[Console]::Out.Write($p.CommandLine)}')
+        cp=_run(["powershell.exe","-NoLogo","-NoProfile","-NonInteractive","-Command",ps])
+        if cp and cp.returncode==0 and cp.stdout.strip():return cp.stdout.strip()
+        # WMIC is absent on newer Windows builds, but remains a harmless fallback
+        # for older/offline machines where PowerShell CIM is unavailable.
+        cp=_run(["wmic","process","where",f"processid={int(pid)}","get","CommandLine","/value"])
+        if cp and cp.returncode==0:
+            for line in cp.stdout.splitlines():
+                if line.lower().startswith("commandline="):return line.split("=",1)[1].strip()
+        return ""
     try:
         raw=(Path("/proc")/str(pid)/"cmdline").read_bytes().replace(b"\x00",b" ").decode("utf-8","replace").strip()
         return raw
     except Exception:return ""
 
 def _is_this_p2000_backend(pid:int)->bool:
-    if os.name=="nt":
-        # Windows stale-version recovery still relies on the runtime identity;
-        # never kill an unknown listener merely because it owns port 8765.
-        return False
     cmd=_proc_cmdline(pid)
     if not cmd:return False
-    expected=str((ROOT/"backend"/"server.py").resolve())
-    try: expected_alt=str((ROOT/"backend"/"server.py"))
-    except Exception: expected_alt=expected
-    if expected in cmd or expected_alt in cmd:return True
+    normalized=cmd.replace("\\","/")
+    expected=str((ROOT/"backend"/"server.py").resolve()).replace("\\","/")
+    if os.name=="nt":
+        normalized=normalized.casefold();expected=expected.casefold()
+    if expected in normalized:return True
     # Symlinked installs may preserve a different textual root in argv. Verify
     # cwd plus the exact backend/server.py suffix before treating it as ours.
     try:
@@ -88,8 +98,10 @@ def _is_this_p2000_backend(pid:int)->bool:
     # during manual Linux upgrades: the old backend may still own 8765 while the
     # user starts the new folder. Only accept a server.py whose project root has
     # the P2000 VERSION + frontend/index.html markers.
-    for token in cmd.split():
-        if not token.endswith("backend/server.py"):continue
+    candidates=[]
+    for quoted,bare in re.findall(r'(?i)(?:"([^"\r\n]*backend[\\/]server\.py)"|([^\s"\r\n]*backend[\\/]server\.py))',cmd):
+        candidates.append(quoted or bare)
+    for token in candidates:
         try:
             server=Path(token).resolve();project=server.parent.parent
             if (project/"VERSION").is_file() and (project/"frontend"/"index.html").is_file():return True
@@ -99,7 +111,7 @@ def _is_this_p2000_backend(pid:int)->bool:
 def describe_listener_pids(pids:set[int])->str:
     rows=[]
     for pid in sorted(pids):
-        cmd=_proc_cmdline(pid) if os.name!="nt" else ""
+        cmd=_proc_cmdline(pid)
         rows.append(f"PID {pid}"+(f": {cmd[:240]}" if cmd else ""))
     return "; ".join(rows) if rows else "geen listener gevonden"
 
@@ -135,10 +147,12 @@ def terminate_pids(pids:set[int])->bool:
     for pid in sorted(pids):
         try:
             if os.name=="nt":
-                cp=_run(["taskkill","/PID",str(pid),"/F"]);ok=ok and bool(cp and cp.returncode==0)
+                cp=_run(["taskkill","/PID",str(pid),"/F"])
+                ok=ok and bool((cp and cp.returncode==0) or not _proc_cmdline(pid))
             else:
                 os.kill(pid,signal.SIGTERM)
-        except (ProcessLookupError,PermissionError): ok=False
+        except ProcessLookupError:pass
+        except PermissionError:ok=False
         except Exception: ok=False
     if os.name!="nt" and pids:
         end=time.monotonic()+2
@@ -168,7 +182,7 @@ def kill_stale(expected:str)->bool:
     if not pids:
         return True
     # A hung P2000 backend may own the socket while /api/runtime no longer answers.
-    # Recover that exact process on Linux, but never kill an unrelated service.
+    # Recover that exact process on either OS, but never kill another service.
     ours={pid for pid in pids if _is_this_p2000_backend(pid)}
     if ours:
         print(f"Vastgelopen P2000 backend op poort 8765 herstellen: {describe_listener_pids(ours)}")
@@ -182,35 +196,45 @@ def kill_stale(expected:str)->bool:
     return False
 
 def _other_p2000_supervisor_pids()->set[int]:
-    if os.name=="nt" or not os.path.isdir("/proc"):
-        return set()
-    out=set(); me=os.getpid()
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit(): continue
-        pid=int(entry.name)
-        if pid==me: continue
-        cmd=_proc_cmdline(pid)
-        if not cmd or "tools/supervisor.py" not in cmd.replace("\\","/"): continue
+    out=set(); me=os.getpid(); rows=[]
+    if os.name=="nt":
+        ps=("Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | "
+            "Where-Object {$_.CommandLine -and $_.CommandLine -match 'tools[\\\\/]supervisor\\.py'} | "
+            "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress")
+        cp=_run(["powershell.exe","-NoLogo","-NoProfile","-NonInteractive","-Command",ps])
+        if cp and cp.returncode==0 and cp.stdout.strip():
+            try:
+                data=json.loads(cp.stdout);data=data if isinstance(data,list) else [data]
+                rows=[(int(x.get("ProcessId") or 0),str(x.get("CommandLine") or "")) for x in data]
+            except Exception:rows=[]
+    elif os.path.isdir("/proc"):
+        for entry in Path("/proc").iterdir():
+            if entry.name.isdigit():rows.append((int(entry.name),_proc_cmdline(int(entry.name))))
+    for pid,cmd in rows:
+        if pid<=0 or pid==me: continue
+        if not cmd or "tools/supervisor.py" not in cmd.replace("\\","/").casefold(): continue
         # Only touch recognizable P2000 project supervisors owned by this user.
-        try:
-            if (Path("/proc")/str(pid)).stat().st_uid != os.getuid(): continue
-        except Exception:
-            continue
-        for token in cmd.split():
-            if token.endswith("tools/supervisor.py"):
-                try:
-                    project=Path(token).resolve().parent.parent
-                    if (project/"VERSION").is_file() and (project/"frontend"/"index.html").is_file():
-                        out.add(pid); break
-                except Exception: pass
+        if os.name!="nt":
+            try:
+                if (Path("/proc")/str(pid)).stat().st_uid != os.getuid(): continue
+            except Exception:continue
+        for quoted,bare in re.findall(r'(?i)(?:"([^"\r\n]*tools[\\/]supervisor\.py)"|([^\s"\r\n]*tools[\\/]supervisor\.py))',cmd):
+            try:
+                project=Path(quoted or bare).resolve().parent.parent
+                if (project/"VERSION").is_file() and (project/"frontend"/"index.html").is_file():
+                    out.add(pid);break
+            except Exception:pass
     return out
 
 def stop_all_p2000()->bool:
     ok=True
     obj=runtime()
+    pids=listener_pids()
     if obj and obj.get("app")=="P2000 Monitor":
-        pids=listener_pids()
-        if pids: ok=terminate_pids(pids) and ok
+        if pids:ok=terminate_pids(pids) and ok
+    elif pids:
+        ours={pid for pid in pids if _is_this_p2000_backend(pid)}
+        if ours:ok=terminate_pids(ours) and ok
     supers=_other_p2000_supervisor_pids()
     if supers:
         print(f"Oude P2000 supervisor(s) stoppen: {', '.join(map(str,sorted(supers)))}")
@@ -219,8 +243,12 @@ def stop_all_p2000()->bool:
 
 def stop_any()->bool:
     obj=runtime()
-    if not obj or obj.get("app")!="P2000 Monitor":return True
-    pids=listener_pids();return terminate_pids(pids) if pids else False
+    pids=listener_pids()
+    if obj and obj.get("app")=="P2000 Monitor":return terminate_pids(pids) if pids else False
+    # A wedged backend may not answer /api/runtime.  Stop it only after its
+    # command line proves that it is a P2000 backend; leave other services alone.
+    ours={pid for pid in pids if _is_this_p2000_backend(pid)}
+    return terminate_pids(ours) if ours else True
 
 def main()->int:
     ap=argparse.ArgumentParser();ap.add_argument("--version",default="");ap.add_argument("--wait",type=float,default=0);ap.add_argument("--kill-stale",action="store_true");ap.add_argument("--stop",action="store_true");ap.add_argument("--stop-all",action="store_true");ap.add_argument("--describe-port",action="store_true")

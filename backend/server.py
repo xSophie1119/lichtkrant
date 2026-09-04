@@ -111,7 +111,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.4.11"
+APP_VERSION = "4.4.12"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -4118,6 +4118,13 @@ class AppState:
         return value
 
     def save_display_settings(self, payload: dict) -> dict:
+        # The HTTP server handles requests concurrently.  Keep the complete
+        # read/merge/write transaction under one re-entrant lock so two partial
+        # saves cannot silently overwrite each other's unrelated fields.
+        with self.config_lock:
+            return self._save_display_settings_locked(payload)
+
+    def _save_display_settings_locked(self, payload: dict) -> dict:
         allowed = {
             "name", "services", "cities", "keywords", "nightMode", "nightStart", "nightEnd",
             "messageMinutes", "maxAgeMinutes", "dateFormat", "idleCentered", "burnInProtection",
@@ -6177,6 +6184,9 @@ def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = "brand
         raise RuntimeError("geen TTS-audio beschikbaar: "+"; ".join(errors)) from exc
 
 
+_TTS_ONLINE_LOCK = threading.Lock()
+
+
 def generate_online_tts(text: str) -> bytes:
     """Generate/cached Dutch MP3 speech using one fixed Dutch gTTS voice route.
 
@@ -6191,35 +6201,43 @@ def generate_online_tts(text: str) -> bytes:
     cache_key = hashlib.sha256(("gtts-nl-fixed-com-v3|" + text).encode("utf-8")).hexdigest()
     TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = TTS_CACHE_DIR / f"{cache_key}.mp3"
-    if cache_file.exists() and cache_file.stat().st_size > 100:
-        return cache_file.read_bytes()
     try:
-        from gtts import gTTS
-    except Exception as e:
-        raise RuntimeError(f"gTTS niet beschikbaar: {e}") from e
-
-    last_error = None
-    # Try the fixed Dutch Google route briefly. The lightkrant browser has its own Dutch fallback, so a slow cloud voice must never block the dispatch queue.
-    for attempt in range(1):
+        if cache_file.exists() and cache_file.stat().st_size > 100:
+            return cache_file.read_bytes()
+    except OSError:
+        pass
+    # Identical simultaneous announcements used to share one fixed .tmp path.
+    # Serialize the cache miss and recheck inside the lock to prevent replace/
+    # unlink races and duplicate network calls.
+    with _TTS_ONLINE_LOCK:
+        try:
+            if cache_file.exists() and cache_file.stat().st_size > 100:
+                return cache_file.read_bytes()
+        except OSError:
+            pass
+        try:
+            from gtts import gTTS
+        except Exception as e:
+            raise RuntimeError(f"gTTS niet beschikbaar: {e}") from e
+        tmp = cache_file.with_name(f"{cache_file.name}.{os.getpid()}.{threading.get_ident()}.tmp")
         try:
             fp = BytesIO()
             gTTS(text=text, lang="nl", tld="com", slow=False, timeout=(3, 5)).write_to_fp(fp)
             data = fp.getvalue()
             if len(data) < 100:
                 raise RuntimeError("lege TTS-respons")
-            tmp = cache_file.with_suffix(".tmp")
             tmp.write_bytes(data)
-            tmp.replace(cache_file)
+            os.replace(tmp, cache_file)
             files = sorted(TTS_CACHE_DIR.glob("*.mp3"), key=lambda f: f.stat().st_mtime, reverse=True)
             for old in files[100:]:
                 try: old.unlink()
                 except OSError: pass
             return data
         except Exception as e:
-            last_error = e
-            if attempt < 2:
-                time.sleep(0.35 * (attempt + 1))
-    raise RuntimeError(f"vaste Nederlandse TTS tijdelijk niet beschikbaar: {last_error}")
+            raise RuntimeError(f"vaste Nederlandse TTS tijdelijk niet beschikbaar: {e}") from e
+        finally:
+            try: tmp.unlink(missing_ok=True)
+            except OSError: pass
 
 
 _TTS_PLAYER_LOCK = threading.Lock()
@@ -7296,6 +7314,15 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
     """Threading server that treats vanished browsers as a normal network event."""
     daemon_threads = True
     allow_reuse_address = True
+    request_queue_size = 64
+    client_timeout_seconds = 35
+
+    def get_request(self):
+        request, client_address = super().get_request()
+        # A LAN client that sends an incomplete request/body must not occupy a
+        # worker forever. SSE emits a heartbeat every 20 s, below this timeout.
+        request.settimeout(self.client_timeout_seconds)
+        return request, client_address
 
     def handle_error(self, request, client_address):
         exc = sys.exc_info()[1]

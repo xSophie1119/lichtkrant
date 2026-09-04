@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.11';
+const CLIENT_VERSION='4.4.12';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -279,9 +279,7 @@ async function loadSetupProfile(){
 
 async function loadVehicleDb(){
   try{
-    const r=await fetch('/api/vehicles',{cache:'no-store'});
-    if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);
-    const data=await r.json();
+    const data=await json('/api/vehicles');
     state.vehicleDb=(data&&data.vehicles)||{};
     state.vehicleDbMeta=(data&&data.meta)||null;
     rebuildVehiclePostMap();
@@ -1501,8 +1499,8 @@ function draw(){
 }
 
 let renderPending=false;function render(){if(renderPending)return;renderPending=true;(globalThis.requestAnimationFrame||((fn)=>setTimeout(fn,0)))(()=>{renderPending=false;draw();syncIncidentMap()})}
-async function json(url,opts){const r=await fetch(url,{cache:'no-store',...(opts||{})});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return r.json()}
-let monitorRuntimeIdentity=null,monitorReloading=false,monitorRuntimeFailures=0,monitorEventSource=null,monitorRuntimeRetryTimer=null;
+async function json(url,opts={}){const {timeoutMs=12000,...fetchOpts}=opts||{},controller=!fetchOpts.signal&&typeof AbortController!=='undefined'?new AbortController():null,timer=controller?setTimeout(()=>controller.abort(),Math.max(500,timeoutMs)):null;try{const r=await fetch(url,{cache:'no-store',...fetchOpts,signal:fetchOpts.signal||controller?.signal});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return await r.json()}catch(e){if(e?.name==='AbortError')throw new Error(`Verzoek duurde langer dan ${Math.round(timeoutMs/1000)} seconden`);throw e}finally{if(timer)clearTimeout(timer)}}
+let monitorRuntimeIdentity=null,monitorReloading=false,monitorRuntimeFailures=0,monitorEventSource=null,monitorRuntimeRetryTimer=null,monitorRuntimePromise=null,refreshPromise=null;
 function hardReloadMonitor(reason='runtime'){
   if(monitorReloading)return false;monitorReloading=true;
   const u=new URL(location.href);u.searchParams.set('_monitor_reload',`${Date.now()}-${Math.random().toString(36).slice(2,8)}`);u.searchParams.set('_client',CLIENT_VERSION);
@@ -1522,9 +1520,9 @@ async function reportClientHealth(){
   const rows=[...(state.renderPerf.samples||[])].filter(Number.isFinite).sort((a,b)=>a-b),sum=rows.reduce((a,b)=>a+b,0),p95=rows.length?rows[Math.min(rows.length-1,Math.floor((rows.length-1)*.95))]:0;
   const rect=canvas.getBoundingClientRect(),heap=Number(globalThis.performance?.memory?.usedJSHeapSize)||0;
   const a=state.audioStats||{};const payload={viewport:`${Math.round(globalThis.innerWidth||rect.width)}x${Math.round(globalThis.innerHeight||rect.height)}`,canvas:`${canvas.width}x${canvas.height}`,dpr:Number(globalThis.devicePixelRatio)||1,render_avg_ms:rows.length?sum/rows.length:0,render_p95_ms:p95,render_max_ms:rows.length?rows.at(-1):0,render_samples:rows.length,js_heap_used:heap,active:activeVisible(),active_count:(state.activeMessages||[]).length,map_visible:!!state.mapVisible,busy:busyPeriodActive(),visibility:document.visibilityState||'unknown',speech_queue:(state.speechQueue||[]).length,speech_active:!!state.speechCurrent,speech_mode:String(state.settings.speechMode||'normal'),master_volume:Number(state.settings.masterVolume??100),audio_attempts:Number(a.attempts)||0,audio_successes:Number(a.successes)||0,audio_failures:Number(a.failures)||0,audio_fallbacks:Number(a.fallbacks)||0,audio_last_error:String(a.lastError||''),audio_last_mode:String(a.lastMode||''),audio_unlocked:!!a.unlocked,audio_last_success_at:Number(a.lastSuccessAt)||0};
-  try{await fetch('/api/client-health',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store',keepalive:true})}catch{}
+  try{await json('/api/client-health',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true,timeoutMs:8000})}catch{}
 }
-async function watchMonitorRuntime(){try{const d=await json(`/api/runtime?_=${Date.now()}`);monitorRuntimeFailures=0;observeMonitorRuntime(d);return true}catch{monitorRuntimeFailures++;if(monitorRuntimeFailures<8)scheduleRuntimeWatch(Math.min(5000,750*monitorRuntimeFailures));return false}}
+function watchMonitorRuntime(){if(monitorRuntimePromise)return monitorRuntimePromise;monitorRuntimePromise=(async()=>{try{const d=await json(`/api/runtime?_=${Date.now()}`,{timeoutMs:5000});monitorRuntimeFailures=0;observeMonitorRuntime(d);return true}catch{monitorRuntimeFailures++;if(monitorRuntimeFailures<8)scheduleRuntimeWatch(Math.min(5000,750*monitorRuntimeFailures));return false}})().finally(()=>{monitorRuntimePromise=null});return monitorRuntimePromise}
 let sharedSettingsSignature='';
 function settingsSignature(settings){try{return JSON.stringify(settings||{})}catch{return''}}
 function applySharedSettings(settings){const incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);merged.speechEngine='online';merged.speechMode=['normal','priority','mute'].includes(String(merged.speechMode))?String(merged.speechMode):'normal';merged.masterVolume=Math.max(0,Math.min(100,Number(merged.masterVolume??100)));sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&merged.speechMode!=='mute'&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false||merged.speechMode==='mute'){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
@@ -1532,7 +1530,7 @@ async function loadSharedSettings(){try{const d=await json('/api/settings'),remo
 async function pollSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};const sig=settingsSignature(remote);if(Object.keys(remote).length&&sig!==sharedSettingsSignature)applySharedSettings(remote)}catch{}}
 async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.displaySleep)return;if(!force&&state.lastPowerWanted===wanted)return;state.lastPowerWanted=wanted;try{const r=await json('/api/display/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:wanted})});if(!r?.ok)state.lastPowerWanted=null;else if(r?.held){const retry=Math.max(1,Number(r.retry_after)||5)*1000;setTimeout(()=>{if(state.lastPowerWanted===wanted){state.lastPowerWanted=null;syncDisplayPower()}},retry+250)}}catch{state.lastPowerWanted=null}}
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
-async function refresh(){try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){const ordered=[...state.messages].sort((a,b)=>-compareMessageNewest(a,b));ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m)});state.started=true;considerLatestAtStartup()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds();freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(m=>{if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)})}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}}
+function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){const ordered=[...state.messages].sort((a,b)=>-compareMessageNewest(a,b));ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m)});state.started=true;considerLatestAtStartup()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds();freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(m=>{if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)})}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
 function incoming(m){if(!m||state.knownIds.has(m.id))return;state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
 function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'){handleTest(p.payload||{})}else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
@@ -1558,7 +1556,7 @@ function tick(){
   syncDisplayPower();render()
 }
 function fullscreen(){if(!document.fullscreenElement)document.documentElement.requestFullscreen?.();else document.exitFullscreen?.()}
-async function reportTestResult(payload,ok,detail){const token=String(payload?.token||'').trim();if(!token)return;try{await fetch('/api/test-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,ok:!!ok,detail:String(detail||'').slice(0,240)}),cache:'no-store'})}catch{}}
+async function reportTestResult(payload,ok,detail){const token=String(payload?.token||'').trim();if(!token)return;try{await json('/api/test-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,ok:!!ok,detail:String(detail||'').slice(0,240)}),timeoutMs:8000})}catch{}}
 function handleTest(payload){
   const token=payload?.token||payload?.at||null;if(token&&token===state.lastTestToken)return;if(token)state.lastTestToken=token;
   const mode=String(payload?.mode||'message');

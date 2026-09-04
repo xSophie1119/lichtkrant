@@ -19,11 +19,10 @@ hydrate_graphics_env
 exec >>"$LOG" 2>&1
 printf '\n[%s] Autostart gestart. session=%s display=%s wayland=%s\n' "$(date '+%F %T')" "${XDG_SESSION_TYPE:-}" "${DISPLAY:-}" "${WAYLAND_DISPLAY:-}"
 # Desktop environment can invoke autostart entries before XWayland/Wayland is fully usable.
-for _ in $(seq 1 30); do
+for ((waited=0; waited<45; waited++)); do
+  hydrate_graphics_env
   [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && break
   sleep 1
-  # Environment variables cannot appear later in this process, but this delay still
-  # helps file-manager/session races when they are already set but the compositor is busy.
 done
 sleep "${P2000_AUTOSTART_DELAY:-4}"
 export P2000_NO_PAUSE=1

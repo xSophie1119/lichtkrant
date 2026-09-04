@@ -28,7 +28,8 @@ try:
     code='import backend.server as s; assert "209471" in s.KNOWN_FIRE_VEHICLE_KEYS; print(s.APP_VERSION, s.INSTALL_ID)'
     cp=subprocess.run([sys.executable,'-c',code],cwd=ROOT,text=True,capture_output=True,timeout=20)
     check(cp.returncode==0, f'backend import with pre-existing SW cache failed: {cp.stderr[-500:]}')
-    check('4.4.11' in cp.stdout,'backend did not report 4.4.11')
+    expected=(ROOT/'VERSION').read_text(encoding='utf-8').strip()
+    check(expected in cp.stdout,f'backend did not report {expected}')
 
     # Load module in this process after the cache exists and exercise the method that
     # used to reference undefined FIRE_TYPE_DIGIT.

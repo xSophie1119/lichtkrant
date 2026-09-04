@@ -8,7 +8,8 @@ if not exist "%~dp0backend\server.py" goto :fatal_extract
 if not exist "%~dp0frontend\index.html" goto :fatal_extract
 if not exist "%~dp0ENSURE_PYTHON.bat" goto :fatal_extract
 title P2000 Monitor - starten
-set "P2000_VERSION=4.4.11"
+set "P2000_VERSION=4.4.12"
+if exist "%~dp0VERSION" set /p P2000_VERSION=<"%~dp0VERSION"
 set "P2000_LOGDIR=%LOCALAPPDATA%\P2000-Monitor\Logs"
 if not exist "%P2000_LOGDIR%" mkdir "%P2000_LOGDIR%" >nul 2>&1
 
@@ -17,17 +18,9 @@ call "%~dp0ENSURE_PYTHON.bat" /nopause
 if errorlevel 1 goto :fatal_python
 
 echo [2/4] Lokale backend controleren...
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" >nul 2>&1
-if errorlevel 1 (
-  echo [P2000] Backend starten...
-  >"%P2000_LOGDIR%\backend.log" echo ==== P2000 backend gestart %date% %time% ====
-  start "P2000 Monitor Backend" /min "%~dp0RUN_BACKEND.bat"
-)
-
-echo [3/4] Wachten op http://127.0.0.1:8765/ ...
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 15 >nul 2>&1
+call :ensure_backend
 if errorlevel 1 goto :fatal_backend
+echo [3/4] Backend is bereikbaar op http://127.0.0.1:8765/
 
 if /I not "%P2000_SUPERVISED%"=="1" (
   "%P2000_PYTHON%" "%~dp0tools\supervisor.py" --status >nul 2>&1
@@ -48,6 +41,12 @@ set "EDGE_X64=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
 set "CHROME_X64=%ProgramFiles%\Google\Chrome\Application\chrome.exe"
 set "CHROME_X86=%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
 
+if /I not "%P2000_SUPERVISED%"=="1" (
+  echo [P2000] Bestaande lichtkrant-kiosk veilig vernieuwen...
+  call :close_all_kiosks
+  timeout /t 1 /nobreak >nul
+)
+
 if /I "%P2000_BROWSER%"=="chrome" (
   call :close_other_kiosks "BrowserProfile-Chrome"
   goto :launch_chrome
@@ -55,13 +54,6 @@ if /I "%P2000_BROWSER%"=="chrome" (
 if /I "%P2000_BROWSER%"=="edge" (
   call :close_other_kiosks "BrowserProfile-Edge"
   goto :launch_edge
-)
-
-call :any_kiosk_running
-if not errorlevel 1 (
-  echo [P2000] Er draait al een P2000 lichtkrant-kiosk.
-  timeout /t 2 /nobreak >nul
-  exit /b 0
 )
 
 if exist "%EDGE_X86%" goto :launch_edge
@@ -76,6 +68,7 @@ timeout /t 2 /nobreak >nul
 exit /b 0
 
 :launch_edge
+set "P2000_BROWSER_EXE="
 set "P2000_BROWSER_PROFILE=%LOCALAPPDATA%\P2000-Monitor\BrowserProfile-Edge"
 if not exist "%P2000_BROWSER_PROFILE%" mkdir "%P2000_BROWSER_PROFILE%" >nul 2>&1
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
@@ -89,10 +82,15 @@ if exist "%EDGE_X64%" set "P2000_BROWSER_EXE=%EDGE_X64%"
 if not defined P2000_BROWSER_EXE goto :launch_chrome
 echo [P2000] Edge fullscreen openen...
 start "" "%P2000_BROWSER_EXE%" --window-position=%P2000_WINDOW_POSITION% --window-size=%P2000_WINDOW_SIZE% --kiosk "http://127.0.0.1:8765/" --edge-kiosk-type=fullscreen --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --user-data-dir="%P2000_BROWSER_PROFILE%" --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows
-timeout /t 2 /nobreak >nul
-exit /b 0
+timeout /t 3 /nobreak >nul
+call :kiosk_running "%P2000_BROWSER_PROFILE%"
+if not errorlevel 1 exit /b 0
+echo [WAARSCHUWING] Edge stopte tijdens de startcontrole; Chrome wordt geprobeerd.>>"%P2000_LOGDIR%\startup.log"
+call :close_other_kiosks "BrowserProfile-Chrome"
+goto :launch_chrome
 
 :launch_chrome
+set "P2000_BROWSER_EXE="
 set "P2000_BROWSER_PROFILE=%LOCALAPPDATA%\P2000-Monitor\BrowserProfile-Chrome"
 if not exist "%P2000_BROWSER_PROFILE%" mkdir "%P2000_BROWSER_PROFILE%" >nul 2>&1
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
@@ -106,22 +104,52 @@ if exist "%CHROME_X86%" set "P2000_BROWSER_EXE=%CHROME_X86%"
 if not defined P2000_BROWSER_EXE goto :fatal_browser
 echo [P2000] Chrome fullscreen openen...
 start "" "%P2000_BROWSER_EXE%" --window-position=%P2000_WINDOW_POSITION% --window-size=%P2000_WINDOW_SIZE% --kiosk "http://127.0.0.1:8765/" --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --user-data-dir="%P2000_BROWSER_PROFILE%" --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows
-timeout /t 2 /nobreak >nul
-exit /b 0
-
-:any_kiosk_running
-powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like '*P2000-Monitor\BrowserProfile*' -and $_.CommandLine -like '*127.0.0.1:8765*' }; if($p){exit 0}else{exit 1}" >nul 2>&1
-exit /b %errorlevel%
+timeout /t 3 /nobreak >nul
+call :kiosk_running "%P2000_BROWSER_PROFILE%"
+if not errorlevel 1 exit /b 0
+echo [FOUT] Chrome stopte tijdens de startcontrole.>>"%P2000_LOGDIR%\startup.log"
+goto :fatal_browser
 
 :close_other_kiosks
 set "P2000_WANTED_PROFILE=%~1"
-powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$wanted='%P2000_WANTED_PROFILE%'; $p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like '*P2000-Monitor\BrowserProfile*' -and $_.CommandLine -like '*127.0.0.1:8765*' -and $_.CommandLine -notlike ('*'+$wanted+'*') }; foreach($x in $p){try{Invoke-CimMethod -InputObject $x -MethodName Terminate -ErrorAction SilentlyContinue ^| Out-Null}catch{}}" >nul 2>&1
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$wanted=$env:P2000_WANTED_PROFILE; $p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like '*P2000-Monitor\BrowserProfile*' -and $_.CommandLine -like '*127.0.0.1:8765*' -and $_.CommandLine -notlike ('*'+$wanted+'*') }; foreach($x in $p){try{Invoke-CimMethod -InputObject $x -MethodName Terminate -ErrorAction SilentlyContinue ^| Out-Null}catch{}}" >nul 2>&1
+exit /b 0
+
+:close_all_kiosks
+where powershell.exe >nul 2>&1 || exit /b 0
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like '*P2000-Monitor\BrowserProfile-*' -and $_.CommandLine -like '*127.0.0.1:8765*' }; foreach($x in $p){try{Invoke-CimMethod -InputObject $x -MethodName Terminate -ErrorAction SilentlyContinue ^| Out-Null}catch{}}" >nul 2>&1
 exit /b 0
 
 :kiosk_running
 set "P2000_CHECK_PROFILE=%~1"
-powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$profile=[IO.Path]::GetFullPath('%P2000_CHECK_PROFILE%'); $p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like ('*'+$profile+'*') -and $_.CommandLine -like '*127.0.0.1:8765*' }; if($p){exit 0}else{exit 1}" >nul 2>&1
+where powershell.exe >nul 2>&1 || exit /b 0
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$profile=[IO.Path]::GetFullPath($env:P2000_CHECK_PROFILE); $p=Get-CimInstance Win32_Process -ErrorAction SilentlyContinue ^| Where-Object { $_.CommandLine -and $_.CommandLine -like ('*'+$profile+'*') -and $_.CommandLine -like '*127.0.0.1:8765*' }; if($p){exit 0}else{exit 1}" >nul 2>&1
 exit /b %errorlevel%
+
+:ensure_backend
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
+if errorlevel 1 (
+  "%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --describe-port >>"%P2000_LOGDIR%\startup.log" 2>&1
+  exit /b 1
+)
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" >nul 2>&1
+if not errorlevel 1 exit /b 0
+call :start_backend_once
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 15 >nul 2>&1
+if not errorlevel 1 exit /b 0
+echo [HERSTEL] Eerste backendstart niet gezond; log volgt.>>"%P2000_LOGDIR%\startup.log"
+if exist "%P2000_LOGDIR%\backend.log" type "%P2000_LOGDIR%\backend.log" >>"%P2000_LOGDIR%\startup.log"
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
+if errorlevel 1 exit /b 1
+call :start_backend_once
+"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 18 >nul 2>&1
+exit /b %errorlevel%
+
+:start_backend_once
+echo [P2000] Backend starten...
+>>"%P2000_LOGDIR%\backend.log" echo ==== P2000 backend gestart %date% %time% ====
+start "P2000 Monitor Backend" /min "%~dp0RUN_BACKEND.bat"
+exit /b 0
 
 :fatal_python
 echo.

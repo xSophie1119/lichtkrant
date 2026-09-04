@@ -13,12 +13,15 @@ from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
-STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.11'
+STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'; LOCKFILE=DATA/'supervisor.lock'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.12'
 LOG=DATA/'supervisor.log'
-_runtime_base=Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
-if not _runtime_base.exists() or not os.access(_runtime_base, os.W_OK | os.X_OK): _runtime_base=Path('/tmp')
-RUNDIR=_runtime_base/f"p2000-monitor-{getattr(os, 'getuid', lambda: 0)()}"
+_explicit_runtime=os.environ.get('P2000_RUNTIME_DIR')
+_runtime_env=os.environ.get('XDG_RUNTIME_DIR')
+_runtime_base=Path(_runtime_env) if _runtime_env else Path(os.environ.get('XDG_CACHE_HOME') or (Path.home()/'.cache'))/'p2000-monitor'/'runtime'
+if _runtime_env and (not _runtime_base.exists() or not os.access(_runtime_base, os.W_OK | os.X_OK)):
+    _runtime_base=Path(os.environ.get('XDG_CACHE_HOME') or (Path.home()/'.cache'))/'p2000-monitor'/'runtime'
+RUNDIR=Path(_explicit_runtime) if _explicit_runtime else _runtime_base/f"p2000-monitor-{getattr(os, 'getuid', lambda: 0)()}"
 STARTED=time.monotonic()
 INSTALL_ID=hashlib.sha256(os.path.realpath(str(ROOT)).encode('utf-8')).hexdigest()[:16]
 
@@ -41,18 +44,99 @@ def write_json(path,obj):
     path.parent.mkdir(parents=True,exist_ok=True);tmp=path.with_suffix(path.suffix+'.tmp')
     tmp.write_text(json.dumps(obj,ensure_ascii=False,indent=2),encoding='utf-8');os.replace(tmp,path)
 
-def pid_alive(pid):
+def process_cmdline(pid):
     try:
-        if pid<=0:return False
+        if pid<=0:return ''
         if os.name=='nt':
-            cp=subprocess.run(['tasklist','/FI',f'PID eq {pid}'],capture_output=True,text=True,timeout=4,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0));return str(pid) in cp.stdout
-        os.kill(pid,0);return True
-    except Exception:return False
+            ps=(f'$p=Get-CimInstance Win32_Process -Filter "ProcessId = {int(pid)}" '
+                '-ErrorAction SilentlyContinue; if($p.CommandLine){[Console]::Out.Write($p.CommandLine)}')
+            cp=subprocess.run(['powershell.exe','-NoLogo','-NoProfile','-NonInteractive','-Command',ps],capture_output=True,text=True,timeout=6,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            return cp.stdout.strip() if cp.returncode==0 else ''
+        return (Path('/proc')/str(pid)/'cmdline').read_bytes().replace(b'\0',b' ').decode('utf-8','replace').strip()
+    except Exception:return ''
+
+def pid_is_this_supervisor(pid):
+    cmd=process_cmdline(pid)
+    if not cmd:return False
+    expected=str((ROOT/'tools'/'supervisor.py').resolve()).replace('\\','/')
+    normalized=cmd.replace('\\','/')
+    if os.name=='nt':expected=expected.casefold();normalized=normalized.casefold()
+    return expected in normalized
 
 def existing_supervisor():
     try:pid=int(PIDFILE.read_text().strip())
     except Exception:return 0
-    return pid if pid!=os.getpid() and pid_alive(pid) else 0
+    return pid if pid!=os.getpid() and pid_is_this_supervisor(pid) else 0
+
+_SUPERVISOR_LOCK_HANDLE=None
+
+def claim_pidfile():
+    """Hold an OS lock for the process lifetime; return the existing owner."""
+    global _SUPERVISOR_LOCK_HANDLE
+    DATA.mkdir(parents=True,exist_ok=True)
+    handle=LOCKFILE.open('a+b')
+    if handle.seek(0,os.SEEK_END)==0:
+        handle.write(b'\0');handle.flush()
+    handle.seek(0)
+    try:
+        if os.name=='nt':
+            import msvcrt
+            msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except (OSError,ImportError):
+        handle.close()
+        return existing_supervisor() or -1
+    _SUPERVISOR_LOCK_HANDLE=handle
+    tmp=PIDFILE.with_name(f'{PIDFILE.name}.{os.getpid()}.tmp')
+    tmp.write_text(str(os.getpid()),encoding='ascii');os.replace(tmp,PIDFILE)
+    if os.name!='nt':
+        try:os.chmod(PIDFILE,0o600)
+        except OSError:pass
+    return 0
+
+def release_pidfile():
+    global _SUPERVISOR_LOCK_HANDLE
+    try:
+        if PIDFILE.exists() and PIDFILE.read_text(encoding='ascii').strip()==str(os.getpid()):PIDFILE.unlink()
+    except OSError:pass
+    handle=_SUPERVISOR_LOCK_HANDLE;_SUPERVISOR_LOCK_HANDLE=None
+    if not handle:return
+    try:
+        handle.seek(0)
+        if os.name=='nt':
+            import msvcrt
+            msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(),fcntl.LOCK_UN)
+    except (OSError,ImportError):pass
+    try:handle.close()
+    except OSError:pass
+
+def stop_supervisor():
+    try:pid=int(PIDFILE.read_text(encoding='ascii').strip())
+    except Exception:return True
+    if pid<=1 or pid==os.getpid() or not pid_is_this_supervisor(pid):
+        try:PIDFILE.unlink()
+        except OSError:pass
+        return True
+    try:
+        if os.name=='nt':
+            cp=subprocess.run(['taskkill','/PID',str(pid),'/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=8,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+            ok=cp.returncode==0
+        else:
+            os.kill(pid,signal.SIGTERM);ok=True
+            end=time.monotonic()+3
+            while time.monotonic()<end and process_cmdline(pid):time.sleep(.1)
+            if process_cmdline(pid):os.kill(pid,signal.SIGKILL)
+    except ProcessLookupError:ok=True
+    except Exception:ok=False
+    if ok:
+        try:PIDFILE.unlink()
+        except OSError:pass
+    return ok
 
 def api(path,timeout=1.2):
     try:
@@ -149,13 +233,18 @@ def consume_command():
     return str(obj.get('action') or obj.get('command') or '').strip().lower()
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--status',action='store_true');ap.add_argument('--once',action='store_true');ap.add_argument('--no-kiosk',action='store_true')
+    ap=argparse.ArgumentParser();ap.add_argument('--status',action='store_true');ap.add_argument('--stop',action='store_true');ap.add_argument('--once',action='store_true');ap.add_argument('--no-kiosk',action='store_true')
     a=ap.parse_args()
+    if a.stop:return 0 if stop_supervisor() else 2
+    RUNDIR.mkdir(parents=True,exist_ok=True)
+    if os.name!='nt':
+        try:os.chmod(RUNDIR,0o700)
+        except OSError:pass
     old=existing_supervisor()
     if a.status:return 0 if old else 1
+    old=old or claim_pidfile()
     if old:
-        print(f'P2000 supervisor draait al (PID {old}).');return 0
-    DATA.mkdir(parents=True,exist_ok=True);PIDFILE.write_text(str(os.getpid()),encoding='utf-8')
+        print(f'P2000 supervisor draait al'+(f' (PID {old}).' if old>0 else ' of wordt al gestart.'));return 0
     counters={'backend_restarts':0,'kiosk_restarts':0,'rollbacks':0};state='starting';last_action='';last_error='';backend_failures=0;kiosk_stale_hits=0;last_selector='';last_connected=None;last_geometry=None;geometry_candidate=None;geometry_hits=0;last_kiosk_restart=0.0;setup_was_incomplete=False;setup_completed_grace_until=0.0
     health={};health_checked=0.0;setup_row={};setup_checked=0.0;disp={};display_checked=0.0
     log(f'P2000 supervisor v{VERSION} gestart (PID {os.getpid()}).')
@@ -254,8 +343,6 @@ def main():
             time.sleep(2)
     except KeyboardInterrupt:return 0
     finally:
-        try:
-            if PIDFILE.exists() and PIDFILE.read_text().strip()==str(os.getpid()):PIDFILE.unlink()
-        except Exception:pass
+        release_pidfile()
 
 if __name__=='__main__':raise SystemExit(main())

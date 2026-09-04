@@ -5,12 +5,14 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
 URL="${1:-http://127.0.0.1:8765/control}"
 LABEL="${2:-P2000 Monitor}"
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.11')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.12')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
-BASE_RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
-if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" ]]; then BASE_RUNTIME=/tmp; fi
+BASE_RUNTIME="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/p2000-monitor/runtime}"
+if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" || ! -x "$BASE_RUNTIME" ]]; then BASE_RUNTIME="${XDG_CACHE_HOME:-$HOME/.cache}/p2000-monitor/runtime"; fi
 RUNDIR="$BASE_RUNTIME/p2000-monitor-${UID:-$(id -u)}"
 mkdir -p "$LOGROOT" "$RUNDIR" 2>/dev/null || true
+chmod 700 "$RUNDIR" 2>/dev/null || true
+export P2000_RUNTIME_DIR="$RUNDIR"
 LOG="$LOGROOT/startup.log"
 hydrate_graphics_env(){
   [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && return 0
@@ -49,14 +51,25 @@ if [[ "${EUID:-$(id -u)}" -eq 0 && "${P2000_ALLOW_ROOT_RUN:-0}" != 1 ]]; then
 fi
 # shellcheck source=/dev/null
 source "$ROOT/ENSURE_PYTHON.sh" || die 2 'Python 3.10 of nieuwer ontbreekt.'
-"$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --kill-stale >>"$LOG" 2>&1 || true
-if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" >/dev/null 2>&1; then
+if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --kill-stale >>"$LOG" 2>&1; then
+  "$P2000_PYTHON" tools/runtime_probe.py --describe-port >>"$LOG" 2>&1 || true
+  die 3 'Poort 8765 is bezet en kon niet veilig worden vrijgemaakt.'
+fi
+start_backend_once(){
   nohup "$P2000_PYTHON" "$ROOT/backend/server.py" >>"$LOGROOT/backend.log" 2>&1 </dev/null &
   echo $! > "$RUNDIR/backend.pid" 2>/dev/null || true
+}
+if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" >/dev/null 2>&1; then
+  start_backend_once
 fi
-if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --wait 18 >/dev/null 2>&1; then
-  tail -n 60 "$LOGROOT/backend.log" 2>/dev/null >&2 || true
-  die 3 "Backend start niet. Zie $LOGROOT/backend.log"
+if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --wait 12 >/dev/null 2>&1; then
+  tail -n 60 "$LOGROOT/backend.log" 2>/dev/null | tee -a "$LOG" >&2 || true
+  "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --kill-stale >>"$LOG" 2>&1 || die 3 'Mislukte backend kon niet veilig worden gestopt.'
+  start_backend_once
+  if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --wait 15 >/dev/null 2>&1; then
+    tail -n 100 "$LOGROOT/backend.log" 2>/dev/null | tee -a "$LOG" >&2 || true
+    die 3 "Backend start niet na de herstelpoging. Zie $LOGROOT/backend.log"
+  fi
 fi
 if [[ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then
   printf '%s\n' "Open handmatig in een browser: $URL"

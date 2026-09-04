@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# P2000 Monitor Linux launcher - v4.4.11
+# P2000 Monitor Linux launcher - v4.4.12
 set -u
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.11')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.12')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
-BASE_RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
-if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" ]]; then BASE_RUNTIME=/tmp; fi
+BASE_RUNTIME="${XDG_RUNTIME_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/p2000-monitor/runtime}"
+if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" || ! -x "$BASE_RUNTIME" ]]; then
+  BASE_RUNTIME="${XDG_CACHE_HOME:-$HOME/.cache}/p2000-monitor/runtime"
+fi
 RUNDIR="$BASE_RUNTIME/p2000-monitor-${UID:-$(id -u)}"
 mkdir -p "$LOGROOT" "$RUNDIR" 2>/dev/null || true
+chmod 700 "$RUNDIR" 2>/dev/null || true
+export P2000_RUNTIME_DIR="$RUNDIR"
 START_LOG="$LOGROOT/startup.log"
 BROWSER_LOG="$LOGROOT/browser.log"
 hydrate_graphics_env(){
