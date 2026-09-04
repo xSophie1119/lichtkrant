@@ -12,8 +12,8 @@
   "port": 8765,
   "feed_urls": [],
   "fallback_feed_urls": [],
-  "poll_interval_seconds": 10,
-  "request_timeout_seconds": 15,
+  "poll_interval_seconds": 8,
+  "request_timeout_seconds": 6,
   "max_feed_bytes": 2000000,
   "retention_days": 30,
   "watchdog_stale_seconds": 600,
@@ -30,7 +30,8 @@
   "github_settings_branch": "main",
   "github_settings_minutes": 5,
   "feed_race_enabled": true,
-  "feed_parallel_workers": 6,
+  "feed_parallel_workers": 10,
   "supplemental_feed_urls": [],
-  "feed_112nu_enabled": true
+  "feed_112nu_enabled": true,
+  "performance_tuned_v449": true
 }

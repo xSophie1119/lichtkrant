@@ -1,4 +1,4 @@
-import importlib.util, json, subprocess, sys, tempfile
+import importlib.util, json, re, subprocess, sys, tempfile
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -13,7 +13,8 @@ checks={}
 checks['version_447']=tuple(map(int,mod.APP_VERSION.split('.'))) >= (4,4,7) and tuple(map(int,(ROOT/'VERSION').read_text().strip().split('.'))) >= (4,4,7)
 checks['update_forces_kiosk_restart']='def _restart_kiosk_after_healthy_update' in server_path.read_text(encoding='utf-8') and 'queue_supervisor_command("restart-kiosk")' in server_path.read_text(encoding='utf-8')
 checks['linux_start_recycles_old_kiosk']='linux_desktop.py" stop-kiosk' in start and start.index('stop-kiosk') < start.index('linux_desktop.py" kiosk')
-checks['fresh_asset_buster']=('/app.js?v=4480' in index and '/lightkrant.css?v=4480' in index) or ('/app.js?v=4470' in index and '/lightkrant.css?v=4470' in index)
+asset_js=re.search(r'/app\.js\?v=(\d+)',index); asset_css=re.search(r'/lightkrant\.css\?v=(\d+)',index)
+checks['fresh_asset_buster']=bool(asset_js and asset_css and asset_js.group(1)==asset_css.group(1) and int(asset_js.group(1))>=4470)
 checks['expiry_uses_ingest_and_firstseen']='function localFirstSeenMs' in app and 'ingestedMs(m)' in app and '__monitorFirstSeenAt' in app
 checks['render_enforces_expiry']='return !!state.activeMessage&&isLiveMessageActive(state.activeMessage,Date.now())' in app
 

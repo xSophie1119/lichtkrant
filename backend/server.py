@@ -23,6 +23,7 @@ import json
 import math
 import os
 import queue
+from collections import deque
 import re
 import signal
 import sys
@@ -85,7 +86,29 @@ DEFAULT_GITHUB_SETTINGS_PATH = "p2000-settings.json"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
 
-APP_VERSION = "4.4.8"
+# Reuse TCP/TLS connections across RSS/API calls.  urllib.request creates a fresh
+# connection for nearly every request; with 5+ feeds every few seconds that was
+# both slower and a common source of transient Linux/Windows network errors.
+try:
+    import urllib3  # bundled in vendor/
+    import certifi  # bundled in vendor/
+    _HTTP_POOL = urllib3.PoolManager(
+        num_pools=24,
+        maxsize=32,
+        block=False,
+        cert_reqs="CERT_REQUIRED",
+        ca_certs=certifi.where(),
+        timeout=urllib3.Timeout(connect=2.5, read=5.0),
+        retries=False,
+    )
+except Exception:
+    urllib3 = None
+    _HTTP_POOL = None
+
+APP_VERSION = "4.4.9"
+
+_STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
+_STATIC_CACHE_LOCK = threading.Lock()
 USER_AGENT = f"LocalP2000Monitor/{APP_VERSION} (+local informational display)"
 ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
 ALARMERINGEN_BASE = "https://alarmeringen.nl/feeds"
@@ -111,6 +134,56 @@ SW_ROEPNUMMER_PAGE_LIMIT = 500
 SW_ROEPNUMMER_MAX_PAGES = 250
 SW_ROEPNUMMER_TIMEOUT_SECONDS = 6.0
 SW_ROEPNUMMER_RESOLVE_TIMEOUT_SECONDS = 3.0
+
+def pooled_http_bytes(url: str, headers: dict | None = None, *, timeout: float = 5.0, max_bytes: int = 2_000_000):
+    """Small pooled HTTP GET used by hot-path feeds and JSON APIs.
+
+    Returns (status, headers, body). Falls back to urllib.request when the bundled
+    urllib3 cannot be imported.  No automatic retries are hidden here: callers
+    keep control over backoff/circuit-breaker behaviour.
+    """
+    headers = dict(headers or {})
+    max_bytes = max(1, int(max_bytes))
+    timeout = max(0.25, float(timeout))
+    if _HTTP_POOL is not None:
+        response = None
+        try:
+            response = _HTTP_POOL.request(
+                "GET", url, headers=headers, preload_content=False,
+                timeout=urllib3.Timeout(connect=min(2.5, timeout), read=timeout),
+                retries=False, redirect=True,
+            )
+            status = int(response.status or 0)
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    if int(content_length) > max_bytes:
+                        raise RuntimeError(f"HTTP response te groot ({content_length} bytes)")
+                except ValueError:
+                    pass
+            body = response.read(max_bytes + 1, decode_content=True)
+            if len(body) > max_bytes:
+                raise RuntimeError(f"HTTP response groter dan limiet van {max_bytes} bytes")
+            return status, dict(response.headers.items()), body
+        finally:
+            if response is not None:
+                try: response.release_conn()
+                except Exception: pass
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = int(getattr(resp, "status", 200) or 200)
+            raw = resp.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise RuntimeError(f"HTTP response groter dan limiet van {max_bytes} bytes")
+            return status, dict(resp.headers.items()), raw
+    except urllib.error.HTTPError as exc:
+        # urllib represents 304/4xx/5xx as exceptions, but pooled callers need the
+        # status code in the same shape as urllib3. Keep a small response body only.
+        raw = b""
+        try: raw = exc.read(max_bytes + 1)
+        except Exception: pass
+        return int(exc.code), dict(exc.headers.items()) if exc.headers else {}, raw[:max_bytes]
 
 # Landelijke brandweervoertuigendatabase.  De monitor houdt de statische seed klein
 # en synchroniseert alleen de brandweerregio's die de gebruiker heeft gekozen.
@@ -2883,6 +2956,12 @@ class AppState:
         self.feed_cache: dict[str, dict[str, str]] = {}
         self.feed_diag: dict[str, dict] = {}
         self.feed_status = "starting"
+        self.feed_failure_counts: dict[str, int] = {}
+        self.feed_backoff_until: dict[str, float] = {}
+        self.last_feed_status_broadcast: tuple[str, str] | None = None
+        self.last_retention_cleanup_monotonic = 0.0
+        self.recent_message_ids: set[str] = set()
+        self.recent_message_order: deque[str] = deque(maxlen=10_000)
         self.started_at = utcnow_iso()
         # Changes on every backend process start. Browser displays use this to
         # detect a completed self-update/restart and reload their static assets.
@@ -2916,6 +2995,7 @@ class AppState:
         self.sw_resolve_inflight: set[str] = set()
         self.sw_resolve_retry_after: dict[str, float] = {}
         sw_units, sw_meta = load_sw_vehicle_cache()
+        self.sw_vehicle_units: dict[str, dict] = dict(sw_units)
         self.sw_vehicle_status: dict = {
             "running": False,
             "online": None,
@@ -2943,6 +3023,8 @@ class AppState:
         self.client_health_lock = threading.Lock()
         self.test_results: dict[str, dict] = {}
         self.test_results_lock = threading.Lock()
+        self.health_cache: dict | None = None
+        self.health_cache_monotonic = 0.0
         # One background BGT street-index warmup per town at a time.  This lets
         # normal incidents resolve immediately via PDOK while the monitor quietly
         # learns the official local street/public-space names for later offline use.
@@ -3059,7 +3141,32 @@ class AppState:
                 con.execute("ALTER TABLE messages ADD COLUMN parser_confidence INTEGER NOT NULL DEFAULT 0")
             if "parser_notes_json" not in message_cols:
                 con.execute("ALTER TABLE messages ADD COLUMN parser_notes_json TEXT NOT NULL DEFAULT '[]'")
+            try:
+                rows = con.execute("SELECT id FROM messages ORDER BY published DESC LIMIT 10000").fetchall()
+                for row in reversed(rows):
+                    self._remember_message_id(str(row["id"] or ""))
+            except Exception:
+                pass
 
+    def _remember_message_id(self, message_id: str) -> None:
+        message_id = str(message_id or "")
+        if not message_id or message_id in self.recent_message_ids:
+            return
+        if len(self.recent_message_order) >= self.recent_message_order.maxlen:
+            try:
+                old = self.recent_message_order.popleft()
+                self.recent_message_ids.discard(old)
+            except IndexError:
+                pass
+        self.recent_message_order.append(message_id)
+        self.recent_message_ids.add(message_id)
+
+    def broadcast_feed_status(self) -> None:
+        key = (str(self.feed_status or ""), str(self.last_error or ""))
+        if key == self.last_feed_status_broadcast:
+            return
+        self.last_feed_status_broadcast = key
+        self.broadcast({"type":"status","status":self.feed_status,"error":self.last_error})
 
     @staticmethod
     def _clean_feed_urls(values, *, maximum: int = 128, exclude: set[str] | None = None) -> list[str]:
@@ -3100,8 +3207,8 @@ class AppState:
             "feed_race_enabled": bool(self.config.get("feed_race_enabled", True)),
             "feed_112nu_enabled": True,
             "primary_provider": "112-nu.nl",
-            "feed_parallel_workers": int(self.config.get("feed_parallel_workers",6)),
-            "poll_interval_seconds": int(self.config.get("poll_interval_seconds",10)),
+            "feed_parallel_workers": int(self.config.get("feed_parallel_workers",10)),
+            "poll_interval_seconds": int(self.config.get("poll_interval_seconds",8)),
             "watchdog_stale_seconds": int(self.config.get("watchdog_stale_seconds",600)),
         }
 
@@ -3114,7 +3221,7 @@ class AppState:
         watchdog=bounded_int(payload.get("watchdog_stale_seconds", self.config.get("watchdog_stale_seconds",600)),600,180,86400)
         race_enabled=bool(payload.get("feed_race_enabled", self.config.get("feed_race_enabled", True)))
         nu112_enabled=True
-        workers=bounded_int(payload.get("feed_parallel_workers", self.config.get("feed_parallel_workers",6)),6,1,12)
+        workers=bounded_int(payload.get("feed_parallel_workers", self.config.get("feed_parallel_workers",10)),10,1,12)
         with self.config_lock:
             self.config["supplemental_feed_urls"]=supplemental
             self.config["fallback_feed_urls"]=fallback
@@ -3202,7 +3309,7 @@ class AppState:
                 {"key":"lifeliner","label":"Lifeliner / traumaheli","regional_feed":False},
             ],
             "feed_urls": list(self.config.get("feed_urls") or []),
-            "poll_interval_seconds": int(self.config.get("poll_interval_seconds", 10)),
+            "poll_interval_seconds": int(self.config.get("poll_interval_seconds", 8)),
         }
 
     @staticmethod
@@ -3309,7 +3416,7 @@ class AppState:
         standplaats_city = self._resolve_setup_city(standplaats) or self._standplaats_city_hint(standplaats)
         requested_name = normalize_space(str(payload.get("monitor_name") or ""))[:120]
         monitor_name = requested_name or f"P2000 {standplaats_city or standplaats}"
-        poll = bounded_int(payload.get("poll_interval_seconds", 10), 10, 8, 300)
+        poll = bounded_int(payload.get("poll_interval_seconds", 8), 8, 8, 300)
         with self.config_lock:
             self.config.update({
                 "setup_complete": True,
@@ -3498,19 +3605,17 @@ class AppState:
         url = f"{SW_ROEPNUMMER_API_BASE.rstrip('/')}/{path.lstrip('/')}"
         if params:
             url += "?" + urlencode({k: v for k, v in params.items() if v is not None})
-        req = urllib.request.Request(url, headers={
+        status, _headers, raw = pooled_http_bytes(url, {
             "X-API-Key": api_key,
             "Accept": "application/json",
             "User-Agent": f"P2000-Lichtkrant/{APP_VERSION}",
-        })
+        }, timeout=timeout, max_bytes=8_000_000)
+        if status >= 400:
+            raise RuntimeError(f"HTTP {status}")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                status = int(getattr(resp, "status", 200) or 200)
-                raw = resp.read(8_000_000)
             return json.loads(raw.decode("utf-8", "replace") or "null"), status
-        except urllib.error.HTTPError as exc:
-            # Preserve status without ever echoing request headers/API key.
-            raise RuntimeError(f"HTTP {exc.code}") from exc
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("API gaf ongeldige JSON terug") from exc
 
     def sync_sw_vehicle_api(self, force: bool = False) -> dict:
         if not self.sw_vehicle_sync_lock.acquire(blocking=False):
@@ -3553,7 +3658,7 @@ class AppState:
                 "source": "SW Mediaproducties Roepnummer API", "base_url": SW_ROEPNUMMER_API_BASE,
             }
             with self.sw_vehicle_cache_lock:
-                old_units, _old_meta = load_sw_vehicle_cache()
+                old_units = dict(self.sw_vehicle_units)
                 # Record only meaningful changes for callsigns used by the display.
                 old_catalog = sw_units_to_vehicle_catalog(old_units)
                 new_catalog = sw_units_to_vehicle_catalog(units)
@@ -3561,6 +3666,7 @@ class AppState:
                     if old_catalog.get(digits) != new_catalog.get(digits):
                         append_vehicle_history(digits, old_catalog.get(digits), new_catalog.get(digits), "SW Mediaproducties API sync")
                 write_sw_vehicle_cache(units, meta)
+                self.sw_vehicle_units = dict(units)
                 self.sw_vehicle_status.update({
                     "running": False, "online": True, "key_valid": True, "unit_count": len(units),
                     "last_sync": meta["updated_at"], "last_error": None, "last_http_status": last_http, "pages": pages,
@@ -3573,13 +3679,13 @@ class AppState:
             code_match = re.search(r"HTTP\s+(\d{3})", message)
             code = int(code_match.group(1)) if code_match else None
             with self.sw_vehicle_cache_lock:
-                cached, meta = load_sw_vehicle_cache()
+                cached_count = len(self.sw_vehicle_units)
                 self.sw_vehicle_status.update({
                     "running": False,
                     "online": bool(code),
                     "key_valid": False if code in {401, 403} else self.sw_vehicle_status.get("key_valid"),
-                    "unit_count": len(cached),
-                    "last_sync": meta.get("updated_at") or self.sw_vehicle_status.get("last_sync"),
+                    "unit_count": cached_count,
+                    "last_sync": self.sw_vehicle_status.get("last_sync"),
                     "last_error": message,
                     "last_http_status": code,
                 })
@@ -3598,14 +3704,17 @@ class AppState:
         if not lookup or not unit:
             return None
         with self.sw_vehicle_cache_lock:
-            units, meta = load_sw_vehicle_cache()
-            units[lookup] = unit
-            meta = dict(meta)
-            meta["updated_at"] = utcnow_iso()
-            meta["count"] = len(units)
-            meta["source"] = "SW Mediaproducties Roepnummer API"
-            write_sw_vehicle_cache(units, meta)
-            self.sw_vehicle_status.update({"online": True, "key_valid": True, "unit_count": len(units), "last_error": None})
+            self.sw_vehicle_units[lookup] = unit
+            meta = {
+                "updated_at": utcnow_iso(), "count": len(self.sw_vehicle_units),
+                "source": "SW Mediaproducties Roepnummer API",
+                "pages": self.sw_vehicle_status.get("pages"),
+            }
+            write_sw_vehicle_cache(self.sw_vehicle_units, meta)
+            self.sw_vehicle_status.update({
+                "online": True, "key_valid": True, "unit_count": len(self.sw_vehicle_units),
+                "last_sync": meta["updated_at"], "last_error": None,
+            })
         self._refresh_vehicle_catalog()
         self.broadcast({"type": "vehicle-db", "status": self.vehicle_sync_view()})
         digits = normalize_vehicle_digits(str(unit.get("callsign") or unit.get("lookup_key") or lookup))
@@ -3615,9 +3724,10 @@ class AppState:
         lookup = normalize_sw_lookup_key(callsign)
         if not lookup:
             return None
-        cached, _ = load_sw_vehicle_cache()
-        if lookup in cached:
-            digits = normalize_vehicle_digits(str(cached[lookup].get("callsign") or cached[lookup].get("lookup_key") or lookup))
+        with self.sw_vehicle_cache_lock:
+            cached_unit = self.sw_vehicle_units.get(lookup)
+        if cached_unit:
+            digits = normalize_vehicle_digits(str(cached_unit.get("callsign") or cached_unit.get("lookup_key") or lookup))
             return self.vehicle_catalog.get(digits) if digits else None
         payload, status = self._sw_api_json(
             "resolve", {"callsign": callsign, "source": "lichtkrant"}, timeout=SW_ROEPNUMMER_RESOLVE_TIMEOUT_SECONDS
@@ -3631,9 +3741,9 @@ class AppState:
         lookup = normalize_sw_lookup_key(callsign)
         if not lookup or not read_sw_api_key():
             return
-        cached, _ = load_sw_vehicle_cache()
-        if lookup in cached:
-            return
+        with self.sw_vehicle_cache_lock:
+            if lookup in self.sw_vehicle_units:
+                return
         now = time.monotonic()
         with self.sw_resolve_lock:
             if lookup in self.sw_resolve_inflight or now < float(self.sw_resolve_retry_after.get(lookup, 0.0)):
@@ -3886,9 +3996,21 @@ class AppState:
         return max(0, removed)
 
     def purge_out_of_scope(self) -> int:
-        """Remove rows from older versions that stored the full nationwide feed."""
+        """Remove rows outside the active profile, but only when that profile changed.
+
+        Earlier builds scanned the complete message table on every backend start. On a
+        long-running monitor that made a restart/update needlessly slow. The scope
+        signature is versioned so a future filtering change can intentionally force a
+        one-time rescan.
+        """
+        matrix = setup_region_disciplines(self.config)
+        signature = hashlib.sha256(json.dumps(matrix, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+        marker_key = "scope-filter:v449"
         removed = 0
         with self.db_lock, self.connect() as con:
+            previous = con.execute("SELECT value FROM kv WHERE key=?", (marker_key,)).fetchone()
+            if previous and previous["value"] == signature:
+                return 0
             rows = con.execute("SELECT id,title,summary,units_json,city,categories_json,service FROM messages").fetchall()
             delete_ids = []
             for row in rows:
@@ -3909,6 +4031,7 @@ class AppState:
             if delete_ids:
                 con.executemany("DELETE FROM messages WHERE id=?", delete_ids)
                 removed = len(delete_ids)
+            con.execute("INSERT INTO kv(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (marker_key, signature))
         return removed
 
     def clear_feed_cache(self):
@@ -4832,35 +4955,55 @@ class AppState:
         return out
 
     def add_messages(self, messages: list[Message]) -> list[Message]:
-        # Enforce the first-run region/discipline matrix before SQLite or SSE.
-        messages = [m for m in messages if config_allows_message(self.config, m)]
+        # Enforce scope before SQLite/SSE and collapse duplicate rows from the
+        # five nationwide feeds plus the independent race source.
+        deduped: dict[str, Message] = {}
+        for m in messages:
+            if m.id and config_allows_message(self.config, m):
+                deduped[m.id] = m
+        if not deduped:
+            return []
         inserted: list[Message] = []
         ingested_times: dict[str, str] = {}
-        with self.db_lock, self.connect() as con:
-            for m in sorted(messages, key=lambda x: x.published):
-                ingested_at = utcnow_iso()
-                cur = con.execute(
-                    """
-                    INSERT OR IGNORE INTO messages
-                    (id,published,updated,title,summary,url,service,priority,city,location,
-                     units_json,categories_json,scale,scale_score,incident_key,source,ingested_at,parser_confidence,parser_notes_json)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        m.id, m.published, m.updated, m.title, m.summary, m.url, m.service,
-                        m.priority, m.city, m.location, json.dumps(m.units, ensure_ascii=False),
-                        json.dumps(m.categories, ensure_ascii=False), m.scale, m.scale_score,
-                        m.incident_key, m.source, ingested_at, int(m.parser_confidence or 0),
-                        json.dumps(m.parser_notes or [], ensure_ascii=False),
-                    ),
-                )
-                if cur.rowcount:
-                    inserted.append(m)
-                    ingested_times[m.id] = ingested_at
-                    self.record_unknown_callsigns(con, m)
-            retention_days = int(self.config.get("retention_days", 30))
-            cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat(timespec="seconds")
-            con.execute("DELETE FROM messages WHERE published < ?", (cutoff,))
+        with self.db_lock:
+            candidates = [m for m in deduped.values() if m.id not in self.recent_message_ids]
+            cleanup_due = time.monotonic() - self.last_retention_cleanup_monotonic >= 3600.0
+            if not candidates and not cleanup_due:
+                return []
+            with self.connect() as con:
+                for m in sorted(candidates, key=lambda x: x.published):
+                    # Another feed thread may have inserted this ID while we were
+                    # waiting for db_lock. Re-check after acquiring the lock.
+                    if m.id in self.recent_message_ids:
+                        continue
+                    ingested_at = utcnow_iso()
+                    cur = con.execute(
+                        """
+                        INSERT OR IGNORE INTO messages
+                        (id,published,updated,title,summary,url,service,priority,city,location,
+                         units_json,categories_json,scale,scale_score,incident_key,source,ingested_at,parser_confidence,parser_notes_json)
+                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                        """,
+                        (
+                            m.id, m.published, m.updated, m.title, m.summary, m.url, m.service,
+                            m.priority, m.city, m.location, json.dumps(m.units, ensure_ascii=False),
+                            json.dumps(m.categories, ensure_ascii=False), m.scale, m.scale_score,
+                            m.incident_key, m.source, ingested_at, int(m.parser_confidence or 0),
+                            json.dumps(m.parser_notes or [], ensure_ascii=False),
+                        ),
+                    )
+                    # Remember both new rows and already-existing DB rows so the
+                    # next poll stays completely in RAM for duplicates.
+                    self._remember_message_id(m.id)
+                    if cur.rowcount:
+                        inserted.append(m)
+                        ingested_times[m.id] = ingested_at
+                        self.record_unknown_callsigns(con, m)
+                if cleanup_due:
+                    retention_days = int(self.config.get("retention_days", 30))
+                    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat(timespec="seconds")
+                    con.execute("DELETE FROM messages WHERE published < ?", (cutoff,))
+                    self.last_retention_cleanup_monotonic = time.monotonic()
         for m in inserted:
             payload = asdict(m)
             payload["ingested_at"] = ingested_times.get(m.id) or utcnow_iso()
@@ -4904,7 +5047,10 @@ class AppState:
         idx = max(0, min(len(rows) - 1, round((len(rows) - 1) * percentile)))
         return round(rows[idx], 1)
 
-    def health_snapshot(self) -> dict:
+    def health_snapshot(self, force: bool = False) -> dict:
+        now = time.monotonic()
+        if not force and self.health_cache is not None and now - self.health_cache_monotonic < 8.0:
+            return dict(self.health_cache)
         try:
             db_bytes = DB_PATH.stat().st_size if DB_PATH.exists() else 0
         except OSError:
@@ -4957,7 +5103,7 @@ class AppState:
             })
         with self.client_health_lock:
             client_health = dict(self.client_health)
-        return {
+        result = {
             "uptime_seconds": int(max(0, time.monotonic() - self.started_monotonic)),
             "rss_bytes": rss_bytes,
             "open_fds": fd_count,
@@ -4975,13 +5121,16 @@ class AppState:
             "feed_metrics": feed_metrics,
             "feed_cycle_p50_ms": self._percentile(self.feed_cycle_ms,.50),
             "feed_cycle_p95_ms": self._percentile(self.feed_cycle_ms,.95),
-            "feed_parallel_workers": int(self.config.get("feed_parallel_workers",6)),
+            "feed_parallel_workers": int(self.config.get("feed_parallel_workers",10)),
             "race_feeds": len(self.race_feed_urls()),
             "fallback_configured": len(self.config.get("fallback_feed_urls") or []),
             "fallback_activations": self.fallback_activations,
             "last_fallback_action": self.last_fallback_action,
             "display_client": client_health,
         }
+        self.health_cache = result
+        self.health_cache_monotonic = now
+        return dict(result)
 
     def subscribe(self) -> queue.Queue:
         q: queue.Queue = queue.Queue(maxsize=100)
@@ -5059,6 +5208,9 @@ class FeedPoller(threading.Thread):
         super().__init__(name="p2000-feed-poller")
         self.state = state
         self.nearby_poll_cycle = 0
+        # Keep worker threads alive across cycles; this avoids repeated thread
+        # creation and pairs with the global HTTP connection pool.
+        self.executor: ThreadPoolExecutor | None = None
 
     def parse_feed(self, xml_bytes: bytes, source_url: str = "") -> list[Message]:
         """Parse either RSS 2.0 (Alarmeringen) or Atom for backwards-safe tests."""
@@ -5189,8 +5341,38 @@ class FeedPoller(threading.Thread):
     def _save_cache(self, url: str, kind: str, value: str | None):
         if not value:
             return
-        self.state.feed_cache.setdefault(url, {})[kind] = value
+        current = self.state.feed_cache.setdefault(url, {}).get(kind)
+        if current == value:
+            return
+        self.state.feed_cache[url][kind] = value
         self.state.save_kv(self._cache_key(url, kind), value)
+
+    def _feed_backoff_seconds(self, url: str, role: str) -> float:
+        failures = max(0, int(self.state.feed_failure_counts.get(url, 0)))
+        if failures <= 0:
+            return 0.0
+        if role == "primary":
+            seq = (0, 8, 15, 30, 60, 60)
+        elif role == "race":
+            seq = (0, 15, 30, 60, 120, 300)
+        else:
+            seq = (0, 15, 30, 60, 120, 300)
+        return float(seq[min(failures, len(seq)-1)])
+
+    def _feed_ready(self, url: str) -> bool:
+        return time.monotonic() >= float(self.state.feed_backoff_until.get(url, 0.0))
+
+    def _feed_ok(self, url: str) -> None:
+        self.state.feed_failure_counts[url] = 0
+        self.state.feed_backoff_until.pop(url, None)
+
+    def _feed_failed(self, url: str, role: str) -> None:
+        failures = int(self.state.feed_failure_counts.get(url, 0)) + 1
+        self.state.feed_failure_counts[url] = failures
+        delay = self._feed_backoff_seconds(url, role)
+        if delay > 0:
+            self.state.feed_backoff_until[url] = time.monotonic() + delay
+
 
     def _process_payload(self, url: str, payload: bytes, diag: dict) -> tuple[int, int, int]:
         messages = self.parse_feed(payload, source_url=url)
@@ -5233,7 +5415,7 @@ class FeedPoller(threading.Thread):
         curl = shutil.which("curl")
         if not curl:
             return None
-        timeout = str(max(5, int(self.state.config.get("request_timeout_seconds", 15))))
+        timeout = str(max(5, int(self.state.config.get("request_timeout_seconds", 6))))
         cmd=[curl,"-fsSL","--max-time",timeout,"--connect-timeout",timeout,
              "-A",USER_AGENT,"-H","Accept: application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.1",url]
         try:
@@ -5252,43 +5434,59 @@ class FeedPoller(threading.Thread):
 
     def fetch_url(self, url: str, force_full: bool = False, role: str = "primary") -> tuple[int, int, int]:
         cfg = self.state.config
-        headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.1"}
+        if not force_full and not self._feed_ready(url):
+            previous = self.state.feed_diag.get(url, {})
+            wait = max(0.0, float(self.state.feed_backoff_until.get(url, 0.0)) - time.monotonic())
+            self.state.feed_diag[url] = {**previous, "url":url, "role":role, "status":"backoff", "retry_in_seconds":round(wait,1)}
+            return 0, 0, 0
+        headers={"User-Agent": USER_AGENT, "Accept": "application/rss+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.1", "Accept-Encoding":"gzip, deflate"}
         cache = self._load_cache(url)
         if not force_full:
             if cache.get("etag"):
                 headers["If-None-Match"] = cache["etag"]
             if cache.get("last_modified"):
                 headers["If-Modified-Since"] = cache["last_modified"]
-        req = urllib.request.Request(url, headers=headers)
         fetch_started = time.monotonic()
         previous = self.state.feed_diag.get(url, {})
-        diag={"url":url,"role":role,"status":"fetching","transport":"python-urllib","last_poll":utcnow_iso(),
+        diag={"url":url,"role":role,"status":"fetching","transport":"pooled-http","last_poll":utcnow_iso(),
               "entries":0,"in_scope":0,"inserted":0,"error":None,
               "latest_entry":previous.get("latest_entry"),"latest_scope":previous.get("latest_scope"),
               "last_success":previous.get("last_success")}
         self.state.feed_diag[url]=diag
+        timeout = max(3.0, min(12.0, float(cfg.get("request_timeout_seconds", 6))))
         try:
-            with urllib.request.urlopen(req, timeout=int(cfg.get("request_timeout_seconds", 15))) as resp:
-                payload = resp.read(int(cfg.get("max_feed_bytes", 2_000_000)))
-                self._save_cache(url, "etag", resp.headers.get("ETag"))
-                self._save_cache(url, "last_modified", resp.headers.get("Last-Modified"))
+            status, response_headers, payload = pooled_http_bytes(
+                url, headers, timeout=timeout, max_bytes=int(cfg.get("max_feed_bytes", 2_000_000))
+            )
             diag["fetch_ms"] = round((time.monotonic() - fetch_started) * 1000, 1)
-            return self._process_payload(url, payload, diag)
-        except urllib.error.HTTPError as e:
-            if e.code == HTTPStatus.NOT_MODIFIED:
-                diag["fetch_ms"] = round((time.monotonic() - fetch_started) * 1000, 1)
-                diag.update(status="online",not_modified=True,last_success=utcnow_iso())
+            if status == HTTPStatus.NOT_MODIFIED:
+                diag.update(status="online",not_modified=True,last_success=utcnow_iso(),retry_in_seconds=0)
                 self.state.record_feed_metrics(url, None, diag["fetch_ms"])
+                self._feed_ok(url)
                 return 0,0,0
-            diag["python_error"]=f"HTTP {e.code}: {e.reason}"
-        except Exception as e:
-            diag["python_error"]=f"{type(e).__name__}: {e}"
-
-        fallback=self._curl_fallback(url,diag)
-        if fallback is not None:
-            return fallback
-        diag.update(status="error",error=diag.get("curl_error") or diag.get("python_error") or "Onbekende downloadfout")
-        return 0,0,0
+            if status >= 400:
+                raise RuntimeError(f"HTTP {status}")
+            self._save_cache(url, "etag", response_headers.get("ETag") or response_headers.get("etag"))
+            self._save_cache(url, "last_modified", response_headers.get("Last-Modified") or response_headers.get("last-modified"))
+            result = self._process_payload(url, payload, diag)
+            self._feed_ok(url)
+            diag["retry_in_seconds"] = 0
+            return result
+        except Exception as exc:
+            diag["pooled_error"] = f"{type(exc).__name__}: {exc}"
+            self._feed_failed(url, role)
+            # Curl remains a last-resort compatibility path for odd system TLS
+            # stacks, but do not double a timeout: only try it for protocol/SSL
+            # style failures, not for ordinary slow/unreachable hosts.
+            text = str(exc).lower()
+            use_curl = any(x in text for x in ("ssl", "certificate", "protocol", "tls", "urlopen error"))
+            fallback = self._curl_fallback(url,diag) if use_curl else None
+            if fallback is not None:
+                self._feed_ok(url)
+                return fallback
+            wait = max(0.0, float(self.state.feed_backoff_until.get(url, 0.0)) - time.monotonic())
+            diag.update(status="error",error=diag.get("curl_error") or diag.get("pooled_error") or "Onbekende downloadfout",retry_in_seconds=round(wait,1))
+            return 0,0,0
 
 
     def fetch_once(self) -> int:
@@ -5298,72 +5496,103 @@ class FeedPoller(threading.Thread):
         supplemental=[u for u in (cfg.get("supplemental_feed_urls") or []) if u not in core_urls and u not in race_urls]
         fallback_urls=[u for u in (cfg.get("fallback_feed_urls") or []) if u and u not in core_urls and u not in race_urls and u not in supplemental]
         self.state.last_poll=utcnow_iso()
+        # Only force a full response at first boot when the DB is truly empty.
         with self.state.connect() as con:
-            db_empty=con.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
-        total_inserted=0; primary_any_ok=False; primary_errors=[]
+            db_empty=con.execute("SELECT 1 FROM messages LIMIT 1").fetchone() is None
+        total_inserted=0
+        main_online=0; main_errors=[]; secondary_online=0; secondary_errors=[]
         cycle_started=time.monotonic()
 
         jobs=[(u,"primary") for u in core_urls]+[(u,"race") for u in race_urls]+[(u,"supplemental") for u in supplemental]
-        workers=min(max(1,int(cfg.get("feed_parallel_workers",6))),max(1,len(jobs)))
-        if jobs:
-            with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="feed-race") as pool:
-                futures={pool.submit(self.fetch_url,url,db_empty,role):(url,role) for url,role in jobs}
-                for future in as_completed(futures):
-                    url,role=futures[future]
-                    try: _entries,_scoped,inserted=future.result()
-                    except Exception as exc:
-                        inserted=0;self.state.feed_diag.setdefault(url,{}).update(status="error",role=role,error=f"{type(exc).__name__}: {exc}")
-                    total_inserted+=inserted
-                    d=self.state.feed_diag.get(url,{})
-                    if d.get("status")=="online": primary_any_ok=True
-                    elif d.get("error"): primary_errors.append(f"{role} {url}: {d['error']}")
+        pool = self.executor
+        owns_pool = pool is None
+        if pool is None:
+            pool = ThreadPoolExecutor(max_workers=max(6,min(12,int(cfg.get("feed_parallel_workers",10)))), thread_name_prefix="feed-cycle")
+        futures={pool.submit(self.fetch_url,url,db_empty,role):(url,role) for url,role in jobs}
+        for future in as_completed(futures):
+            url,role=futures[future]
+            try: _entries,_scoped,inserted=future.result()
+            except Exception as exc:
+                inserted=0;self.state.feed_diag.setdefault(url,{}).update(status="error",role=role,error=f"{type(exc).__name__}: {exc}")
+                self._feed_failed(url, role)
+            total_inserted+=inserted
+            d=self.state.feed_diag.get(url,{})
+            online=d.get("status") in {"online","backoff"} and (d.get("last_success") or d.get("status")=="online")
+            if role=="primary":
+                if online: main_online+=1
+                elif d.get("error"): main_errors.append(f"{url}: {d['error']}")
+            else:
+                if online: secondary_online+=1
+                elif d.get("error"): secondary_errors.append(f"{role} {url}: {d['error']}")
 
         fallback_used=False;fallback_errors=[]
-        if not primary_any_ok and fallback_urls:
-            workers=min(max(1,int(cfg.get("feed_parallel_workers",6))),len(fallback_urls))
-            with ThreadPoolExecutor(max_workers=workers,thread_name_prefix="feed-fallback") as pool:
-                futures={pool.submit(self.fetch_url,url,True,"fallback"):url for url in fallback_urls}
-                for future in as_completed(futures):
-                    url=futures[future]
-                    try: _entries,_scoped,inserted=future.result()
-                    except Exception as exc:
-                        inserted=0;self.state.feed_diag.setdefault(url,{}).update(status="error",role="fallback",error=f"{type(exc).__name__}: {exc}")
-                    total_inserted+=inserted;d=self.state.feed_diag.get(url,{})
-                    if d.get("status")=="online": primary_any_ok=True;fallback_used=True
-                    elif d.get("error"): fallback_errors.append(f"fallback {url}: {d['error']}")
+        # Configured emergency fallbacks are only touched when neither a main nor
+        # race source is healthy. This keeps a broken fallback from creating noise.
+        if main_online==0 and secondary_online==0 and fallback_urls:
+            futures={pool.submit(self.fetch_url,url,True,"fallback"):url for url in fallback_urls}
+            for future in as_completed(futures):
+                url=futures[future]
+                try: _entries,_scoped,inserted=future.result()
+                except Exception as exc:
+                    inserted=0;self.state.feed_diag.setdefault(url,{}).update(status="error",role="fallback",error=f"{type(exc).__name__}: {exc}")
+                total_inserted+=inserted;d=self.state.feed_diag.get(url,{})
+                if d.get("status")=="online": secondary_online+=1;fallback_used=True
+                elif d.get("error"): fallback_errors.append(f"fallback {url}: {d['error']}")
             if fallback_used:
                 self.state.fallback_activations += 1; self.state.last_fallback_action = utcnow_iso()
 
         cycle_ms=(time.monotonic()-cycle_started)*1000
         self.state.feed_cycle_ms.append(cycle_ms);del self.state.feed_cycle_ms[:-120]
-        if primary_any_ok:
+        if main_online:
             self.state.last_success=utcnow_iso();self.state.consecutive_failures=0
-            if fallback_used:
-                self.state.last_error="Primaire/race-feeds onbereikbaar; fallback actief";self.state.feed_status="fallback"
+            # Auxiliary/race errors are diagnostic only; they must not put the
+            # entire monitor in ERROR/DEGRADED when 112-nu is healthy.
+            if main_errors:
+                self.state.feed_status="degraded";self.state.last_error="; ".join(main_errors[:5])
             else:
-                self.state.last_error="; ".join(primary_errors[:5]) if primary_errors else None
-                self.state.feed_status="online" if not primary_errors else "degraded"
+                self.state.feed_status="online";self.state.last_error=None
+        elif secondary_online:
+            self.state.last_success=utcnow_iso();self.state.consecutive_failures=0
+            self.state.feed_status="fallback"
+            self.state.last_error="112-nu tijdelijk niet bereikbaar; secundaire bron actief"
         else:
             self.state.consecutive_failures += 1
-            self.state.last_error="; ".join((primary_errors+fallback_errors)[:8]) or "Geen P2000-bron kon worden opgehaald"
+            self.state.last_error="; ".join((main_errors+secondary_errors+fallback_errors)[:8]) or "Geen P2000-bron kon worden opgehaald"
             self.state.feed_status="error"
-        self.state.broadcast({"type":"status","status":self.state.feed_status,"error":self.state.last_error})
+        self.state.broadcast_feed_status()
         if total_inserted:self.state.broadcast({"type":"batch","count":total_inserted,"at":utcnow_iso(),"cycle_ms":round(cycle_ms,1)})
+        if owns_pool:
+            pool.shutdown(wait=True, cancel_futures=False)
         return total_inserted
 
     def run(self):
-        interval=max(8,int(self.state.config.get("poll_interval_seconds",10)))
-        while not self.state.stop_event.is_set():
-            try:
-                self.fetch_once()
-            except Exception as e:
-                self.state.consecutive_failures += 1
-                self.state.feed_status = "error"
-                self.state.last_error = f"Poller: {type(e).__name__}: {e}"
-                self.state.broadcast({"type":"status","status":"error","error":self.state.last_error})
-            # A manual/watchdog refresh can wake this wait immediately.
-            self.state.manual_refresh_event.wait(interval)
-            self.state.manual_refresh_event.clear()
+        # Eight seconds is the existing safe lower bound. Internal processing is
+        # optimized instead of hammering external RSS providers below that limit.
+        interval=max(8,int(self.state.config.get("poll_interval_seconds",8)))
+        self.executor = ThreadPoolExecutor(
+            max_workers=max(6,min(12,int(self.state.config.get("feed_parallel_workers",10)))),
+            thread_name_prefix="feed-hot",
+        )
+        try:
+            while not self.state.stop_event.is_set():
+                started=time.monotonic()
+                try:
+                    self.fetch_once()
+                except Exception as e:
+                    self.state.consecutive_failures += 1
+                    self.state.feed_status = "error"
+                    self.state.last_error = f"Poller: {type(e).__name__}: {e}"
+                    self.state.broadcast_feed_status()
+                # Keep cycle starts close to the requested cadence. A slow fetch
+                # no longer adds another full interval on top of its own duration.
+                elapsed=time.monotonic()-started
+                wait=max(0.25, interval-elapsed)
+                self.state.manual_refresh_event.wait(wait)
+                self.state.manual_refresh_event.clear()
+        finally:
+            if self.executor is not None:
+                self.executor.shutdown(wait=False, cancel_futures=True)
+                self.executor = None
 
 
 class FeedWatchdog(threading.Thread):
@@ -7655,7 +7884,7 @@ class Handler(BaseHTTPRequestHandler):
                 "last_message": last["published"] if last else None,
                 "messages_total": count,
                 "messages_today": count_today,
-                "poll_interval_seconds": max(8, int(self.state.config.get("poll_interval_seconds", 10))),
+                "poll_interval_seconds": max(8, int(self.state.config.get("poll_interval_seconds", 8))),
                 "source": "112-nu.nl hoofdfeeds + Alarmeringen race/fallback",
                 "source_url": "https://112-nu.nl/",
                 "primary_feeds": list(self.state.config.get("feed_urls") or []),
@@ -7731,7 +7960,7 @@ class Handler(BaseHTTPRequestHandler):
             public = {
                 "display_name": self.state.config.get("display_name", "P2000 Monitor"),
                 "feed_urls": list(self.state.config.get("feed_urls") or []),
-                "poll_interval_seconds": max(8, int(self.state.config.get("poll_interval_seconds", 10))),
+                "poll_interval_seconds": max(8, int(self.state.config.get("poll_interval_seconds", 8))),
                 "scope": self.state.config.get("standplaats") or SCOPE_LABEL,
                 "setup_complete": self.state.config.get("setup_complete") is True,
             }
@@ -7788,7 +8017,21 @@ class Handler(BaseHTTPRequestHandler):
         if not target.exists() or not target.is_file():
             # SPA-ish fallback for harmless display URLs.
             target = FRONTEND_DIR / "index.html"
-        body = target.read_bytes()
+        try:
+            st = target.stat()
+            cache_key = str(target)
+            stamp = (int(st.st_mtime_ns), int(st.st_size))
+            with _STATIC_CACHE_LOCK:
+                cached = _STATIC_CACHE.get(cache_key)
+            if cached and cached[:2] == stamp:
+                body = cached[2]
+            else:
+                body = target.read_bytes()
+                if len(body) <= 8_000_000:
+                    with _STATIC_CACHE_LOCK:
+                        _STATIC_CACHE[cache_key] = (stamp[0], stamp[1], body)
+        except OSError:
+            body = target.read_bytes()
         self.send_response(200)
         self.send_header("Content-Type", MIME.get(target.suffix, "application/octet-stream"))
         self.send_header("Content-Length", str(len(body)))
@@ -7821,9 +8064,9 @@ def load_config() -> dict:
         "fallback_feed_urls": [],
         "feed_race_enabled": True,
         "feed_112nu_enabled": True,
-        "feed_parallel_workers": 6,
-        "poll_interval_seconds": 10,
-        "request_timeout_seconds": 15,
+        "feed_parallel_workers": 10,
+        "poll_interval_seconds": 8,
+        "request_timeout_seconds": 6,
         "max_feed_bytes": 2_000_000,
         "retention_days": 30,
         "watchdog_stale_seconds": 600,
@@ -7840,11 +8083,25 @@ def load_config() -> dict:
         "github_settings_minutes": 5,
     }
     legacy_default_poll = False
+    performance_migrated = False
+    loaded: dict = {}
     if CONFIG_PATH.exists():
         try:
-            loaded = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-            if isinstance(loaded, dict):
+            raw_loaded = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            if isinstance(raw_loaded, dict):
+                loaded = raw_loaded
                 legacy_default_poll = "feed_race_enabled" not in loaded and int(loaded.get("poll_interval_seconds", 20) or 20) == 20
+                # One-time v4.4.9 tuning. Only replace values that exactly match the
+                # former shipped defaults; explicit user choices are left untouched.
+                if loaded.get("performance_tuned_v449") is not True:
+                    if int(loaded.get("poll_interval_seconds", 10) or 10) == 10:
+                        loaded["poll_interval_seconds"] = 8
+                    if int(loaded.get("request_timeout_seconds", 15) or 15) == 15:
+                        loaded["request_timeout_seconds"] = 6
+                    if int(loaded.get("feed_parallel_workers", 6) or 6) == 6:
+                        loaded["feed_parallel_workers"] = 10
+                    loaded["performance_tuned_v449"] = True
+                    performance_migrated = True
                 default.update(loaded)
         except Exception as exc:
             print(f"Waarschuwing: config/config.json kon niet worden gelezen; veilige defaults worden gebruikt: {exc}", file=sys.stderr)
@@ -7854,11 +8111,11 @@ def load_config() -> dict:
     bind = normalize_space(str(default.get("bind") or "0.0.0.0"))
     default["bind"] = bind if len(bind) <= 120 else "0.0.0.0"
     default["port"] = bounded_int(default.get("port"), 8765, 1, 65535)
-    default["poll_interval_seconds"] = 10 if legacy_default_poll else bounded_int(default.get("poll_interval_seconds"), 10, 8, 3600)
+    default["poll_interval_seconds"] = 8 if legacy_default_poll else bounded_int(default.get("poll_interval_seconds"), 8, 8, 3600)
     default["feed_race_enabled"] = default.get("feed_race_enabled") is not False
     default["feed_112nu_enabled"] = default.get("feed_112nu_enabled") is not False
-    default["feed_parallel_workers"] = bounded_int(default.get("feed_parallel_workers"),6,1,12)
-    default["request_timeout_seconds"] = bounded_int(default.get("request_timeout_seconds"), 15, 5, 60)
+    default["feed_parallel_workers"] = bounded_int(default.get("feed_parallel_workers"),10,1,12)
+    default["request_timeout_seconds"] = bounded_int(default.get("request_timeout_seconds"), 6, 3, 60)
     default["max_feed_bytes"] = bounded_int(default.get("max_feed_bytes"), 2_000_000, 100_000, 10_000_000)
     default["retention_days"] = bounded_int(default.get("retention_days"), 30, 1, 365)
     default["watchdog_stale_seconds"] = bounded_int(default.get("watchdog_stale_seconds"), 600, 180, 86_400)
@@ -7917,6 +8174,14 @@ def load_config() -> dict:
         default["setup_complete"] = False
     if default["region_disciplines"]:
         default["feed_urls"] = build_feed_urls(default["region_disciplines"])
+    if performance_migrated and loaded:
+        try:
+            CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            tmp = CONFIG_PATH.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(loaded, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            tmp.replace(CONFIG_PATH)
+        except Exception as exc:
+            print(f"Waarschuwing: performance-instellingen konden niet worden gemigreerd: {exc}", file=sys.stderr)
     return default
 
 

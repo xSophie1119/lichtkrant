@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
 STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.8'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.9'
 LOG=DATA/'supervisor.log'
 _runtime_base=Path(os.environ.get('XDG_RUNTIME_DIR') or '/tmp')
 if not _runtime_base.exists() or not os.access(_runtime_base, os.W_OK | os.X_OK): _runtime_base=Path('/tmp')
@@ -53,7 +53,7 @@ def existing_supervisor():
     except Exception:return 0
     return pid if pid!=os.getpid() and pid_alive(pid) else 0
 
-def api(path,timeout=2.0):
+def api(path,timeout=1.2):
     try:
         req=urllib.request.Request(f'http://127.0.0.1:8765{path}',headers={'User-Agent':'P2000-Supervisor/4.4'})
         with urllib.request.urlopen(req,timeout=timeout) as r:return json.loads(r.read().decode('utf-8','replace'))
@@ -156,6 +156,7 @@ def main():
         print(f'P2000 supervisor draait al (PID {old}).');return 0
     DATA.mkdir(parents=True,exist_ok=True);PIDFILE.write_text(str(os.getpid()),encoding='utf-8')
     counters={'backend_restarts':0,'kiosk_restarts':0,'rollbacks':0};state='starting';last_action='';last_error='';backend_failures=0;kiosk_stale_hits=0;last_selector='';last_connected=None;last_geometry=None;geometry_candidate=None;geometry_hits=0;last_kiosk_restart=0.0;setup_was_incomplete=False;setup_completed_grace_until=0.0
+    health={};health_checked=0.0;setup_row={};setup_checked=0.0;disp={};display_checked=0.0
     log(f'P2000 supervisor v{VERSION} gestart (PID {os.getpid()}).')
     try:
         while True:
@@ -165,11 +166,19 @@ def main():
             elif cmd=='restart-kiosk' and not a.no_kiosk:
                 last_action='Kiosk handmatig herstart';log(last_action);kill_kiosk();time.sleep(.4);start_kiosk();counters['kiosk_restarts']+=1;last_kiosk_restart=time.monotonic()
 
-            runtime=api('/api/runtime',1.2);health=api('/api/health',1.8) if runtime else None
-            backend_ok=bool(runtime and runtime.get('app')=='P2000 Monitor' and health and health.get('ok'))
+            loop_now=time.monotonic()
+            runtime=api('/api/runtime',.8)
+            backend_ok=bool(runtime and runtime.get('app')=='P2000 Monitor')
+            # /api/health scans cache/database/process metrics and used to run every
+            # five seconds. Cache it at supervisor level; runtime is the cheap
+            # liveness probe and stays frequent for fast crash recovery.
+            if backend_ok and (not health or loop_now-health_checked>=10):
+                fresh=api('/api/health',1.2)
+                if fresh:
+                    health=fresh;health_checked=loop_now
             if backend_ok:backend_failures=0;state='healthy';last_error=''
             else:
-                backend_failures+=1;state='backend-unhealthy';last_error=f'Backend healthcheck mislukt ({backend_failures}/3)'
+                backend_failures+=1;state='backend-unhealthy';last_error=f'Backend runtimecheck mislukt ({backend_failures}/3)'
             if backend_failures>=3:
                 rolled=rollback_if_pending()
                 if rolled:counters['rollbacks']+=1
@@ -181,7 +190,9 @@ def main():
 
             kiosk_age=10**9;selector='';display_connected=False;geometry=(0,0,0,0)
             if backend_ok:
-                setup_row=api('/api/setup',1.5) or {}
+                if not setup_row or loop_now-setup_checked>=10:
+                    setup_row=api('/api/setup',1.0) or setup_row or {}
+                    setup_checked=loop_now
                 setup_complete=bool((setup_row.get('setup') or {}).get('setup_complete'))
                 if not setup_complete:
                     # The setup wizard intentionally does not send the lightkrant
@@ -199,7 +210,13 @@ def main():
                         log(last_action)
                     h=(health or {}).get('health') or {}
                     kiosk_age=iso_age((h.get('display_client') or {}).get('reported_at'))
-                    disp=api('/api/display/info',2);selector,display_connected,geometry=selected_display_state(disp)
+                    # Monitor enumeration can spawn xrandr/wlr-randr/PowerShell.
+                    # Fifteen seconds is responsive enough for reconnects without
+                    # continuously hammering the desktop stack.
+                    if not disp or loop_now-display_checked>=15:
+                        disp=api('/api/display/info',1.5) or disp or {}
+                        display_checked=loop_now
+                    selector,display_connected,geometry=selected_display_state(disp)
                     # Explicit screen changes already enqueue restart-kiosk from
                     # the backend. Never infer a screen change from focus/order/
                     # fingerprint changes: that caused Linux monitor ping-pong.
@@ -233,7 +250,7 @@ def main():
                 **counters,'last_action':last_action,'last_error':last_error,
             })
             if a.once:return 0 if backend_ok else 2
-            time.sleep(5)
+            time.sleep(2)
     except KeyboardInterrupt:return 0
     finally:
         try:

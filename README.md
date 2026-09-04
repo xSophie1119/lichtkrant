@@ -1,4 +1,4 @@
-# P2000 Monitor — MultiPlatform v4.4.8
+# P2000 Monitor — MultiPlatform v4.4.9
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
@@ -35,6 +35,17 @@ Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde b
 - Brandweerregio kan landelijk uit het eerste twee-cijferige roepnummer worden afgeleid wanneer een nationale RSS-feed geen regio meestuurt.
 
 
+
+### v4.4.9 performance & stabiliteit
+
+- Hergebruik van TCP/TLS-verbindingen voor de vijf 112-nu hoofdfeeds en de SW Roepnummer API.
+- Recente melding-ID's worden in RAM gededupliceerd voordat SQLite wordt aangesproken.
+- Database-retentie draait maximaal eenmaal per uur in plaats van in de feed-hot-path.
+- Scope-cleanup gebruikt een profielhandtekening en scant de database alleen wanneer de regio-/disciplinematrix verandert.
+- Feedfouten krijgen per bron een beperkte backoff; een defecte fallbackfeed zet de hoofdstatus niet meer onterecht op fout.
+- Supervisor controleert backend snel maar zware health/display-detectie veel minder vaak.
+- Statische frontendbestanden worden in het backendproces op mtime gecachet.
+- Getunede defaults: 8 s polling, 6 s netwerktimeout en 10 parallelle feedworkers.
 
 ### v4.4.8 landelijker en leesbaarder
 
@@ -190,7 +201,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.8.zip
+P2000_Monitor_MultiPlatform_v4.4.9.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.
