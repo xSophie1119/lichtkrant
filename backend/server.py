@@ -111,7 +111,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.4.13"
+APP_VERSION = "4.4.14"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -6629,16 +6629,89 @@ def _is_newer_version(remote: str, current: str = APP_VERSION) -> bool:
     return _version_key(remote) > _version_key(current)
 
 
+def _github_token() -> str:
+    # Optional: authenticated requests get a separate, much larger rate-limit.
+    # Never store or return this value through the monitor configuration/API.
+    return normalize_space(os.environ.get("P2000_GITHUB_TOKEN", "") or os.environ.get("GITHUB_TOKEN", ""))
+
+
 def _github_request_json(url: str, timeout: int = 12) -> dict:
-    req = urllib.request.Request(url, headers={
+    headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-    })
+    }
+    token = _github_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         if int(getattr(resp, "status", 200)) != 200:
             raise RuntimeError(f"GitHub API HTTP {getattr(resp, 'status', '?')}")
         return json.loads(resp.read(2_000_000).decode("utf-8", "replace") or "{}")
+
+
+def _github_http_error(exc: urllib.error.HTTPError) -> str:
+    code = int(getattr(exc, "code", 0) or 0)
+    remaining = normalize_space(str((getattr(exc, "headers", None) or {}).get("X-RateLimit-Remaining", "")))
+    reset = normalize_space(str((getattr(exc, "headers", None) or {}).get("X-RateLimit-Reset", "")))
+    if code in {403, 429} and remaining == "0":
+        detail = "GitHub API-limiet bereikt"
+        if reset.isdigit():
+            try:
+                detail += "; reset " + datetime.fromtimestamp(int(reset), timezone.utc).astimezone().strftime("%H:%M")
+            except (ValueError, OverflowError, OSError):
+                pass
+        return detail
+    if code == 403:
+        return "GitHub API weigert dit IP tijdelijk (HTTP 403)"
+    return f"HTTP {code or '?'}"
+
+
+def _github_raw_file(repo: str, path: str, revision: str, timeout: int = 12) -> bytes:
+    safe_path = quote(path, safe="/")
+    safe_revision = quote(revision, safe="")
+    url = f"https://raw.githubusercontent.com/{repo}/{safe_revision}/{safe_path}"
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "text/plain"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read(2_000_001)
+    if len(body) > 2_000_000:
+        raise ValueError(f"GitHub-bestand {path} is te groot")
+    return body
+
+
+def _github_branch_head_public(repo: str, branch: str, timeout: int = 12) -> str:
+    """Resolve a public branch without consuming GitHub REST API quota."""
+    git = shutil.which("git")
+    if git:
+        try:
+            result = subprocess.run(
+                [git, "ls-remote", "--heads", f"https://github.com/{repo}.git", f"refs/heads/{branch}"],
+                capture_output=True, text=True, timeout=timeout, check=False,
+                creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0),
+            )
+            revision = normalize_space((result.stdout or "").split("\t", 1)[0]).lower()
+            if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", revision):
+                return revision
+        except (OSError, subprocess.SubprocessError):
+            pass
+    # Git is optional in the Windows ZIP. GitHub's public commit feed provides
+    # the same immutable SHA and is not part of the REST API quota.
+    safe_branch = quote(branch, safe="")
+    req = urllib.request.Request(
+        f"https://github.com/{repo}/commits/{safe_branch}.atom",
+        headers={"User-Agent": USER_AGENT, "Accept": "application/atom+xml"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        body = resp.read(2_000_001)
+    if len(body) > 2_000_000:
+        raise ValueError("GitHub commitfeed is te groot")
+    match = re.search(rb"Commit/([0-9a-fA-F]{40})", body)
+    if not match:
+        match = re.search(rb"/commit/([0-9a-fA-F]{40})", body)
+    if not match:
+        raise ValueError(f"Publieke GitHub-branch {branch} heeft geen leesbare commit-SHA")
+    return match.group(1).decode("ascii").lower()
 
 
 def _select_github_release_asset(release: dict) -> dict:
@@ -6720,8 +6793,8 @@ def _github_latest_branch(repo: str, branch: str) -> dict:
     # Resolve the head first, then read and download that immutable revision.
     # This avoids a race where a push lands between VERSION and ZIP retrieval.
     revision = _github_branch_head(repo, branch)
-    version_file = _github_file(repo, "VERSION", revision)
-    version = normalize_space(version_file["body"].decode("utf-8", "replace"))[:80].lstrip("vV")
+    version_body = _github_raw_file(repo, "VERSION", revision)
+    version = normalize_space(version_body.decode("utf-8", "replace"))[:80].lstrip("vV")
     if not version or not re.search(r"\d", version):
         raise ValueError("VERSION op de GitHub-branch bevat geen geldig versienummer")
     return {
@@ -6734,6 +6807,32 @@ def _github_latest_branch(repo: str, branch: str) -> dict:
     }
 
 
+def _github_latest_branch_public(repo: str, branch: str, api_error: str = "") -> dict:
+    # Prefer an immutable commit. If resolving the SHA fails, a moving branch ZIP
+    # still safely delivers a higher VERSION, but equal versions are not offered.
+    revision = ""
+    revision_error = ""
+    try:
+        revision = _github_branch_head_public(repo, branch)
+    except Exception as exc:
+        revision_error = normalize_space(str(exc))[:200]
+    ref = revision or branch
+    body = _github_raw_file(repo, "VERSION", ref)
+    version = normalize_space(body.decode("utf-8", "replace"))[:80].lstrip("vV")
+    if not version or not re.search(r"\d", version):
+        raise ValueError("VERSION op de publieke GitHub-branch bevat geen geldig versienummer")
+    suffix = revision[:7] if revision else "branch"
+    return {
+        "repo": repo, "version": version, "tag": branch,
+        "revision": revision, "name": f"GitHub branch {branch}", "published_at": None,
+        "html_url": f"https://github.com/{repo}/tree/{quote(branch, safe='/')}",
+        "body": "Publieke branchfallback omdat de GitHub API tijdelijk niet bruikbaar was.",
+        "source_kind": "branch", "public_fallback": True,
+        "fallback_reason": api_error, "revision_warning": revision_error,
+        "asset": {"name": f"{repo.split('/', 1)[1]}-{branch}-{suffix}.zip", "url": f"https://codeload.github.com/{repo}/zip/{quote(ref, safe='')}", "size": 0, "digest": ""},
+    }
+
+
 def _github_latest_software(repo: str, branch: str, include_branch: bool) -> dict:
     candidates: list[dict] = []
     errors: list[str] = []
@@ -6743,14 +6842,20 @@ def _github_latest_software(repo: str, branch: str, include_branch: bool) -> dic
         candidates.append(release)
     except urllib.error.HTTPError as exc:
         if int(getattr(exc, "code", 0) or 0) != 404:
-            errors.append(f"Release: HTTP {getattr(exc, 'code', '?')}")
+            errors.append(f"Release: {_github_http_error(exc)}")
     except Exception as exc:
         errors.append(f"Release: {exc}")
     if include_branch:
         try:
             candidates.append(_github_latest_branch(repo, branch))
         except urllib.error.HTTPError as exc:
-            errors.append(f"Branch {branch}: HTTP {getattr(exc, 'code', '?')}")
+            api_error = _github_http_error(exc)
+            errors.append(f"Branch {branch}: {api_error}")
+            if int(getattr(exc, "code", 0) or 0) in {403, 429}:
+                try:
+                    candidates.append(_github_latest_branch_public(repo, branch, api_error))
+                except Exception as fallback_exc:
+                    errors.append(f"Publieke fallback {branch}: {fallback_exc}")
         except Exception as exc:
             errors.append(f"Branch {branch}: {exc}")
     if not candidates:
@@ -6879,10 +6984,14 @@ def github_check_and_maybe_install(state: "AppState", install: bool = False) -> 
         "update_reason": update_reason,
         "release_name": release.get("name"), "release_published_at": release.get("published_at"),
         "asset_name": release["asset"].get("name"), "asset_size": release["asset"].get("size"),
+        "public_fallback": bool(release.get("public_fallback")), "fallback_reason": release.get("fallback_reason", ""),
         "available": available, "target_version": "", "backup": "", "installed_version": "",
     }
     if not available:
-        return _write_update_status(state="up-to-date", message="Je gebruikt de nieuwste versie", error="", **base)
+        message = "Je gebruikt de nieuwste versie"
+        if release.get("public_fallback"):
+            message += " (gecontroleerd via publieke branchfallback)"
+        return _write_update_status(state="up-to-date", message=message, error="", **base)
     available_message = f"Nieuwe push {revision[:7]} op {release['tag']} is beschikbaar" if update_reason == "revision" else f"Versie {release['version']} is beschikbaar"
     if not install:
         return _write_update_status(state="available", message=available_message, error="", **base)

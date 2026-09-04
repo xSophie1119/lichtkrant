@@ -1,8 +1,16 @@
-# P2000 Monitor — MultiPlatform v4.4.13
+# P2000 Monitor — MultiPlatform v4.4.14
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+
+## Nieuw in v4.4.14 — GitHub 403-herstel
+
+- Een HTTP 403/429 op de GitHub REST-API blokkeert branchupdates niet meer: de monitor schakelt automatisch over op de publieke branch.
+- De fallback leest `VERSION` rechtstreeks en bepaalt waar mogelijk de exacte commit-SHA, zodat ook pushes zonder versieverhoging herkenbaar blijven.
+- Zonder leesbare SHA wordt alleen een werkelijk hogere versie aangeboden; dezelfde versie kan daardoor nooit in een installatielus belanden.
+- De normale branchcontrole gebruikt één REST-aanvraag minder en optionele tokens kunnen veilig via `P2000_GITHUB_TOKEN` of `GITHUB_TOKEN` worden aangeleverd.
+- Updateberichten maken nu onderscheid tussen een API-limiet, een tijdelijke 403 en een geslaagde publieke fallback.
 
 ## Nieuw in v4.4.13 — alleen-live, rustige Linux-watchdog, route en geluid
 
@@ -225,7 +233,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.13.zip
+P2000_Monitor_MultiPlatform_v4.4.14.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.

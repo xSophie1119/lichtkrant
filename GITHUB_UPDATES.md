@@ -1,11 +1,15 @@
-# GitHub-updates — v4.4.13
+# GitHub-updates — v4.4.14
 
 De monitor kan zowel Releases als gewone pushes op de ingestelde branch volgen. Branchupdates worden op exacte commit-SHA herkend, ook wanneer `VERSION` gelijk blijft.
+
+Bij HTTP 403 of 429 op de GitHub REST-API schakelt de branchcontrole automatisch over op publieke GitHub-adressen (`raw.githubusercontent.com`, de publieke commitfeed en codeload). Daardoor blijft een openbaar repository zonder token updatebaar. Als een exacte SHA tijdens de fallback niet gevonden kan worden, wordt alleen een hogere `VERSION` aangeboden; een gelijke versie wordt nooit opnieuw geïnstalleerd.
+
+Een token is niet verplicht. Wie op een gedeeld netwerk toch ruimere GitHub API-limieten wil, kan vóór het starten `P2000_GITHUB_TOKEN` instellen (of de algemene `GITHUB_TOKEN`). Het token wordt niet in `config.json`, de webinterface of de status-API opgeslagen.
 
 Aanbevolen Release-asset:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.13.zip
+P2000_Monitor_MultiPlatform_v4.4.14.zip
 ```
 
 De assetselectie geeft voorrang aan `multiplatform`/`multi-platform`. Als er meerdere OS-assets bestaan kiest Windows liever een Windows-ZIP en Linux liever een Linux-ZIP.

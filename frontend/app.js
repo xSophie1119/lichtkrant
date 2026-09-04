@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.13';
+const CLIENT_VERSION='4.4.14';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;

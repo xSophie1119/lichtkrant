@@ -1,4 +1,6 @@
 import importlib.util, sys
+import urllib.error
+from io import BytesIO
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -57,12 +59,12 @@ def test_central_settings_config_is_sanitized():
 
 
 def test_branch_update_metadata_uses_codeload():
-    original,original_head=server._github_file,server._github_branch_head
+    original,original_head=server._github_raw_file,server._github_branch_head
     requested=[]
-    server._github_file=lambda repo,path,branch:(requested.append(branch) or {'body':b'4.2.1\n','sha':'abc'})
+    server._github_raw_file=lambda repo,path,branch:(requested.append(branch) or b'4.2.1\n')
     server._github_branch_head=lambda repo,branch:'a'*40
     try: x=server._github_latest_branch('owner/repo','main')
-    finally: server._github_file,server._github_branch_head=original,original_head
+    finally: server._github_raw_file,server._github_branch_head=original,original_head
     assert x['version']=='4.2.1'
     assert x['source_kind']=='branch'
     assert x['revision']=='a'*40
@@ -88,6 +90,28 @@ def test_equal_version_prefers_branch_commit_over_release():
     finally: server._github_latest_release,server._github_latest_branch=old_release,old_branch
     assert selected['source_kind']=='branch'
     assert selected['revision']=='c'*40
+
+
+def test_api_403_uses_public_branch_fallback():
+    old_release,old_branch,old_public=server._github_latest_release,server._github_latest_branch,server._github_latest_branch_public
+    forbidden=lambda *args,**kwargs: (_ for _ in ()).throw(urllib.error.HTTPError('https://api.github.com',403,'forbidden',{},BytesIO()))
+    server._github_latest_release=forbidden
+    server._github_latest_branch=forbidden
+    server._github_latest_branch_public=lambda repo,branch,reason:{'repo':repo,'version':'4.4.14','tag':branch,'source_kind':'branch','revision':'d'*40,'public_fallback':True,'fallback_reason':reason,'asset':{'name':'fallback.zip','url':'https://codeload.github.com/owner/repo/zip/'+'d'*40,'size':0}}
+    try: selected=server._github_latest_software('owner/repo','main',True)
+    finally: server._github_latest_release,server._github_latest_branch,server._github_latest_branch_public=old_release,old_branch,old_public
+    assert selected['public_fallback'] is True
+    assert '403' in selected['fallback_reason']
+
+
+def test_public_fallback_without_sha_never_reinstalls_equal_version():
+    candidate={'repo':'owner/repo','version':'4.4.13','tag':'main','source_kind':'branch','revision':'','public_fallback':True}
+    assert server._github_update_available(candidate,'4.4.13',{}) == (False,'')
+
+
+def test_public_fallback_without_sha_still_offers_higher_version():
+    candidate={'repo':'owner/repo','version':'4.4.14','tag':'main','source_kind':'branch','revision':'','public_fallback':True}
+    assert server._github_update_available(candidate,'4.4.13',{}) == (True,'version')
 
 if __name__=='__main__':
     for name,fn in sorted(globals().items()):
