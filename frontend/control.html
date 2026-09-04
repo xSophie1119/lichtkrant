@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071018">
   <title>P2000 Monitor • Instellingen</title>
-  <link rel="stylesheet" href="/styles.css?v=4490">
+  <link rel="stylesheet" href="/styles.css?v=44100">
   <style>
     .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
     .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
@@ -161,8 +161,8 @@
         <label class="field"><span>YouTube afspeelduur (sec)</span><input id="dispatchTuneYoutubeSecondsInput" type="number" min="1" max="15" step="0.5"></label>
         <div class="field"><span>Eigen deuntje</span><input id="dispatchTuneFileInput" type="file" accept="audio/mpeg,audio/wav,audio/ogg,.mp3,.wav,.ogg"><small id="dispatchTuneFileStatus">Nog geen bestand geladen.</small></div>
       </div>
-      <div class="button-row"><button id="uploadDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje opslaan</button><button id="removeDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje verwijderen</button><button id="testDispatchTuneBtn" class="secondary-btn" type="button">Test gekozen deuntje</button></div>
-      <p class="hint">Keuzes: geen geluid, drie ingebouwde kazerne-tonen, urgent-signaal, YouTube of je eigen MP3/WAV/OGG. “Overnemen” gebruikt de standaardkeuze. Bij urgente meldingen heeft de urgente keuze voorrang.</p>
+      <div class="button-row"><button id="saveTuneSettingsBtn" class="primary-btn" type="button">Toontjes nu opslaan</button><button id="uploadDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje opslaan</button><button id="removeDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje verwijderen</button><button id="testDispatchTuneBtn" class="secondary-btn" type="button">Test gekozen deuntje</button></div>
+      <p class="hint">Wijzigingen aan de toontjes worden automatisch opgeslagen (en kunnen ook met “Toontjes nu opslaan” direct worden vastgezet). Keuzes: geen geluid, drie ingebouwde kazerne-tonen, urgent-signaal, YouTube of je eigen MP3/WAV/OGG. “Overnemen” gebruikt de standaardkeuze. Bij urgente meldingen heeft de urgente keuze voorrang.</p>
     </section>
 
     <section class="control-card">
@@ -287,6 +287,6 @@
   </div>
 </main>
 <div id="pageFeedback" class="page-feedback" role="status" aria-live="polite" hidden></div>
-<script src="/control.js?v=4490" defer></script>
+<script src="/control.js?v=44100" defer></script>
 </body>
 </html>

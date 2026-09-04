@@ -5,7 +5,7 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
 URL="${1:-http://127.0.0.1:8765/control}"
 LABEL="${2:-P2000 Monitor}"
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.9')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.10')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
 BASE_RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" ]]; then BASE_RUNTIME=/tmp; fi

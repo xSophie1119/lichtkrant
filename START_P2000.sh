@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# P2000 Monitor Linux launcher - v4.4.9
+# P2000 Monitor Linux launcher - v4.4.10
 set -u
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT" || exit 1
-VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.9')"
+VERSION="$(tr -d '\r\n ' < VERSION 2>/dev/null || printf '4.4.10')"
 LOGROOT="${XDG_STATE_HOME:-$HOME/.local/state}/p2000-monitor/logs"
 BASE_RUNTIME="${XDG_RUNTIME_DIR:-/tmp}"
 if [[ ! -d "$BASE_RUNTIME" || ! -w "$BASE_RUNTIME" ]]; then BASE_RUNTIME=/tmp; fi
@@ -57,18 +57,42 @@ fi
 # shellcheck source=/dev/null
 source "$ROOT/ENSURE_PYTHON.sh" || die 3 'Python 3.10 of nieuwer ontbreekt.'
 log "[1/4] Python: $P2000_PYTHON"
-"$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --kill-stale >>"$START_LOG" 2>&1 || true
+mkdir -p "$ROOT/data" "$ROOT/config" 2>/dev/null || true
+WRITE_PROBE="$ROOT/data/.write-test-$$"
+if ! ( umask 077; : > "$WRITE_PROBE" ) 2>/dev/null; then
+  die 4 "Backend kan niet schrijven naar $ROOT/data. Waarschijnlijk zijn bestanden ooit met sudo/root aangemaakt. Herstel met: sudo chown -R $(id -un):$(id -gn) '$ROOT'"
+fi
+rm -f "$WRITE_PROBE" 2>/dev/null || true
+if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --kill-stale >>"$START_LOG" 2>&1; then
+  "$P2000_PYTHON" tools/runtime_probe.py --describe-port 2>&1 | tee -a "$START_LOG" >&2 || true
+  die 4 'Poort 8765 is bezet en kon niet veilig worden vrijgemaakt. Zie startup.log voor PID/proces.'
+fi
+start_backend_once(){
+  : > "$LOGROOT/backend.log" 2>/dev/null || true
+  nohup "$P2000_PYTHON" "$ROOT/backend/server.py" >>"$LOGROOT/backend.log" 2>&1 </dev/null &
+  local pid=$!
+  echo "$pid" > "$RUNDIR/backend.pid" 2>/dev/null || true
+  sleep .25
+  kill -0 "$pid" 2>/dev/null
+}
 if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" >/dev/null 2>&1; then
   log '[2/4] Backend starten...'
-  nohup "$P2000_PYTHON" "$ROOT/backend/server.py" >>"$LOGROOT/backend.log" 2>&1 </dev/null &
-  echo $! > "$RUNDIR/backend.pid" 2>/dev/null || true
+  start_backend_once || log '[WAARSCHUWING] Backendproces stopte direct; herstelpoging volgt.'
 else
   log '[2/4] Backend draait al.'
 fi
 log '[3/4] Wachten op backend...'
-if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --wait 18 >/dev/null 2>&1; then
+if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --wait 10 >/dev/null 2>&1; then
+  log '[HERSTEL] Eerste backendstart niet gezond; stale proces/poort opnieuw controleren en één keer opnieuw starten.'
   tail -n 80 "$LOGROOT/backend.log" 2>/dev/null | tee -a "$START_LOG" >&2 || true
-  die 4 "Backend start niet. Zie: $LOGROOT/backend.log"
+  "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --kill-stale >>"$START_LOG" 2>&1 || true
+  sleep .35
+  start_backend_once || true
+  if ! "$P2000_PYTHON" tools/runtime_probe.py --version "$VERSION" --wait 12 >/dev/null 2>&1; then
+    tail -n 120 "$LOGROOT/backend.log" 2>/dev/null | tee -a "$START_LOG" >&2 || true
+    "$P2000_PYTHON" tools/runtime_probe.py --describe-port 2>&1 | tee -a "$START_LOG" >&2 || true
+    die 4 "Backend start niet na automatische herstelpoging. Zie: $LOGROOT/backend.log"
+  fi
 fi
 if [[ "${P2000_SUPERVISED:-0}" != "1" ]]; then
   if ! "$P2000_PYTHON" tools/supervisor.py --status >/dev/null 2>&1; then

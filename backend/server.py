@@ -71,6 +71,12 @@ BACKGROUND_DIR = DATA_DIR / "background"
 MAX_BACKGROUND_BYTES = 15 * 1024 * 1024
 TUNE_DIR = DATA_DIR / "tunes"
 MAX_TUNE_BYTES = 12 * 1024 * 1024
+TUNE_SETTINGS_PATH = TUNE_DIR / "settings.json"
+TUNE_SETTING_KEYS = (
+    "dispatchTuneEnabled", "dispatchTuneDefault", "dispatchTuneBrandweer", "dispatchTuneAmbulance",
+    "dispatchTunePolitie", "dispatchTuneLifeliner", "dispatchTuneKnrm", "dispatchTuneUrgent",
+    "dispatchTuneYoutubeUrl", "dispatchTuneYoutubeSeconds", "dispatchTuneVolume", "dispatchTuneCustomVersion",
+)
 UPDATE_DIR = DATA_DIR / "updates"
 UPDATE_STATUS_PATH = UPDATE_DIR / "status.json"
 UPDATE_BACKUP_DIR = UPDATE_DIR / "backups"
@@ -105,7 +111,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.4.9"
+APP_VERSION = "4.4.10"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -4045,7 +4051,7 @@ class AppState:
             self.clear_feed_cache()
         self.manual_refresh_event.set()
 
-    def get_display_settings(self) -> dict:
+    def _read_display_settings_db(self) -> dict:
         try:
             with self.connect() as con:
                 row = con.execute("SELECT value FROM kv WHERE key='display:settings'").fetchone()
@@ -4058,16 +4064,50 @@ class AppState:
             return {}
         try:
             value = json.loads(row["value"])
-            if not isinstance(value, dict):
-                return {}
-            if isinstance(value.get("services"), list):
-                allowed = {"brandweer", "ambulance", "politie", "lifeliner", "knrm", "overig"}
-                value["services"] = [x for x in value["services"] if x in allowed]
-                if not value["services"]:
-                    value["services"] = ["brandweer", "politie", "lifeliner", "knrm", "overig"]
-            return value
+            return value if isinstance(value, dict) else {}
         except Exception:
             return {}
+
+    def _read_tune_settings_file(self) -> dict:
+        try:
+            value = json.loads(TUNE_SETTINGS_PATH.read_text(encoding="utf-8"))
+            return {k: value[k] for k in TUNE_SETTING_KEYS if k in value} if isinstance(value, dict) else {}
+        except Exception:
+            return {}
+
+    def _write_tune_settings_file(self, settings: dict) -> None:
+        TUNE_DIR.mkdir(parents=True, exist_ok=True)
+        payload = {k: settings[k] for k in TUNE_SETTING_KEYS if k in settings}
+        tmp = TUNE_SETTINGS_PATH.with_name(f"{TUNE_SETTINGS_PATH.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, TUNE_SETTINGS_PATH)
+        if os.name != "nt":
+            try: os.chmod(TUNE_SETTINGS_PATH, 0o600)
+            except OSError: pass
+
+    def get_tune_settings(self) -> dict:
+        # Dedicated tune persistence prevents an unrelated partial settings save,
+        # quick action or GitHub pull from silently resetting the selected tones.
+        tune = self._read_tune_settings_file()
+        if tune:
+            return tune
+        legacy = self._read_display_settings_db()
+        migrated = {k: legacy[k] for k in TUNE_SETTING_KEYS if k in legacy}
+        if migrated:
+            try: self._write_tune_settings_file(migrated)
+            except OSError: pass
+        return migrated
+
+    def get_display_settings(self) -> dict:
+        value = self._read_display_settings_db()
+        # Tune settings have their own durable source of truth. Overlay them last.
+        value.update(self.get_tune_settings())
+        if isinstance(value.get("services"), list):
+            allowed = {"brandweer", "ambulance", "politie", "lifeliner", "knrm", "overig"}
+            value["services"] = [x for x in value["services"] if x in allowed]
+            if not value["services"]:
+                value["services"] = ["brandweer", "politie", "lifeliner", "knrm", "overig"]
+        return value
 
     def save_display_settings(self, payload: dict) -> dict:
         allowed = {
@@ -4085,7 +4125,12 @@ class AppState:
             "dispatchTunePolitie", "dispatchTuneLifeliner", "dispatchTuneKnrm", "dispatchTuneUrgent",
             "dispatchTuneYoutubeUrl", "dispatchTuneYoutubeSeconds", "dispatchTuneVolume", "dispatchTuneCustomVersion"
         }
-        clean = {k: v for k, v in (payload or {}).items() if k in allowed}
+        incoming = {k: v for k, v in (payload or {}).items() if k in allowed}
+        # Settings writes are PATCH-like. Older builds replaced the whole object,
+        # so a quick action/partial save could accidentally erase unrelated fields
+        # (most visibly the per-discipline deuntjes). Preserve existing values.
+        existing = self.get_display_settings()
+        clean = dict(incoming)
         # Server-side type/range hygiene as well as frontend validation. A bad
         # control request must never leave persistent settings in a state that
         # makes the kiosk render or speak unpredictably.
@@ -4228,6 +4273,11 @@ class AppState:
             if url and not re.match(r"^https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", url, re.I):
                 url = ""
             clean["dispatchTuneYoutubeUrl"] = url
+        merged = dict(existing)
+        merged.update(clean)
+        clean = merged
+        if any(k in incoming for k in TUNE_SETTING_KEYS):
+            self._write_tune_settings_file(clean)
         with self.connect() as con:
             con.execute(
                 "INSERT INTO kv(key,value) VALUES('display:settings',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -7405,6 +7455,10 @@ class Handler(BaseHTTPRequestHandler):
                 old.unlink(missing_ok=True)
         os.replace(temp, target)
         info = self._tune_info()
+        try:
+            self.state.save_display_settings({"dispatchTuneCustomVersion": int(info.get("version") or 0)})
+        except Exception:
+            pass
         info.update({"ok": True, "mime": mime})
         return self.send_json(info)
 
@@ -7434,6 +7488,8 @@ class Handler(BaseHTTPRequestHandler):
             for old in TUNE_DIR.glob("custom.*"):
                 if old.is_file():
                     old.unlink(missing_ok=True); removed = True
+            try: self.state.save_display_settings({"dispatchTuneCustomVersion": 0})
+            except Exception: pass
             return self.send_json({"ok": True, "removed": removed})
         if parsed.path == "/api/background/remove":
             BACKGROUND_DIR.mkdir(parents=True, exist_ok=True)
@@ -7495,6 +7551,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": False, "error":"invalid json"}, 400)
         if not isinstance(payload, dict):
             return self.send_json({"ok": False, "error": "JSON-object verwacht"}, 400)
+        if parsed.path == "/api/tune/settings":
+            try:
+                saved = self.state.save_display_settings(payload)
+                return self.send_json({"ok": True, "settings": {k: saved.get(k) for k in TUNE_SETTING_KEYS if k in saved}})
+            except Exception as exc:
+                return self.send_json({"ok": False, "error": str(exc)}, 500)
         if parsed.path == "/api/update/github/settings":
             try:
                 return self.send_json({"ok": True, "settings": self.state.save_github_update_config(payload)})
@@ -7780,6 +7842,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(self._background_info())
         if parsed.path == "/api/tune/info":
             return self.send_json(self._tune_info())
+        if parsed.path == "/api/tune/settings":
+            return self.send_json({"ok": True, "settings": self.state.get_tune_settings()})
         if parsed.path == "/api/tune/audio":
             path, mime = self._tune_file()
             if not path:

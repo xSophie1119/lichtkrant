@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse, json, os, re, signal, subprocess, sys, time, urllib.request
 from pathlib import Path
 
+ROOT=Path(__file__).resolve().parents[1]
 URL="http://127.0.0.1:8765/api/runtime"; PORT="8765"
 
 def runtime(timeout:float=.8)->dict|None:
@@ -56,6 +57,50 @@ def _proc_listener_pids(port: str) -> set[int]:
         except (PermissionError,FileNotFoundError,ProcessLookupError):
             continue
     return out
+
+def _proc_cmdline(pid:int)->str:
+    if os.name=="nt": return ""
+    try:
+        raw=(Path("/proc")/str(pid)/"cmdline").read_bytes().replace(b"\x00",b" ").decode("utf-8","replace").strip()
+        return raw
+    except Exception:return ""
+
+def _is_this_p2000_backend(pid:int)->bool:
+    if os.name=="nt":
+        # Windows stale-version recovery still relies on the runtime identity;
+        # never kill an unknown listener merely because it owns port 8765.
+        return False
+    cmd=_proc_cmdline(pid)
+    if not cmd:return False
+    expected=str((ROOT/"backend"/"server.py").resolve())
+    try: expected_alt=str((ROOT/"backend"/"server.py"))
+    except Exception: expected_alt=expected
+    if expected in cmd or expected_alt in cmd:return True
+    # Symlinked installs may preserve a different textual root in argv. Verify
+    # cwd plus the exact backend/server.py suffix before treating it as ours.
+    try:
+        cwd=os.path.realpath(os.readlink(f"/proc/{pid}/cwd"))
+        root=os.path.realpath(str(ROOT))
+        if cwd==root and re.search(r"(?:^|\s)(?:\S*/)?backend/server\.py(?:\s|$)",cmd):return True
+    except Exception:pass
+    # Also recognize another extracted/installed P2000 version. This is common
+    # during manual Linux upgrades: the old backend may still own 8765 while the
+    # user starts the new folder. Only accept a server.py whose project root has
+    # the P2000 VERSION + frontend/index.html markers.
+    for token in cmd.split():
+        if not token.endswith("backend/server.py"):continue
+        try:
+            server=Path(token).resolve();project=server.parent.parent
+            if (project/"VERSION").is_file() and (project/"frontend"/"index.html").is_file():return True
+        except Exception:pass
+    return False
+
+def describe_listener_pids(pids:set[int])->str:
+    rows=[]
+    for pid in sorted(pids):
+        cmd=_proc_cmdline(pid) if os.name!="nt" else ""
+        rows.append(f"PID {pid}"+(f": {cmd[:240]}" if cmd else ""))
+    return "; ".join(rows) if rows else "geen listener gevonden"
 
 def listener_pids()->set[int]:
     if os.name=="nt":
@@ -110,12 +155,30 @@ def terminate_pids(pids:set[int])->bool:
 
 def kill_stale(expected:str)->bool:
     obj=runtime()
-    if not obj or obj.get("app")!="P2000 Monitor" or str(obj.get("version"))==expected:return True
+    if obj and obj.get("app")=="P2000 Monitor" and str(obj.get("version"))==expected:
+        return True
     pids=listener_pids()
+    if obj and obj.get("app")=="P2000 Monitor":
+        if not pids:
+            print(f"Oud P2000-proces gevonden ({obj.get('version')}), maar PID op poort 8765 kon niet worden bepaald.")
+            return False
+        print(f"Oude P2000 backend v{obj.get('version')} op poort 8765 stoppen: {describe_listener_pids(pids)}")
+        return terminate_pids(pids)
     if not pids:
-        print(f"Oud P2000-proces gevonden ({obj.get('version')}), maar PID op poort 8765 kon niet worden bepaald.")
-        return False
-    return terminate_pids(pids)
+        return True
+    # A hung P2000 backend may own the socket while /api/runtime no longer answers.
+    # Recover that exact process on Linux, but never kill an unrelated service.
+    ours={pid for pid in pids if _is_this_p2000_backend(pid)}
+    if ours:
+        print(f"Vastgelopen P2000 backend op poort 8765 herstellen: {describe_listener_pids(ours)}")
+        if not terminate_pids(ours):return False
+        remaining=listener_pids()
+        if remaining:
+            print(f"Poort 8765 blijft bezet: {describe_listener_pids(remaining)}")
+            return False
+        return True
+    print(f"Poort 8765 is bezet door een ander proces: {describe_listener_pids(pids)}")
+    return False
 
 def stop_any()->bool:
     obj=runtime()
@@ -123,11 +186,15 @@ def stop_any()->bool:
     pids=listener_pids();return terminate_pids(pids) if pids else False
 
 def main()->int:
-    ap=argparse.ArgumentParser();ap.add_argument("--version",default="");ap.add_argument("--wait",type=float,default=0);ap.add_argument("--kill-stale",action="store_true");ap.add_argument("--stop",action="store_true")
+    ap=argparse.ArgumentParser();ap.add_argument("--version",default="");ap.add_argument("--wait",type=float,default=0);ap.add_argument("--kill-stale",action="store_true");ap.add_argument("--stop",action="store_true");ap.add_argument("--describe-port",action="store_true")
     a=ap.parse_args()
     if a.stop:return 0 if stop_any() else 2
-    if not a.version:ap.error("--version is required unless --stop is used")
-    if a.kill_stale and not kill_stale(a.version):return 3
+    if a.describe_port:
+        pids=listener_pids();print(describe_listener_pids(pids));return 0 if not pids else 1
+    if not a.version:ap.error("--version is required unless --stop/--describe-port is used")
+    if a.kill_stale:
+        if not kill_stale(a.version):return 3
+        if a.wait<=0:return 0
     if a.wait>0:
         end=time.monotonic()+a.wait
         while time.monotonic()<end:
