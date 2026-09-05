@@ -68,15 +68,23 @@ if exist "%CHROME_X64%" goto :launch_chrome
 if exist "%CHROME_X86%" goto :launch_chrome
 
 echo [P2000] Geen Edge/Chrome gevonden. Standaardbrowser openen.
-echo [LET OP] Bij autoplay-blokkade verschijnt 'OMROEP INSCHAKELEN'.
 start "" "%P2000_KIOSK_URL%"
 timeout /t 2 /nobreak >nul
+exit /b 0
+
+:prepare_profile
+set "P2000_PROFILE_DIR=%~1"
+if not defined P2000_PROFILE_DIR exit /b 0
+if not exist "%P2000_PROFILE_DIR%" mkdir "%P2000_PROFILE_DIR%" >nul 2>&1
+for %%F in ("SingletonLock" "SingletonCookie" "SingletonSocket" "LOCK") do (
+  if exist "%P2000_PROFILE_DIR%\%%~F" del /f /q "%P2000_PROFILE_DIR%\%%~F" >nul 2>&1
+)
 exit /b 0
 
 :launch_edge
 set "P2000_BROWSER_EXE="
 set "P2000_BROWSER_PROFILE=%LOCALAPPDATA%\P2000-Monitor\BrowserProfile-Edge-v%P2000_VERSION%"
-if not exist "%P2000_BROWSER_PROFILE%" mkdir "%P2000_BROWSER_PROFILE%" >nul 2>&1
+call :prepare_profile "%P2000_BROWSER_PROFILE%"
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
 if not errorlevel 1 (
   echo [P2000] Edge lichtkrant-kiosk draait al.
@@ -91,14 +99,20 @@ start "" "%P2000_BROWSER_EXE%" --window-position=%P2000_WINDOW_POSITION% --windo
 timeout /t 3 /nobreak >nul
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
 if not errorlevel 1 exit /b 0
-echo [WAARSCHUWING] Edge stopte tijdens de startcontrole; Chrome wordt geprobeerd.>>"%P2000_LOGDIR%\startup.log"
+echo [WAARSCHUWING] Edge kiosk stopte; app-mode fallback wordt geprobeerd.>>"%P2000_LOGDIR%\startup.log"
+call :prepare_profile "%P2000_BROWSER_PROFILE%"
+start "" "%P2000_BROWSER_EXE%" --window-position=%P2000_WINDOW_POSITION% --window-size=%P2000_WINDOW_SIZE% --start-fullscreen --app="%P2000_KIOSK_URL%" --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --user-data-dir="%P2000_BROWSER_PROFILE%" --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows
+timeout /t 3 /nobreak >nul
+call :kiosk_running "%P2000_BROWSER_PROFILE%"
+if not errorlevel 1 exit /b 0
+echo [WAARSCHUWING] Edge stopte ook in app-mode; Chrome wordt geprobeerd.>>"%P2000_LOGDIR%\startup.log"
 call :close_other_kiosks "BrowserProfile-Chrome-v%P2000_VERSION%"
 goto :launch_chrome
 
 :launch_chrome
 set "P2000_BROWSER_EXE="
 set "P2000_BROWSER_PROFILE=%LOCALAPPDATA%\P2000-Monitor\BrowserProfile-Chrome-v%P2000_VERSION%"
-if not exist "%P2000_BROWSER_PROFILE%" mkdir "%P2000_BROWSER_PROFILE%" >nul 2>&1
+call :prepare_profile "%P2000_BROWSER_PROFILE%"
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
 if not errorlevel 1 (
   echo [P2000] Chrome lichtkrant-kiosk draait al.
@@ -113,8 +127,16 @@ start "" "%P2000_BROWSER_EXE%" --window-position=%P2000_WINDOW_POSITION% --windo
 timeout /t 3 /nobreak >nul
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
 if not errorlevel 1 exit /b 0
-echo [FOUT] Chrome stopte tijdens de startcontrole.>>"%P2000_LOGDIR%\startup.log"
-goto :fatal_browser
+echo [WAARSCHUWING] Chrome kiosk stopte; app-mode fallback wordt geprobeerd.>>"%P2000_LOGDIR%\startup.log"
+call :prepare_profile "%P2000_BROWSER_PROFILE%"
+start "" "%P2000_BROWSER_EXE%" --window-position=%P2000_WINDOW_POSITION% --window-size=%P2000_WINDOW_SIZE% --start-fullscreen --app="%P2000_KIOSK_URL%" --no-first-run --no-default-browser-check --noerrdialogs --disable-session-crashed-bubble --user-data-dir="%P2000_BROWSER_PROFILE%" --autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows
+timeout /t 3 /nobreak >nul
+call :kiosk_running "%P2000_BROWSER_PROFILE%"
+if not errorlevel 1 exit /b 0
+echo [FOUT] Chrome stopte ook in app-mode. Standaardbrowser wordt geopend.>>"%P2000_LOGDIR%\startup.log"
+start "" "%P2000_KIOSK_URL%"
+timeout /t 2 /nobreak >nul
+exit /b 0
 
 :close_other_kiosks
 set "P2000_WANTED_PROFILE=%~1"
@@ -194,10 +216,11 @@ exit /b 1
 
 :fatal_browser
 echo.
-echo [FOUT] Chrome is niet gevonden en Edge kon niet worden gebruikt.
-echo Open handmatig: http://127.0.0.1:8765/
-pause
-exit /b 1
+echo [WAARSCHUWING] Edge/Chrome-kiosk kon niet worden gestart.
+echo De backend draait wel; standaardbrowser wordt geopend.
+start "" "%P2000_KIOSK_URL%"
+timeout /t 2 /nobreak >nul
+exit /b 0
 
 :fatal_extract
 echo.
