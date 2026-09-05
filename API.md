@@ -1,4 +1,4 @@
-# P2000 Monitor lokale API — v4.4.15
+# P2000 Monitor lokale API — v4.4.16
 
 De API is op Windows en Linux gelijk en luistert standaard op poort `8765`.
 
@@ -15,6 +15,9 @@ Belangrijkste endpoints:
 - `POST /api/tts` — Nederlandse omroepaudio; Windows SAPI-WAV of Linux eSpeak-WAV waar beschikbaar, anders gTTS MP3.
 - `GET /api/vehicles/status` / `POST /api/vehicles/sync` — voertuigcache.
 - `GET /api/vehicle-overrides` — handmatige correcties.
+- `GET /api/incidents?limit=30&scan=500` — samengevoegde incidenten met tijdlijn, urgentiescore en prioriteitsredenen.
+- `POST /api/parser/debug` — raw P2000-parser met schermtekst, omroeptekst en uitleg van verwijderde tokens.
+- `GET /api/route?origin_lat=...&origin_lon=...&dest_lat=...&dest_lon=...` — snelste autoroute met rijafstand, reistijd en routepolyline.
 - `POST /api/test-message` — test naar verbonden lichtkrant.
 - `GET /api/test-status?token=...` — bevestiging van afspelen/test.
 - `GET /api/update/status` — updaterstatus.

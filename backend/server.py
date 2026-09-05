@@ -111,7 +111,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.4.15"
+APP_VERSION = "4.4.17"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -523,6 +523,26 @@ POLICE_PRIO_ROAD_RE = re.compile(
 )
 AMBULANCE_RAW_RE = re.compile(r"^\s*(?:A[012]|B[12])\b", re.I)
 POSTCODE_RE = re.compile(r"\b\d{4}\s?[A-Z]{2}\b", re.I)
+BAARLE_RE = re.compile(r"\bBAARLE[-\s]?(?:NASSAU|HERTOG)\b", re.I)
+
+def is_baarle_incident(city: str = "", title: str = "", summary: str = "") -> bool:
+    hay = normalize_space(" ".join([city or "", title or "", summary or ""]))
+    return bool(BAARLE_RE.search(hay))
+
+def ambulance_priority_token(priority: str = "", title: str = "", summary: str = "") -> str:
+    token = normalize_space(priority).upper().replace(" ", "")
+    if token in {"A0", "A1", "A2", "B1", "B2"}:
+        return token
+    m = AMBULANCE_RAW_RE.search(title or "") or AMBULANCE_RAW_RE.search(summary or "")
+    return normalize_space(m.group(0)).upper() if m else ""
+
+def fire_units_allowed_for_message(service: str, priority: str = "", city: str = "", title: str = "", summary: str = "") -> bool:
+    """Central discipline firewall for Brandweer vehicle recognition."""
+    if normalize_space(service).lower() == "brandweer":
+        return True
+    if ambulance_priority_token(priority, title, summary):
+        return is_baarle_incident(city, title, summary)
+    return False
 UNIT_RE = re.compile(
     # Require an actual separator after the unit type. This prevents words such
     # as "woning" from being misread as a WO-unit.
@@ -2196,6 +2216,10 @@ def detect_service(title: str, summary: str, categories: list[str]) -> str:
             POLICE_PLAIN_RE.search(title or "") or POLICE_PLAIN_RE.search(summary or "") or
             POLICE_PRIO_ROAD_RE.search(title or "") or POLICE_PRIO_ROAD_RE.search(summary or "")):
         return "politie"
+    # Bare A0/A1/A2/B1/B2 prefixes are authoritative ambulance syntax even when
+    # the feed omits the literal words AMBU/AMBULANCE.
+    if AMBULANCE_RAW_RE.search(title or "") or AMBULANCE_RAW_RE.search(summary or ""):
+        return "ambulance"
     # Categories are the cleanest signal according to the feed documentation.
     for cat in categories:
         key = cat.strip().lower()
@@ -2316,6 +2340,13 @@ def infer_dispatch_tail_city(title: str) -> str:
 
 
 def infer_city(categories: list[str], title: str) -> str:
+    # Baarle is operationally special: ambulance-priority rows may legitimately
+    # include a Dutch/Belgian fire unit. Recognise the locality even before the
+    # nationwide gazetteer has finished its first background sync.
+    baarle = BAARLE_RE.search(title or "")
+    if baarle:
+        return "Baarle-Hertog" if "HERTOG" in baarle.group(0).upper() else "Baarle-Nassau"
+
     # Feed docs specify categories for service and city. Remove known service terms.
     candidates = []
     for cat in categories:
@@ -2541,15 +2572,19 @@ def _infer_structured_dispatch_location(title: str, city: str) -> str:
     if not raw:
         return ""
 
-    # A/B ambulance/MMT format (kept for Lifeliner parsing even when normal
-    # ambulance reception is disabled).
-    if AMBULANCE_RAW_RE.search(raw) and re.search(r"\b(?:AMBU|AMBULANCE)\b|(?<!\d)(?:13991|13901|17992|17902|17901|08993|08903)(?!\d)", raw, re.I):
+    # A/B ambulance/MMT format. A bare A0/A1/A2/B1/B2 token is authoritative
+    # ambulance syntax too; it does not need the literal word AMBULANCE. Any
+    # dispatch/bundle number or fire-looking callsign is bookkeeping, never part
+    # of the street/object text.
+    if AMBULANCE_RAW_RE.search(raw):
         s = re.sub(r"^\s*(?:A[012]|B[12])\b\s*", "", raw, flags=re.I)
         s = re.sub(r"^\s*\(\s*DIA(?:\s*:\s*(?:JA|NEE))?\s*\)\s*", "", s, flags=re.I)
         s = re.sub(r"^\s*DIA(?:\s*:\s*(?:JA|NEE))?\b\s*", "", s, flags=re.I)
         s = re.sub(r"^\s*(?:AMBU|AMBULANCE)\b\s*", "", s, flags=re.I)
-        s = re.sub(r"^(?:\s*\d{5}\s+)+", "", s)
+        s = re.sub(r"^(?:\s*\d{4,7}\s+)+", "", s)
+        s = _strip_inline_fire_units(s)
         s = _strip_trailing_dispatch_noise(s)
+        s = _strip_dispatch_prefix(s)
         s = re.sub(r"\bREGIO\s+\d+\b", " ", s, flags=re.I)
         s = POSTCODE_RE.sub(" ", s)
         s = normalize_space(s)
@@ -2721,6 +2756,26 @@ def infer_units(summary: str, title: str = "") -> list[str]:
     return list(dict.fromkeys(units))[:30]
 
 
+def _looks_like_fire_unit_token(unit: str) -> bool:
+    value = normalize_space(str(unit or ""))
+    if not value:
+        return False
+    digits = re.sub(r"\D", "", value)
+    if digits in MMT_RESOURCES:
+        return False
+    if re.match(r"^(?:TS|HV|HVT|HW|AL|RV|OVD(?:-?B)?|HOVD(?:-?B)?|AGS|VEBS|WT|WTS|WTH|DA|DB|PM|WO|FRB|SB|STH|USAR)(?:[-\s]|$)", value, re.I):
+        return True
+    return bool(re.fullmatch(r"(?:\d{6}|\d{2}[- ]\d{4}|\d{2}[- ]\d{2}[- ]\d{3})", value))
+
+
+def enforce_unit_discipline(service: str, priority: str, city: str, title: str, summary: str, units: list[str]) -> list[str]:
+    """Hard safety rail: no fire unit on ambulance-priority jobs outside Baarle."""
+    if fire_units_allowed_for_message(service, priority, city, title, summary):
+        return list(dict.fromkeys(units))[:30]
+    if ambulance_priority_token(priority, title, summary):
+        units = [u for u in units if not _looks_like_fire_unit_token(u)]
+    return list(dict.fromkeys(units))[:30]
+
 
 def incident_type_label(title: str, summary: str = "") -> str:
     """Normalize the most common Dutch P2000 incident taxonomies nationwide."""
@@ -2844,6 +2899,75 @@ def parser_confidence_details(title: str, summary: str, categories: list[str], s
     return max(0, min(100, score)), notes
 
 
+def _speech_where(city: str, location: str) -> str:
+    city = normalize_space(city); location = normalize_space(location)
+    if not location or normalize_city_token(location) == normalize_city_token(city):
+        return f" in {city}" if city else ""
+    prep = " aan " if re.match(r"^(?:de|het)\s+", location, re.I) else " aan de "
+    return f"{prep}{location}{f' in {city}' if city else ''}"
+
+
+def parser_text_diagnostics(raw: str, parsed: dict) -> dict:
+    """Explain what was kept, normalized and deliberately discarded."""
+    raw = normalize_space(raw)
+    service = normalize_space(str(parsed.get("service") or "overig")).lower()
+    priority = normalize_space(str(parsed.get("priority") or ""))
+    city = normalize_space(str(parsed.get("city") or ""))
+    location = normalize_space(str(parsed.get("location") or ""))
+    incident = normalize_space(str(parsed.get("incident_type") or "P2000-melding"))
+    scale = normalize_space(str(parsed.get("scale") or ""))
+    units = [normalize_space(str(x)) for x in (parsed.get("units") or []) if normalize_space(str(x))]
+    removed: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    def note(token: str, reason: str):
+        token = normalize_space(token); key = (token.casefold(), reason)
+        if token and key not in seen:
+            seen.add(key); removed.append({"token": token, "reason": reason})
+
+    m = re.match(r"^\s*(?:P\s*[1-5]|PRIO\s*[1-5]|A[012]|B[12])\b", raw, re.I)
+    if m: note(m.group(0), "prioriteit is als metadata gebruikt")
+    m = FIRE_DISPATCH_CODE_RE.search(raw)
+    if m: note(m.group(0), "meldkamer-/dispatchcode hoort niet in scherm- of omroeptekst")
+    m = POLICE_BUNDLE_RE.match(raw)
+    if m:
+        digits = re.search(r"\d{4,7}\s*$", m.group(0))
+        if digits: note(digits.group(0), "politie incident-/bundelnummer; geen voertuig")
+    if ambulance_priority_token(priority, raw, "") and not is_baarle_incident(city, raw, ""):
+        for fm in FIRE_CALLSIGN_RE.finditer(raw):
+            note(fm.group(0), "brandweerroepnummer genegeerd bij ambulanceprioriteit buiten Baarle-Nassau/Hertog")
+        for fm in FIRE_EXTENDED_CALLSIGN_RE.finditer(raw):
+            note(fm.group(0), "brandweerroepnummer genegeerd bij ambulanceprioriteit buiten Baarle-Nassau/Hertog")
+    if city and re.search(rf"\b{re.escape(city)}\b", raw, re.I): note(city, "plaats is apart herkend")
+    label_sources = {
+        "Ongeval met letsel": r"\b(?:LETSEL|AANRIJDING\s+LETSEL|ONGEVAL(?:\s+WEGVERVOER)?\s+LETSEL)\b",
+        "Schietincident": r"\bSCHIET(?:PARTIJ|INCIDENT)\b", "Steekincident": r"\bSTEEK(?:PARTIJ|INCIDENT)\b",
+        "Reanimatie": r"\bREANIMATIE\b", "MMT-inzet": r"\b(?:MMT|LIFELINER)\b",
+    }
+    pattern = label_sources.get(incident)
+    if pattern:
+        mm = re.search(pattern, raw, re.I)
+        if mm: note(mm.group(0), f"genormaliseerd naar incidenttype ‘{incident}’")
+
+    header = " • ".join(x for x in [priority, incident] if x)
+    screen_lines = [header or incident]
+    if location and normalize_city_token(location) != normalize_city_token(city): screen_lines.append(location)
+    if city: screen_lines.append(city)
+    if scale: screen_lines.append(scale)
+    if units: screen_lines.append(" • ".join(units))
+    speech_incident = incident if incident != "P2000-melding" else "Incident"
+    speech = f"{speech_incident}{_speech_where(city, location)}"
+    if scale: speech += f" is opgeschaald naar {scale.lower()}"
+    speech = normalize_space(speech).rstrip(".") + "."
+    allowed = fire_units_allowed_for_message(service, priority, city, raw, "")
+    if allowed:
+        unit_policy = "Brandweereenheden toegestaan"
+    elif ambulance_priority_token(priority, raw, ""):
+        unit_policy = "Brandweereenheden geblokkeerd: ambulanceprioriteit buiten Baarle-Nassau/Hertog"
+    else:
+        unit_policy = f"Brandweereenheden geblokkeerd voor dienst {service or 'overig'}"
+    return {"original_text": raw, "screen_text": "\n".join(x for x in screen_lines if x), "speech_text": speech, "removed": removed, "unit_policy": unit_policy}
+
+
 def parse_raw_p2000_line(state: "AppState", raw: str, categories: list[str] | None = None) -> dict:
     """Parse one pasted raw P2000 line through the same primitives as the feed parser."""
     title = normalize_space(strip_html(raw or ""))[:1200]
@@ -2855,11 +2979,12 @@ def parse_raw_p2000_line(state: "AppState", raw: str, categories: list[str] | No
     units = infer_units("", title)
     if detect_mmt_resource(title, "", units):
         service = "lifeliner"
+    units = enforce_unit_discipline(service, priority, city, title, "", units)
     scale, scale_score = detect_scale(title, "")
     alias_map = build_location_alias_map(state.get_display_settings())
     ikey = incident_key(service, city, location, title, alias_map)
     confidence, notes = parser_confidence_details(title, "", cats, service, priority, city, location, units, scale)
-    return {
+    result = {
         "raw": title,
         "service": service,
         "priority": priority,
@@ -2878,6 +3003,8 @@ def parse_raw_p2000_line(state: "AppState", raw: str, categories: list[str] | No
         "notes": notes,
         "map_query": ", ".join(x for x in [location, city, "Nederland"] if x),
     }
+    result.update(parser_text_diagnostics(title, result))
+    return result
 
 def incident_key(service: str, city: str, location: str, title: str, alias_map: dict[str, str] | None = None) -> str:
     norm_city = normalize_city_token(city)
@@ -2892,6 +3019,44 @@ def incident_key(service: str, city: str, location: str, title: str, alias_map: 
         base = fallback[:80]
     # Cross-service clustering is useful for larger incidents, so service is intentionally omitted.
     return hashlib.sha1(base.encode("utf-8")).hexdigest()[:16]
+
+
+_ROUTE_CACHE: dict[str, tuple[float, dict]] = {}
+_ROUTE_CACHE_LOCK = threading.Lock()
+_ROUTE_CACHE_TTL_SECONDS = 15 * 60
+
+
+def route_between_coords(origin_lat: float, origin_lon: float, dest_lat: float, dest_lon: float) -> dict:
+    """Return actual fastest-car route distance/time with a short-lived cache."""
+    vals = ((origin_lat,-90,90,"origin_lat"),(dest_lat,-90,90,"dest_lat"),(origin_lon,-180,180,"origin_lon"),(dest_lon,-180,180,"dest_lon"))
+    for value, lo, hi, label in vals:
+        if not math.isfinite(float(value)) or not lo <= float(value) <= hi: raise ValueError(f"Ongeldige {label}")
+    key=f"{origin_lat:.5f},{origin_lon:.5f}>{dest_lat:.5f},{dest_lon:.5f}"; now=time.time()
+    with _ROUTE_CACHE_LOCK:
+        cached=_ROUTE_CACHE.get(key)
+        if cached and now-cached[0]<_ROUTE_CACHE_TTL_SECONDS:
+            out=dict(cached[1]); out["cached"]=True; return out
+    coord=f"{origin_lon:.6f},{origin_lat:.6f};{dest_lon:.6f},{dest_lat:.6f}"
+    providers=[
+        ("OSRM",f"https://router.project-osrm.org/route/v1/driving/{coord}?overview=simplified&geometries=polyline&steps=false"),
+        ("OpenStreetMap routing",f"https://routing.openstreetmap.de/routed-car/route/v1/driving/{coord}?overview=simplified&geometries=polyline&steps=false"),
+    ]
+    errors=[]
+    for source,url in providers:
+        try:
+            status,_headers,body=pooled_http_bytes(url,{"User-Agent":USER_AGENT,"Accept":"application/json"},timeout=4.5,max_bytes=500_000)
+            if status!=200: errors.append(f"{source}: HTTP {status}"); continue
+            payload=json.loads(body.decode("utf-8",errors="replace")); routes=payload.get("routes") if isinstance(payload,dict) else None
+            if not routes or not isinstance(routes[0],dict): errors.append(f"{source}: geen route"); continue
+            r=routes[0]; result={"distance_m":max(0.0,float(r.get("distance") or 0)),"duration_s":max(0.0,float(r.get("duration") or 0)),"geometry":str(r.get("geometry") or "")[:12000],"source":source,"profile":"driving","fallback":False,"cached":False}
+            if result["distance_m"]<=0 or result["duration_s"]<=0: errors.append(f"{source}: onvolledige route"); continue
+            with _ROUTE_CACHE_LOCK:
+                _ROUTE_CACHE[key]=(now,dict(result))
+                if len(_ROUTE_CACHE)>500:
+                    oldest=min(_ROUTE_CACHE.items(),key=lambda item:item[1][0])[0]; _ROUTE_CACHE.pop(oldest,None)
+            return result
+        except Exception as exc: errors.append(f"{source}: {exc}")
+    raise RuntimeError("Routeberekening mislukt: "+" | ".join(errors[-2:]))
 
 
 def build_osm_embed_url(lat: float, lon: float, bbox: list[float] | tuple[float, ...] | None = None, zoom: int = 16) -> str:
@@ -3035,6 +3200,15 @@ class AppState:
         self.last_fallback_action: str | None = None
         self.client_health: dict = {}
         self.client_health_lock = threading.Lock()
+        # Display commands are kept briefly server-side as a fallback for SSE.
+        # This makes beheer/test actions reach a lightkrant that is open in a
+        # different browser/window/device even when its EventSource is between
+        # reconnects at the exact moment the command is sent.
+        self.display_commands: deque[dict] = deque(maxlen=120)
+        self.display_command_seq = 0
+        self.display_command_lock = threading.Lock()
+        self.display_clients: dict[str, dict] = {}
+        self.display_clients_lock = threading.Lock()
         self.test_results: dict[str, dict] = {}
         self.test_results_lock = threading.Lock()
         self.health_cache: dict | None = None
@@ -5097,6 +5271,56 @@ class AppState:
         with self.sub_lock:
             return len(self.subscribers)
 
+    def publish_display_command(self, payload: dict) -> tuple[int, int]:
+        """Broadcast a display command and retain it for short polling fallback."""
+        with self.display_command_lock:
+            self.display_command_seq += 1
+            seq = self.display_command_seq
+            row = dict(payload or {})
+            row["_command_seq"] = seq
+            row["_command_created_at"] = utcnow_iso()
+            row["_command_created_monotonic"] = time.monotonic()
+            self.display_commands.append(row)
+        delivered = self.broadcast(row)
+        return delivered, seq
+
+    def display_command_batch(self, after: int = 0, initial: bool = False) -> dict:
+        """Return commands not yet seen by a display. Initial polls only replay fresh commands."""
+        now = time.monotonic()
+        with self.display_command_lock:
+            latest = int(self.display_command_seq)
+            rows = []
+            for item in self.display_commands:
+                seq = int(item.get("_command_seq") or 0)
+                if seq <= int(after or 0):
+                    continue
+                age = now - float(item.get("_command_created_monotonic") or 0)
+                # Never replay stale control/test actions after a long network
+                # outage. A newly opened display gets only very fresh commands;
+                # an already-running display gets a wider reconnect window.
+                if age > (12.0 if initial else 60.0):
+                    continue
+                clean = {k: v for k, v in item.items() if k != "_command_created_monotonic"}
+                rows.append(clean)
+            return {"ok": True, "commands": rows, "latest_seq": latest}
+
+    def record_display_client(self, client_id: str, health: dict) -> None:
+        cid = normalize_space(str(client_id or ""))[:120] or "anonymous"
+        row = dict(health or {})
+        row["client_id"] = cid
+        row["seen_monotonic"] = time.monotonic()
+        with self.display_clients_lock:
+            self.display_clients[cid] = row
+            cutoff = time.monotonic() - 180.0
+            for key in list(self.display_clients):
+                if float(self.display_clients[key].get("seen_monotonic") or 0) < cutoff:
+                    self.display_clients.pop(key, None)
+
+    def active_display_clients(self, max_age_seconds: float = 45.0) -> int:
+        cutoff = time.monotonic() - max(5.0, float(max_age_seconds))
+        with self.display_clients_lock:
+            return sum(1 for row in self.display_clients.values() if float(row.get("seen_monotonic") or 0) >= cutoff)
+
     def record_feed_win(self, url: str, count: int = 1):
         if count > 0:
             self.feed_wins[url]=int(self.feed_wins.get(url,0))+int(count)
@@ -5328,6 +5552,7 @@ class FeedPoller(threading.Thread):
                 mmt_resource = detect_mmt_resource(title, summary, units)
                 if mmt_resource:
                     service = "lifeliner" if mmt_resource.get("kind") == "helicopter" else "ambulance"
+                units = enforce_unit_discipline(service, priority, city, title, summary, units)
                 scale, scale_score = detect_scale(title, summary)
                 # Prefer the canonical article URL so the same item appearing in both
                 # RSS feeds gets one database id. GUID is only a fallback.
@@ -5382,6 +5607,7 @@ class FeedPoller(threading.Thread):
             mmt_resource = detect_mmt_resource(title, summary, units)
             if mmt_resource:
                 service = "lifeliner" if mmt_resource.get("kind") == "helicopter" else "ambulance"
+            units = enforce_unit_discipline(service, priority, city, title, summary, units)
             scale, scale_score = detect_scale(title, summary)
             raw_id = url or atom_id or f"{published}|{title}|{summary}"
             msg_id = canonical_message_id(title, published, raw_id)
@@ -5862,6 +6088,26 @@ def _incident_timeline(chunk: list[dict]) -> tuple[list[dict], dict]:
     return timeline, latest_delta
 
 
+def incident_urgency_details(chunk: list[dict]) -> tuple[int, list[str]]:
+    """Rank relevance beyond a plain P1/P2 ordering."""
+    if not chunk: return 0, []
+    score=max((_priority_score(m.get("priority", "")) for m in chunk),default=0)*8; reasons=[]
+    joined=normalize_space(" ".join(f"{m.get('title','')} {m.get('summary','')} {m.get('scale','')} {' '.join(str(x) for x in (m.get('units') or []))}" for m in chunk))
+    classification=incident_classification(chunk); max_scale=max((int(m.get("scale_score") or 0) for m in chunk),default=0)
+    if max_scale>0: score+=30+min(45,max_scale*8); reasons.append("opschaling")
+    if classification=="Schietincident": score+=80; reasons.append("schietincident")
+    elif classification=="Steekincident": score+=75; reasons.append("steekincident")
+    if re.search(r"\bZEER\s+(?:GROTE|GR\.?)\s+(?:BR|BRAND)\b",joined,re.I): score+=75; reasons.append("zeer grote brand")
+    elif re.search(r"\bGROTE\s+(?:BR|BRAND)\b|\bGR\.\s*BR\b",joined,re.I): score+=58; reasons.append("grote brand")
+    elif re.search(r"\bMIDDEL(?:BRAND|\s+BRAND|\s+BR)\b",joined,re.I): score+=35; reasons.append("middelbrand")
+    if detect_mmt_resource(joined,"",[]): score+=38; reasons.append("MMT-inzet")
+    if len(chunk)>1: score+=min(35,(len(chunk)-1)*8); reasons.append(f"{len(chunk)} gekoppelde meldingen")
+    services={normalize_space(str(m.get("service") or "")) for m in chunk if normalize_space(str(m.get("service") or ""))}
+    if len(services)>=2: score+=min(28,10+(len(services)-2)*6); reasons.append("meerdere disciplines")
+    if re.search(r"\b(?:HVT-KR|HV-K|KRAAN|COBRA|BLUSROBOT|WTS|WTH|WATERTRANSPORT|SB|SCHUIMBLUS|STH|USAR|AGS|VEBS|FO[- ]?VOERTUIG)\b",joined,re.I): score+=22; reasons.append("bijzondere eenheid")
+    return min(999,int(score)),list(dict.fromkeys(reasons))
+
+
 def build_incidents(messages: list[dict], limit: int = 20) -> list[dict]:
     """Build incident-centric views from individual P2000 rows.
 
@@ -5899,6 +6145,7 @@ def build_incidents(messages: list[dict], limit: int = 20) -> list[dict]:
                 last_dt = last_dt.replace(tzinfo=timezone.utc)
             age_seconds = max(0, int((now - last_dt.astimezone(timezone.utc)).total_seconds()))
             confidences = [int(m.get("parser_confidence") or 0) for m in chunk]
+            urgency_score, urgency_reasons = incident_urgency_details(chunk)
             incidents.append({
                 "id": f"{key}-{first['published'][:16]}",
                 "incident_key": key,
@@ -5920,10 +6167,12 @@ def build_incidents(messages: list[dict], limit: int = 20) -> list[dict]:
                 "parser_confidence_avg": round(sum(confidences) / len(confidences)) if confidences else 0,
                 "timeline": timeline,
                 "latest_delta": latest_delta,
+                "urgency_score": urgency_score,
+                "urgency_reasons": urgency_reasons,
                 "messages": list(reversed(chunk))[:20],
                 "source_url": latest["url"],
             })
-    incidents.sort(key=lambda i: (bool(i["active"]), i["last_seen"], i["scale_score"]), reverse=True)
+    incidents.sort(key=lambda i: (bool(i["active"]), int(i.get("urgency_score") or 0), i["last_seen"]), reverse=True)
     return incidents[:limit]
 
 
@@ -7792,9 +8041,12 @@ class Handler(BaseHTTPRequestHandler):
                 "audio_unlocked": bool(payload.get("audio_unlocked",False)),
                 "audio_last_success_at": bounded_int(payload.get("audio_last_success_at",0),0,0,9_999_999_999_999),
             }
+            client_id = normalize_space(str(payload.get("client_id") or ""))[:120] or "anonymous"
+            clean["client_id"] = client_id
             with self.state.client_health_lock:
                 self.state.client_health = clean
-            return self.send_json({"ok": True})
+            self.state.record_display_client(client_id, clean)
+            return self.send_json({"ok": True, "active_display_clients": self.state.active_display_clients(), "latest_command_seq": self.state.display_command_seq})
         if parsed.path == "/api/parser/debug":
             raw = str(payload.get("raw") or payload.get("title") or "")[:1200]
             if not normalize_space(raw):
@@ -7895,11 +8147,12 @@ class Handler(BaseHTTPRequestHandler):
             host_speak = False  # speech is always owned by the lightkrant browser tab
             test_title = str(payload.get("title") or default_title)[:1000]
             test_summary = str(payload.get("summary") or payload.get("title") or default_title)[:1000]
-            test_city = str(payload.get("city") or default_city)[:120]
-            test_location = str(payload.get("location") or "")[:240]
-            # Test messages follow the same location parser as the live feed. This
-            # is especially important for "Eigen P2000-regel": the control page
-            # only needs to know the city; the backend extracts the street itself.
+            # Re-run pasted/raw test messages through the production parser. This
+            # prevents the beheerpagina from inventing a P1/brandweer fallback for
+            # A1 rows and keeps screen text, omroep and discipline policy identical.
+            parsed_test = parse_raw_p2000_line(self.state, test_title)
+            test_city = str(payload.get("city") or parsed_test.get("city") or default_city)[:120]
+            test_location = str(payload.get("location") or parsed_test.get("location") or "")[:240]
             if not normalize_space(test_location):
                 test_location = infer_location(test_title, test_summary, test_city)[:240]
             test_payload = {
@@ -7910,29 +8163,32 @@ class Handler(BaseHTTPRequestHandler):
                 "summary": test_summary,
                 "city": test_city,
                 "location": test_location,
-                "service": str(payload.get("service") or "brandweer")[:40],
-                "priority": str(payload.get("priority") or "P1")[:20],
-                "scale": str(payload.get("scale") or "")[:80],
-                "scale_score": bounded_int(payload.get("scale_score", 0), 0, 0, 100),
-                "speech_text": speech_text,
+                "service": str(payload.get("service") or parsed_test.get("service") or "overig")[:40],
+                "priority": str(payload.get("priority") or parsed_test.get("priority") or "")[:20],
+                "scale": str(payload.get("scale") or parsed_test.get("scale") or "")[:80],
+                "scale_score": bounded_int(payload.get("scale_score", parsed_test.get("scale_score", 0)), 0, 0, 100),
+                "speech_text": speech_text or str(parsed_test.get("speech_text") or "")[:500],
                 "duration_ms": bounded_int(payload.get("duration_ms", 60000), 60000, 0, 15 * 60 * 1000),
                 # Every test/speech request is broadcast to the lightkrant client.
                 "speak": bool(requested_speak),
                 "force_audio": bool(payload.get("force_audio", False)),
                 "tune_choice": str(payload.get("tune_choice") or "")[:40] if str(payload.get("tune_choice") or "") in {"none", "builtin:classic", "builtin:double", "builtin:rising", "builtin:urgent", "youtube", "custom"} else "",
             }
-            connected = self.state.subscriber_count()
+            connected = max(self.state.subscriber_count(), self.state.active_display_clients())
             self.state.begin_test_command(test_payload["token"], test_payload["mode"], connected)
-            delivered = self.state.broadcast({"type": "test", "payload": test_payload})
+            delivered, command_seq = self.state.publish_display_command({"type": "test", "payload": test_payload})
             if test_payload["mode"] == "stop-speech":
                 stop_host_tts()
-            if delivered < 1:
-                with self.state.test_results_lock:
-                    row = self.state.test_results.get(test_payload["token"])
-                    if row:
-                        row.update({"status": "error", "ok": False, "detail": "Geen lichtkrant-tabblad verbonden", "updated_at": utcnow_iso()})
-                return self.send_json({"ok": False, "error": "Geen lichtkrant-tabblad verbonden. Start of open eerst de monitor.", "test": test_payload}, 409)
-            return self.send_json({"ok": True, "test": test_payload, "speech_target": "lightkrant-tab", "connected_clients": delivered})
+            # Do not fail merely because SSE happened to be reconnecting. The
+            # command remains available to every lightkrant through the polling
+            # fallback for the next moments and can therefore be picked up from
+            # another tab/browser/device connected to this same backend.
+            return self.send_json({
+                "ok": True, "test": test_payload, "speech_target": "lightkrant",
+                "connected_clients": max(delivered, connected),
+                "sse_delivered": delivered, "queued": delivered < 1,
+                "command_seq": command_seq,
+            })
         if parsed.path == "/api/test-result":
             try:
                 return self.send_json({"ok": True, "result": self.state.finish_test_command(payload)})
@@ -7952,12 +8208,12 @@ class Handler(BaseHTTPRequestHandler):
                 merged=self.state.get_display_settings();merged["masterVolume"]=bounded_int(payload.get("value",100),100,0,100)
                 return self.send_json({"ok":True,"settings":self.state.save_display_settings(merged),"action":action})
             if action=="stop-speech":
-                token=f"quick-stop-{int(time.time()*1000)}";self.state.broadcast({"type":"test","payload":{"token":token,"mode":"stop-speech"}})
+                token=f"quick-stop-{int(time.time()*1000)}";self.state.publish_display_command({"type":"test","payload":{"token":token,"mode":"stop-speech"}})
                 return self.send_json({"ok":True,"action":action})
             if action=="replay-last":
                 rows=query_messages(self.state,{"limit":["1"]})
                 if not rows:return self.send_json({"ok":False,"error":"Nog geen melding om te herhalen"},404)
-                delivered=self.state.broadcast({"type":"replay","message":rows[0],"speak":bool(payload.get("speak",True))})
+                delivered,_seq=self.state.publish_display_command({"type":"replay","message":rows[0],"speak":bool(payload.get("speak",True))})
                 return self.send_json({"ok":delivered>0,"clients":delivered,"action":action},200 if delivered else 409)
             if action in {"restart-kiosk","restart-backend"}:
                 sup=ensure_supervisor_running()
@@ -8028,6 +8284,10 @@ class Handler(BaseHTTPRequestHandler):
             data = update_runtime_status()
             data["allowed_from_here"] = allowed
             return self.send_json(data)
+        if parsed.path == "/api/display-commands":
+            after = bounded_int(qs.get("after", ["0"])[0], 0, 0, 2_000_000_000)
+            initial = str(qs.get("initial", ["0"])[0]).lower() in {"1", "true", "yes"}
+            return self.send_json(self.state.display_command_batch(after=after, initial=initial))
         if parsed.path == "/api/runtime":
             # Lightweight kiosk heartbeat. Unlike /api/status this deliberately
             # avoids SQLite queries so the monitor can cheaply detect a backend
@@ -8039,6 +8299,8 @@ class Handler(BaseHTTPRequestHandler):
                 "started_at": self.state.started_at,
                 "platform": runtime_platform(),
                 "install_id": INSTALL_ID,
+                "display_command_seq": self.state.display_command_seq,
+                "active_display_clients": self.state.active_display_clients(),
             })
         if parsed.path == "/api/setup":
             return self.send_json({"ok": True, "setup": self.state.setup_view()})
@@ -8152,6 +8414,15 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": True, "map": self.state.geocode_incident(city, location, zoom)})
             except Exception as exc:
                 return self.send_json({"ok": False, "error": str(exc)}, 503)
+        if parsed.path == "/api/route":
+            try:
+                origin_lat=float(qs.get("origin_lat",[""])[0]); origin_lon=float(qs.get("origin_lon",[""])[0])
+                dest_lat=float(qs.get("dest_lat",[""])[0]); dest_lon=float(qs.get("dest_lon",[""])[0])
+                return self.send_json({"ok":True,"route":route_between_coords(origin_lat,origin_lon,dest_lat,dest_lon)})
+            except ValueError as exc:
+                return self.send_json({"ok":False,"error":f"Ongeldige routecoördinaten: {exc}"},400)
+            except Exception as exc:
+                return self.send_json({"ok":False,"error":str(exc)},503)
         if parsed.path == "/api/unknown-vehicles":
             limit = bounded_int(qs.get("limit", ["100"])[0], 100, 1, 500)
             rows = self.state.list_unknown_callsigns(limit)
@@ -8205,6 +8476,7 @@ class Handler(BaseHTTPRequestHandler):
                 "server_instance": self.state.server_instance,
                 "started_at": self.state.started_at,
                 "install_id": INSTALL_ID,
+                "display_command_seq": self.state.display_command_seq,
             }, ensure_ascii=False, separators=(",", ":"))
             self.wfile.write(f"data: {runtime}\n\n".encode("utf-8"))
             self.wfile.flush()

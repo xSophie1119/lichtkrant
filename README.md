@@ -1,8 +1,25 @@
-# P2000 Monitor — MultiPlatform v4.4.15
+# P2000 Monitor — MultiPlatform v4.4.17
 
 Configureerbare P2000-lichtkrant voor **Windows 10/11** en **Linux**. Dezelfde backend, frontend, database, parser, voertuiglaag en GitHub-updater worden op beide platformen gebruikt; alleen de OS-specifieke start-, scherm- en TTS-laag wisselt automatisch.
 
 > Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+
+## Nieuw in v4.4.17 — lichtkranttests over browsers en apparaten
+
+- Testmeldingen, omroeptests en deuntjestests zijn niet meer afhankelijk van één actieve SSE-verbinding op het exacte verzendmoment.
+- De backend bewaart display-opdrachten kort in een genummerde wachtrij; ieder lichtkrantscherm haalt gemiste opdrachten automatisch op.
+- SSE blijft de directe route; een lichte polling-fallback van circa 1,5 seconde vangt reconnects, andere browsers, andere vensters en andere apparaten op.
+- Elk open lichtkrantscherm registreert een eigen client-id/heartbeat, zodat beheer niet meer onterecht `Geen lichtkrant-tabblad verbonden` meldt bij een korte reconnect.
+- De fallback werkt tussen alle clients die naar dezelfde P2000-backend/installatie wijzen.
+
+## Nieuw in v4.4.16 — incidentintelligentie, disciplinefilter en echte route
+
+- Politie-/incidentnummers zoals `386198` kunnen niet meer via de voertuigcatalogus als brandweereenheid lekken.
+- A0/A1/A2/B1/B2 blokkeert brandweereenheden hard in backend én frontend; alleen Baarle-Nassau/Hertog is expliciet uitgezonderd.
+- De carrousel en incidentlijst wegen opschaling, schiet-/steekincidenten, grote brand, MMT, bijzondere eenheden en meerdere vervolgmeldingen mee.
+- Vervolgmeldingen worden incidentgericht samengevoegd met een compacte tijdlijn en urgentieredenen.
+- Beheer toont naast de originele P2000-regel ook schermtekst, omroeptekst en per verwijderd token de reden.
+- De kaart berekent de snelste autoroute via publieke OSRM/OpenStreetMap-routing, met echte rijafstand/reistijd en routepolyline; hemelsbreed blijft als tijdelijke fallback.
 
 ## Nieuw in v4.4.15 — kiosk-herstartlus en Linux-browserherstel
 
@@ -243,7 +260,7 @@ Standaardrepository: `xSophie1119/lichtkrant`.
 Voor Releases is een complete distributie-ZIP aanbevolen, bijvoorbeeld:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.15.zip
+P2000_Monitor_MultiPlatform_v4.4.17.zip
 ```
 
 Een source-code ZIP zonder complete monitorstructuur wordt geweigerd.

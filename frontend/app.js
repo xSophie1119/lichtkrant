@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.15';
+const CLIENT_VERSION='4.4.17';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -187,13 +187,15 @@ function crowDistanceKm(a,b){
   const h=Math.sin(dLat/2)**2+Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
   return 6371*2*Math.atan2(Math.sqrt(Math.max(0,h)),Math.sqrt(Math.max(0,1-h)));
 }
-function routeMapData(map,home){
+function routeMapData(map,home,realRoute=null){
   if(!map||!home||!Number.isFinite(Number(home.lat))||!Number.isFinite(Number(home.lon)))return map;
-  const distance=crowDistanceKm(home,map),label=routeHomeQuery()?.label||home.display_name||'standplaats';
+  const crow=crowDistanceKm(home,map),label=routeHomeQuery()?.label||home.display_name||'standplaats';
+  const hasReal=Number(realRoute?.distance_m)>0&&Number(realRoute?.duration_s)>0;
+  const distance=hasReal?Number(realRoute.distance_m)/1000:crow,duration=hasReal?Number(realRoute.duration_s):null;
   const navigationUrl=`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(`${home.lat},${home.lon}`)}&destination=${encodeURIComponent(`${map.lat},${map.lon}`)}&travelmode=driving`;
   let embedUrl=map.embed_url;
-  try{const u=new URL(embedUrl,location.origin);u.searchParams.set('originLat',String(home.lat));u.searchParams.set('originLon',String(home.lon));u.searchParams.set('originLabel',label);embedUrl=`${u.pathname}${u.search}`}catch{}
-  return {...map,embed_url:embedUrl,route:{origin_label:label,origin_lat:Number(home.lat),origin_lon:Number(home.lon),distance_km:distance,navigation_url:navigationUrl}};
+  try{const u=new URL(embedUrl,location.origin);u.searchParams.set('originLat',String(home.lat));u.searchParams.set('originLon',String(home.lon));u.searchParams.set('originLabel',label);if(hasReal&&realRoute.geometry&&String(realRoute.geometry).length<9000)u.searchParams.set('routePolyline',String(realRoute.geometry));embedUrl=`${u.pathname}${u.search}`}catch{}
+  return {...map,embed_url:embedUrl,route:{origin_label:label,origin_lat:Number(home.lat),origin_lon:Number(home.lon),distance_km:distance,duration_s:duration,estimated_minutes:duration?Math.max(1,Math.round(duration/60)):null,navigation_url:navigationUrl,real:hasReal,source:hasReal?(realRoute.source||'router'):'hemelsbreed fallback',geometry:hasReal?String(realRoute.geometry||''):''}};
 }
 function applyMapData(q,map){
   const els=mapPanelElements(); if(!els.panel||!map||!map.embed_url)return;
@@ -202,7 +204,7 @@ function applyMapData(q,map){
   if(els.city)els.city.textContent=q.city||'';
   els.meta.textContent='Marker: incident • blauwe stip: standplaats';
   const route=map.route||null;
-  if(els.route){els.route.hidden=!route;if(route){if(els.routeFrom)els.routeFrom.textContent=`Vanaf ${route.origin_label}`;if(els.routeDistance)els.routeDistance.textContent=`± ${route.distance_km<10?route.distance_km.toFixed(1):Math.round(route.distance_km)} km hemelsbreed`;if(els.routeLink){els.routeLink.href=route.navigation_url;els.routeLink.hidden=!route.navigation_url;}}}
+  if(els.route){els.route.hidden=!route;if(route){if(els.routeFrom)els.routeFrom.textContent=`Vanaf ${route.origin_label}`;if(els.routeDistance){const km=route.distance_km<10?route.distance_km.toFixed(1):Math.round(route.distance_km);els.routeDistance.textContent=route.real?`${km} km • ± ${route.estimated_minutes} min • snelste route`:`± ${km} km hemelsbreed • route wordt berekend…`;}if(els.routeLink){els.routeLink.href=route.navigation_url;els.routeLink.hidden=!route.navigation_url;}}}
   if(els.loading){els.loading.hidden=true;els.loading.classList.remove('error')}
   if(els.frame){els.frame.hidden=false;if(els.frame.dataset.src!==map.embed_url){els.frame.src=map.embed_url; els.frame.dataset.src=map.embed_url;}}
   els.panel.hidden=false; els.panel.classList.add('visible');
@@ -225,7 +227,13 @@ async function syncIncidentMap(){
     const homePromise=!homeQ?Promise.resolve(null):homeCached?Promise.resolve({map:homeCached}):json(`/api/geocode?city=${encodeURIComponent(homeQ.city)}&location=${encodeURIComponent(homeQ.location)}&zoom=14`).catch(()=>null);
     const [d,homeData]=await Promise.all([incidentPromise,homePromise]);
     if(homeQ&&homeData?.map&&!homeCached)state.mapCache.set(homeQ.key,homeData.map);
-    if(d?.map){const map=routeMapData(d.map,homeData?.map||homeCached);state.mapFailureCache.delete(q.key);state.mapCache.set(q.key,map);if(state.mapCache.size>250){const first=state.mapCache.keys().next().value;if(first)state.mapCache.delete(first)} if((currentMapQuery()||{}).key===q.key)applyMapData(q,map);}
+    if(d?.map){
+      const home=homeData?.map||homeCached,map=routeMapData(d.map,home);state.mapFailureCache.delete(q.key);state.mapCache.set(q.key,map);if(state.mapCache.size>250){const first=state.mapCache.keys().next().value;if(first)state.mapCache.delete(first)} if((currentMapQuery()||{}).key===q.key)applyMapData(q,map);
+      if(home&&Number.isFinite(Number(home.lat))&&Number.isFinite(Number(home.lon))){
+        const routeUrl=`/api/route?origin_lat=${encodeURIComponent(home.lat)}&origin_lon=${encodeURIComponent(home.lon)}&dest_lat=${encodeURIComponent(d.map.lat)}&dest_lon=${encodeURIComponent(d.map.lon)}`;
+        json(routeUrl).then(r=>{if(!r?.route)return;const routed=routeMapData(d.map,home,r.route);state.mapCache.set(q.key,routed);if((currentMapQuery()||{}).key===q.key)applyMapData(q,routed)}).catch(e=>console.warn('Snelste route niet beschikbaar; hemelsbrede fallback blijft actief',e));
+      }
+    }
     else{rememberMapFailure(q.key,'geen kaartresultaat');if((currentMapQuery()||{}).key===q.key)showMapError(q,'geen kaartresultaat');}
   }catch(e){
     console.warn('Locatiekaart laden mislukt',e);
@@ -363,6 +371,29 @@ function vehicleSpeechLabel(v){
   if(type==='OVD-B'||type==='HOVD-B'||type==='DA-OVD')return label;
   return [label,station].filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
 }
+function normalizedVehicleDiscipline(v,digits=''){
+  const raw=String(v?.discipline||'').trim().toLowerCase();
+  if(['brandweer','fire','brw','veiligheidsregio'].includes(raw))return'brandweer';
+  if(['ambulance','ambu','geneeskundig','ghor'].includes(raw))return'ambulance';
+  if(['politie','police'].includes(raw))return'politie';
+  if(['lifeliner','mmt','traumaheli'].includes(raw))return'lifeliner';
+  if(['knrm','kustwacht'].includes(raw))return'knrm';
+  // The bundled/regional six- and seven-digit catalog is a Brandweer catalog.
+  if(/^\d{6,7}$/.test(String(digits||'')))return'brandweer';
+  return raw;
+}
+function isBaarleMessage(m){return /\bBAARLE[-\s]?(?:NASSAU|HERTOG)\b/i.test(`${m?.city||''} ${m?.location||''} ${m?.title||''} ${m?.summary||''}`)}
+function ambulancePriorityMessage(m){return /^(?:A[012]|B[12])$/i.test(String(m?.priority||'').replace(/\s+/g,''))||/^\s*(?:A[012]|B[12])\b/i.test(originalMessage(m))}
+function fireVehicleAllowedForMessage(m){const svc=String(m?.service||'').toLowerCase();if(svc==='brandweer')return true;return ambulancePriorityMessage(m)&&isBaarleMessage(m)}
+function vehicleAllowedForMessage(m,v,digits=''){
+  const disc=normalizedVehicleDiscipline(v,digits),svc=String(m?.service||'').toLowerCase();
+  if(disc==='brandweer')return fireVehicleAllowedForMessage(m);
+  if(disc==='ambulance')return svc==='ambulance';
+  if(disc==='politie')return svc==='politie';
+  if(disc==='lifeliner')return svc==='lifeliner';
+  if(disc==='knrm')return svc==='knrm';
+  return svc==='brandweer'&&fireVehicleAllowedForMessage(m);
+}
 function vehicleDetails(m){
   const hay=`${m?.title||''} ${m?.summary||''} ${(m?.units||[]).join(' ')}`;
   const out=[],seen=new Set();
@@ -380,24 +411,24 @@ function vehicleDetails(m){
     [/(?<!\d)(?:1220805|12[- ]?20805)(?!\d)/i,'1220805','OvD-G 805 - Officier van Dienst Geneeskundig','Officier van Dienst Geneeskundig 805']
   ];
   for(const [re,key,header,speech] of ovdSpecials)if(re.test(hay))add(key,header,speech,{type:'OVD-G',isOfficer:true});
-  // Any exact SW/local catalogue hit is a real unit regardless of discipline.
-  // This makes future ambulance/police/KNRM API rows immediately useful too,
-  // without teaching the frontend a new hardcoded number plan.
+  // Exact catalogue hits still pass through the discipline firewall. A numeric
+  // police bundle (e.g. 386198) may coincidentally exist as a Brandweer callsign
+  // and must never become a vehicle on police/A1 rows.
   for(const match of hay.matchAll(/(?<!\d)(\d{2}(?:[- ]?\d{2}[- ]?\d{3}|[- ]?\d{3,5}))(?!\d)/g)){
-    const digits=String(match[1]||'').replace(/\D/g,''),v=vehicleByDigits(digits);if(!v)continue;
+    const digits=String(match[1]||'').replace(/\D/g,''),v=vehicleByDigits(digits);if(!v||!vehicleAllowedForMessage(m,v,digits))continue;
     const callsign=v?.callsign||match[1],type=String(v.type||'UNIT').toUpperCase();
     add(digits,vehicleHeaderFor(v,callsign),vehicleSpeechLabel(v),{type,station:v.station||'',isOfficer:/^(?:OVD|HOVD|DA-OVD|DB-OVD|AGS|VEBS)/.test(type)});
   }
-  const fireService=String(m?.service||'').toLowerCase()==='brandweer';
+  const fireService=fireVehicleAllowedForMessage(m);
   for(const match of hay.matchAll(/(?<!\d)(\d{2})[- ](\d{2})[- ](\d{3})(?!\d)/g)){
     const digits=`${match[1]}${match[2]}${match[3]}`,v=vehicleByDigits(digits),callsign=v?.callsign||`${match[1]}-${match[2]}-${match[3]}`;
-    if(!fireService&&!v)continue;
+    if(!fireService)continue;
     if(v){const type=String(v.type||'BRW').toUpperCase();add(digits,vehicleHeaderFor(v,callsign),vehicleSpeechLabel(v),{type,station:v.station||''})}
     else add(digits,`${callsign} - Brandweer ${FIRE_REGION_LABELS[match[1]]||''}`.trim(),`brandweervoertuig ${FIRE_REGION_LABELS[match[1]]||''}`.trim(),{type:'BRW'});
   }
   for(const match of hay.matchAll(/(?<!\d)(\d{2})[- ]?(\d{4})(?!\d)/g)){
     const digits=`${match[1]}${match[2]}`,exact=vehicleByDigits(digits);
-    if(!fireService&&!exact)continue;
+    if(!fireService)continue;
     const v=exact||inferredFireVehicle(digits),callsign=v?.callsign||`${match[1]}-${match[2]}`;
     if(v){
       let header=vehicleHeaderFor(v,callsign);
@@ -632,16 +663,23 @@ function speechIncidentInfo(m){
   for(const [regex,type,trigger,always] of rules)if(regex.test(h))return {type:typeof type==='function'?type():type,trigger,always:!!always,regex};
   return {type:'Incident',trigger:false,always:false,regex:null};
 }
+function linkedIncidentCount(m){const key=String(m?.incident_key||'');if(!key)return 1;const at=publishedMs(m)||Date.now();return Math.max(1,(state.messages||[]).filter(x=>String(x?.incident_key||'')===key&&Math.abs((publishedMs(x)||at)-at)<=30*60*1000).length)}
+function specialVehicleForPriority(m){const raw=norm(`${originalMessage(m)} ${(m?.units||[]).join(' ')}`);if(/\b(?:HVT-KR|HV-K|KRAAN|COBRA|BLUSROBOT|WTS|WTH|WATERTRANSPORT|SCHUIMBLUS|STH|USAR|AGS|VEBS|FO[- ]?VOERTUIG)\b/.test(raw))return true;try{return vehicleDetails(m).some(v=>/^(?:HVT-KR|HV-K|WTS|WTH|SB|STH|USAR|AGS|VEBS|FO)/.test(String(v.type||''))||/kraan|cobra|blusrobot|watertransport|schuimblus/i.test(String(v.header||'')))}catch{return false}}
 function urgencyInfo(m){
-  const h=norm(`${m?.scale||''} ${originalMessage(m)}`),info=speechIncidentInfo(m);
+  const h=norm(`${m?.scale||''} ${originalMessage(m)}`),info=speechIncidentInfo(m),linked=linkedIncidentCount(m),specialVehicle=specialVehicleForPriority(m),prio=priorityRank(m?.priority);
+  let out={rank:Math.max(1,prio),label:'',special:false,volume:prio>=3?76:prio===2?68:55,speechPriority:prio>=3?58:prio===2?48:35,carouselWeight:prio>=3?1.35:1};
   const grip=/\bGRIP\s*([1-5])\b/.exec(h);
-  if(grip)return {rank:5,label:`GRIP ${grip[1]}`,special:true,volume:100,speechPriority:100,carouselWeight:3};
-  if(/\bSCHIET(?:PARTIJ|INCIDENT)\b/.test(h))return {rank:5,label:'SCHIETPARTIJ',special:true,volume:100,speechPriority:98,carouselWeight:3};
-  if(/\bSTEEK(?:PARTIJ|INCIDENT)\b/.test(h))return {rank:5,label:'STEEKPARTIJ',special:true,volume:100,speechPriority:98,carouselWeight:3};
-  if(/\bZEER\s+(?:GROTE|GR\.?)\s+(?:BR|BRAND)\b/.test(h))return {rank:4,label:'ZEER GROTE BRAND',special:true,volume:92,speechPriority:88,carouselWeight:2};
-  if(mmtResourceInfo(m))return {rank:3,label:mmtResourceInfo(m).kind==='helicopter'?'MMT HELIKOPTER':'MMT AUTO',special:false,volume:84,speechPriority:76,carouselWeight:2};
-  if(/\b(?:WATEROVERLAST|STORMSCHADE|LIFTOPSLUITING|DIER IN PROBLEMEN)\b/.test(h)||/^(?:Wateroverlast|Stormschade|Liftopsluiting)/i.test(info.type))return {rank:1,label:'',special:false,volume:55,speechPriority:30,carouselWeight:1};
-  return {rank:2,label:'',special:false,volume:72,speechPriority:50,carouselWeight:1};
+  if(grip)out={rank:8,label:`GRIP ${grip[1]}`,special:true,volume:100,speechPriority:100,carouselWeight:4};
+  else if(/\bSCHIET(?:PARTIJ|INCIDENT)\b/.test(h))out={rank:8,label:'SCHIETPARTIJ',special:true,volume:100,speechPriority:98,carouselWeight:4};
+  else if(/\bSTEEK(?:PARTIJ|INCIDENT)\b/.test(h))out={rank:8,label:'STEEKPARTIJ',special:true,volume:100,speechPriority:98,carouselWeight:4};
+  else if(/\bZEER\s+(?:GROTE|GR\.?)\s+(?:BR|BRAND)\b/.test(h))out={rank:7,label:'ZEER GROTE BRAND',special:true,volume:92,speechPriority:90,carouselWeight:3.4};
+  else if(/\b(?:GROTE|GR\.?)\s+(?:BR|BRAND)\b/.test(h))out={rank:6,label:'GROTE BRAND',special:true,volume:90,speechPriority:86,carouselWeight:3};
+  else if(mmtResourceInfo(m))out={rank:5,label:mmtResourceInfo(m).kind==='helicopter'?'MMT HELIKOPTER':'MMT AUTO',special:false,volume:84,speechPriority:76,carouselWeight:2.5};
+  else if(/\bMIDDEL\s*(?:BR|BRAND)\b/.test(h))out={rank:4,label:'MIDDELBRAND',special:false,volume:80,speechPriority:68,carouselWeight:2};
+  else if(/\b(?:WATEROVERLAST|STORMSCHADE|LIFTOPSLUITING|DIER IN PROBLEMEN)\b/.test(h)||/^(?:Wateroverlast|Stormschade|Liftopsluiting)/i.test(info.type))out={rank:1,label:'',special:false,volume:55,speechPriority:30,carouselWeight:1};
+  if(specialVehicle){out.rank=Math.max(out.rank,4);out.carouselWeight+=.8;out.speechPriority=Math.max(out.speechPriority,64);if(!out.label)out.label='BIJZONDERE EENHEID'}
+  if(linked>1){out.carouselWeight+=Math.min(1.5,(linked-1)*.35);out.speechPriority+=Math.min(8,(linked-1)*2);if(!out.label)out.label=`${linked} MELDINGEN`;out.linkedCount=linked}
+  return out;
 }
 
 // Night audio curve for P2000 announcements. The firehouse screen may be awake
@@ -1394,7 +1432,7 @@ function idleDimFactor(now=new Date()){
 }
 
 function messageArrivalSeq(m){return Number(m?.__monitorArrivalSeq)||0}
-function sortActiveMessages(rows){return [...rows].sort(compareMessageNewest)}
+function sortActiveMessages(rows){return [...rows].sort((a,b)=>urgencyInfo(b).rank-urgencyInfo(a).rank||carouselWeight(b)-carouselWeight(a)||compareMessageNewest(a,b))}
 function registerActivity(m){
   if(!m||m.__test)return;const id=String(m.id||''),at=ingestedMs(m)||publishedMs(m)||Date.now();if(id&&state.activityIds.has(id))return;if(id)state.activityIds.set(id,at);state.lastP2000ActivityAt=Math.max(Number(state.lastP2000ActivityAt)||0,at);state.activityEvents.push(at);const cut=Date.now()-BUSY_WINDOW_MS;state.activityEvents=state.activityEvents.filter(t=>t>=cut);for(const [k,t] of state.activityIds)if(t<cut)state.activityIds.delete(k);
 }
@@ -1553,7 +1591,8 @@ function draw(){
 
 let renderPending=false;function render(){if(renderPending)return;renderPending=true;(globalThis.requestAnimationFrame||((fn)=>setTimeout(fn,0)))(()=>{renderPending=false;draw();syncIncidentMap()})}
 async function json(url,opts={}){const {timeoutMs=12000,...fetchOpts}=opts||{},controller=!fetchOpts.signal&&typeof AbortController!=='undefined'?new AbortController():null,timer=controller?setTimeout(()=>controller.abort(),Math.max(500,timeoutMs)):null;try{const r=await fetch(url,{cache:'no-store',...fetchOpts,signal:fetchOpts.signal||controller?.signal});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return await r.json()}catch(e){if(e?.name==='AbortError')throw new Error(`Verzoek duurde langer dan ${Math.round(timeoutMs/1000)} seconden`);throw e}finally{if(timer)clearTimeout(timer)}}
-let monitorRuntimeIdentity=null,monitorReloading=false,monitorRuntimeFailures=0,monitorEventSource=null,monitorRuntimeRetryTimer=null,monitorRuntimePromise=null,refreshPromise=null;
+let monitorRuntimeIdentity=null,monitorReloading=false,monitorRuntimeFailures=0,monitorEventSource=null,monitorRuntimeRetryTimer=null,monitorRuntimePromise=null,refreshPromise=null,lastDisplayCommandSeq=null,displayCommandPollPromise=null;
+const DISPLAY_CLIENT_ID=(()=>{try{let id=sessionStorage.getItem('p2000DisplayClientId');if(!id){id=`display-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;sessionStorage.setItem('p2000DisplayClientId',id)}return id}catch{return `display-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`}})();
 function hardReloadMonitor(reason='runtime'){
   if(monitorReloading)return false;monitorReloading=true;
   const u=new URL(location.href);u.searchParams.set('_monitor_reload',`${Date.now()}-${Math.random().toString(36).slice(2,8)}`);u.searchParams.set('_client',CLIENT_VERSION);
@@ -1564,6 +1603,7 @@ function observeMonitorRuntime(status){
   const reason=runtimeReloadReason(status,monitorRuntimeIdentity);if(reason){hardReloadMonitor(reason);return}
   const id=runtimeIdentity(status);if(!id)return;
   if(monitorRuntimeIdentity===null)monitorRuntimeIdentity=id;
+  if(lastDisplayCommandSeq===null&&Number.isFinite(Number(status?.display_command_seq)))lastDisplayCommandSeq=Number(status.display_command_seq)||0;
 }
 function scheduleRuntimeWatch(delay=1000){
   if(monitorRuntimeRetryTimer||monitorReloading)return;
@@ -1572,7 +1612,7 @@ function scheduleRuntimeWatch(delay=1000){
 async function reportClientHealth(){
   const rows=[...(state.renderPerf.samples||[])].filter(Number.isFinite).sort((a,b)=>a-b),sum=rows.reduce((a,b)=>a+b,0),p95=rows.length?rows[Math.min(rows.length-1,Math.floor((rows.length-1)*.95))]:0;
   const rect=canvas.getBoundingClientRect(),heap=Number(globalThis.performance?.memory?.usedJSHeapSize)||0;
-  const a=state.audioStats||{};const payload={viewport:`${Math.round(globalThis.innerWidth||rect.width)}x${Math.round(globalThis.innerHeight||rect.height)}`,canvas:`${canvas.width}x${canvas.height}`,dpr:Number(globalThis.devicePixelRatio)||1,render_avg_ms:rows.length?sum/rows.length:0,render_p95_ms:p95,render_max_ms:rows.length?rows.at(-1):0,render_samples:rows.length,js_heap_used:heap,active:activeVisible(),active_count:(state.activeMessages||[]).length,map_visible:!!state.mapVisible,busy:busyPeriodActive(),visibility:document.visibilityState||'unknown',speech_queue:(state.speechQueue||[]).length,speech_active:!!state.speechCurrent,speech_mode:String(state.settings.speechMode||'normal'),master_volume:Number(state.settings.masterVolume??100),audio_attempts:Number(a.attempts)||0,audio_successes:Number(a.successes)||0,audio_failures:Number(a.failures)||0,audio_fallbacks:Number(a.fallbacks)||0,audio_last_error:String(a.lastError||''),audio_last_mode:String(a.lastMode||''),audio_unlocked:!!a.unlocked,audio_last_success_at:Number(a.lastSuccessAt)||0};
+  const a=state.audioStats||{};const payload={client_id:DISPLAY_CLIENT_ID,viewport:`${Math.round(globalThis.innerWidth||rect.width)}x${Math.round(globalThis.innerHeight||rect.height)}`,canvas:`${canvas.width}x${canvas.height}`,dpr:Number(globalThis.devicePixelRatio)||1,render_avg_ms:rows.length?sum/rows.length:0,render_p95_ms:p95,render_max_ms:rows.length?rows.at(-1):0,render_samples:rows.length,js_heap_used:heap,active:activeVisible(),active_count:(state.activeMessages||[]).length,map_visible:!!state.mapVisible,busy:busyPeriodActive(),visibility:document.visibilityState||'unknown',speech_queue:(state.speechQueue||[]).length,speech_active:!!state.speechCurrent,speech_mode:String(state.settings.speechMode||'normal'),master_volume:Number(state.settings.masterVolume??100),audio_attempts:Number(a.attempts)||0,audio_successes:Number(a.successes)||0,audio_failures:Number(a.failures)||0,audio_fallbacks:Number(a.fallbacks)||0,audio_last_error:String(a.lastError||''),audio_last_mode:String(a.lastMode||''),audio_unlocked:!!a.unlocked,audio_last_success_at:Number(a.lastSuccessAt)||0};
   try{await json('/api/client-health',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true,timeoutMs:8000})}catch{}
 }
 function watchMonitorRuntime(){if(monitorRuntimePromise)return monitorRuntimePromise;monitorRuntimePromise=(async()=>{try{const d=await json(`/api/runtime?_=${Date.now()}`,{timeoutMs:5000});monitorRuntimeFailures=0;observeMonitorRuntime(d);return true}catch{monitorRuntimeFailures++;if(monitorRuntimeFailures<8)scheduleRuntimeWatch(Math.min(5000,750*monitorRuntimeFailures));return false}})().finally(()=>{monitorRuntimePromise=null});return monitorRuntimePromise}
@@ -1587,7 +1627,9 @@ async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.di
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
 function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){finishStartupBaseline()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(processNew);state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds()}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
 function incoming(m){if(!m||state.knownIds.has(m.id))return;state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
-function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'){handleTest(p.payload||{})}else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
+function handleDisplayCommand(p){if(!p||typeof p!=='object')return;const seq=Number(p._command_seq)||0;if(seq&&lastDisplayCommandSeq!==null&&seq<=lastDisplayCommandSeq)return;if(seq)lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,seq);if(p.type==='test')handleTest(p.payload||{});else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}
+async function pollDisplayCommands(){if(displayCommandPollPromise||monitorReloading)return displayCommandPollPromise;displayCommandPollPromise=(async()=>{try{const initial=lastDisplayCommandSeq===null;const after=initial?0:Number(lastDisplayCommandSeq)||0;const d=await json(`/api/display-commands?after=${after}&initial=${initial?1:0}&_=${Date.now()}`,{timeoutMs:5000});for(const cmd of (d.commands||[]))handleDisplayCommand(cmd);if(Number.isFinite(Number(d.latest_seq)))lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,Number(d.latest_seq)||0);return true}catch{return false}})().finally(()=>{displayCommandPollPromise=null});return displayCommandPollPromise}
+function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'||p.type==='replay'){handleDisplayCommand(p)}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
 function tick(){
   const now=Date.now();
@@ -1665,4 +1707,4 @@ document.addEventListener('keydown',e=>{if(state.audioBus.locked||!state.audioBu
 window.addEventListener('resize',resizeCanvas);
 window.addEventListener('storage',e=>{if(e.key==='p2000MonitorSettingsV4'){state.settings=loadSettings();syncBackgroundPhoto();invalidateIdleStatic();syncDisplayPower();render()}if(e.key==='p2000TestMessage'&&e.newValue){try{handleTest(JSON.parse(e.newValue))}catch{handleTest({})}}});
 try{const bc=new BroadcastChannel('p2000-monitor');bc.onmessage=e=>{if(e.data?.type==='test')handleTest(e.data)}}catch{}
-setInterval(tick,1000);setInterval(watchMonitorRuntime,10000);setInterval(reportClientHealth,30000);setInterval(pollSharedSettings,30000);setInterval(refresh,300000);window.addEventListener('online',()=>scheduleRuntimeWatch(250));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){scheduleRuntimeWatch(250);if(state.settings.speechEnabled!==false&&!state.audioBus.armed)armAudioBus().catch(()=>{});if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()}});resizeCanvas();setTimeout(reportClientHealth,5000);Promise.all([loadVehicleDb(),loadSharedSettings(),loadSetupProfile()]).then(async()=>{if(state.settings.speechEnabled!==false&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),250);await refresh();if(!monitorReloading){connect()}});
+setInterval(tick,1000);setInterval(pollDisplayCommands,1500);setInterval(watchMonitorRuntime,10000);setInterval(reportClientHealth,10000);setInterval(pollSharedSettings,30000);setInterval(refresh,300000);window.addEventListener('online',()=>scheduleRuntimeWatch(250));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){scheduleRuntimeWatch(250);if(state.settings.speechEnabled!==false&&!state.audioBus.armed)armAudioBus().catch(()=>{});if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()}});resizeCanvas();setTimeout(reportClientHealth,1200);setTimeout(pollDisplayCommands,800);Promise.all([loadVehicleDb(),loadSharedSettings(),loadSetupProfile()]).then(async()=>{if(state.settings.speechEnabled!==false&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),250);await refresh();if(!monitorReloading){connect()}});

@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 DATA=ROOT/'data'; UPDATES=DATA/'updates'
 STATUS=DATA/'supervisor-status.json'; COMMAND=DATA/'supervisor-command.json'; PIDFILE=DATA/'supervisor.pid'; LOCKFILE=DATA/'supervisor.lock'
-PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.15'
+PENDING=UPDATES/'pending-health.json'; VERSION=(ROOT/'VERSION').read_text(encoding='utf-8').strip() if (ROOT/'VERSION').exists() else '4.4.16'
 LOG=DATA/'supervisor.log'
 _explicit_runtime=os.environ.get('P2000_RUNTIME_DIR')
 _runtime_env=os.environ.get('XDG_RUNTIME_DIR')

@@ -190,8 +190,20 @@
       <label class="field"><span>Originele melding</span><textarea id="testInput" rows="4">P 1 BR woning Hoofdstraat Utrecht</textarea></label>
       <div class="button-row"><button id="testDisplayBtn" class="primary-btn">Toon testmelding</button><button id="testSpeakBtn" class="secondary-btn">Toon + spreek</button></div>
       <div class="live-preview" id="livePreview"><span class="preview-priority" id="previewPriority">P1 • BRANDWEER</span><h4 id="previewType">Brand woning</h4><p id="previewLocation">Hoofdstraat</p><p id="previewCity">Utrecht</p><div class="preview-grid"><span id="previewIncident">Incident: —</span><span id="previewScale">Opschaling: —</span><span id="previewVehicle">Voertuigen: —</span><span id="previewSpeech">Omroep: —</span></div></div>
-      <details><summary>Parserdetails</summary><pre id="parserDebugDetails" class="mono">Typ een melding om live te analyseren.</pre></details>
+      <div class="speech-builder" aria-label="Omroeptekst-builder">
+        <div class="builder-cell"><span>Originele P2000-regel</span><pre id="builderOriginal" class="mono">—</pre></div>
+        <div class="builder-cell"><span>Opgeschoonde schermtekst</span><pre id="builderScreen" class="mono">—</pre></div>
+        <div class="builder-cell"><span>Uiteindelijke omroeptekst</span><pre id="builderSpeech" class="mono">—</pre></div>
+        <div class="builder-cell"><span>Verwijderd / waarom</span><div id="builderRemoved" class="builder-removed">—</div><small id="builderUnitPolicy">—</small></div>
+      </div>
+      <details><summary>Alle parserdetails</summary><pre id="parserDebugDetails" class="mono">Typ een melding om live te analyseren.</pre></details>
       <p id="testStatus" class="hint">Live preview gebruikt exact dezelfde parser als de lichtkrant. Tests worden niet als echte P2000-melding opgeslagen.</p>
+    </section>
+
+    <section class="control-card wide" id="incidentIntelligenceCard">
+      <div class="panel-head compact"><div><span class="eyebrow">INCIDENTEN</span><h3>Slimme prioriteit & tijdlijn</h3></div><button id="refreshIncidentsBtn" class="secondary-btn" type="button">Vernieuwen</button></div>
+      <p class="hint">Vervolgmeldingen en opschalingen met dezelfde locatie worden automatisch samengevoegd. Relevantie weegt onder andere opschaling, schiet-/steekincidenten, grote brand, MMT, bijzondere voertuigen en meerdere gekoppelde meldingen mee.</p>
+      <div id="incidentList" class="incident-list control-incident-list"><div class="incident-item">Incidenten laden…</div></div>
     </section>
 
     <section class="control-card wide" id="roepnummerApiCard">
