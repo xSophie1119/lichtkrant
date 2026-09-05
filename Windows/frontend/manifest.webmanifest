@@ -1,0 +1,9 @@
+{
+  "name": "P2000 Monitor",
+  "short_name": "P2000 Monitor",
+  "start_url": "/",
+  "display": "fullscreen",
+  "background_color": "#050a0f",
+  "theme_color": "#071018",
+  "icons": []
+}
