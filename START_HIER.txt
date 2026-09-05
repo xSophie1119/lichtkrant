@@ -1,0 +1,26 @@
+P2000 MONITOR v4.4.18
+=====================
+
+Kies ALLEEN de map voor jouw besturingssysteem:
+
+WINDOWS 10/11
+  Open: Windows\
+  Start aanbevolen: INSTALL_P2000.bat
+  Portable starten: START_P2000.bat
+  Diagnose: WINDOWS_CHECK.bat
+
+LINUX
+  Open: Linux/
+  Installeren: ./INSTALL_P2000.sh
+  Portable starten: ./START_P2000.sh
+  Diagnose: ./LINUX_CHECK.sh
+
+De mappen zijn zelfstandig. Je hoeft Windows-bestanden niet naar Linux te
+kopieren en Linux-bestanden niet naar Windows.
+
+Nieuw in v4.4.18:
+- oude Windows-kiosk uit een vorige versie wordt automatisch vervangen;
+- Edge/Chrome gebruikt een versiegebonden P2000-profiel + cachebuster;
+- Windows-omroep heeft een lokale SoundPlayer-fallback als browseraudio stil is;
+- TS wordt in de omroep expliciet als "T S" uitgesproken;
+- testmeldingen blijven via dezelfde backend naar elk verbonden lichtkrantscherm gaan.

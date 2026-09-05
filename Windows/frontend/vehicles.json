@@ -1,0 +1,604 @@
+{
+  "meta": {
+    "version": "4.1.1",
+    "profile": "Kleine offline seed; landelijke regionale cache wordt dynamisch bijgewerkt",
+    "generated": "2026-08-31",
+    "count": 72,
+    "regions": [
+      "Utrecht (09)",
+      "Gooi en Vechtstreek (14)",
+      "Midden- en West-Brabant (20)",
+      "Flevoland (25)"
+    ],
+    "note": "Kleine geverifieerde offline seed. Exacte geselecteerde regio’s worden op de achtergrond uit de landelijke bron gecachet; onbekende nummers vallen direct terug op het nationale nummerplan zonder een onbevestigde standplaats te verzinnen.",
+    "sources": [
+      "p2000.page (actuele 2026-meldingen)",
+      "alarmeringen.nl (regionale P2000-monitor/RSS)",
+      "Brandweer Gooi en Vechtstreek"
+    ],
+    "scope": "offline seed + dynamische geselecteerde regionale shards"
+  },
+  "vehicles": {
+    "090131": {
+      "callsign": "09-0131",
+      "type": "TS",
+      "label": "TS",
+      "station": "Amersfoort Centrum",
+      "source": "P2000 2026",
+      "display": "TS Amersfoort Centrum"
+    },
+    "090132": {
+      "callsign": "09-0132",
+      "type": "TS",
+      "label": "TS",
+      "station": "Amersfoort Centrum",
+      "source": "P2000 2026",
+      "display": "TS Amersfoort Centrum"
+    },
+    "090152": {
+      "callsign": "09-0152",
+      "type": "AL",
+      "label": "AL",
+      "station": "Amersfoort Centrum",
+      "source": "P2000 2026",
+      "display": "AL Amersfoort Centrum"
+    },
+    "090231": {
+      "callsign": "09-0231",
+      "type": "TS",
+      "label": "TS",
+      "station": "Amersfoort Noord",
+      "source": "P2000 2026",
+      "display": "TS Amersfoort Noord"
+    },
+    "090271": {
+      "callsign": "09-0271",
+      "type": "HV",
+      "label": "HV",
+      "station": "Amersfoort Noord",
+      "source": "P2000 2026",
+      "display": "HV Amersfoort Noord"
+    },
+    "090331": {
+      "callsign": "09-0331",
+      "type": "TS",
+      "label": "TS",
+      "station": "Baarn",
+      "source": "P2000 2026",
+      "display": "TS Baarn"
+    },
+    "090344": {
+      "callsign": "09-0344",
+      "type": "TST-NB",
+      "label": "TST-NB",
+      "station": "Baarn",
+      "source": "P2000 2026",
+      "display": "TST-NB Baarn"
+    },
+    "090372": {
+      "callsign": "09-0372",
+      "type": "ATV",
+      "label": "ATV",
+      "station": "Baarn",
+      "source": "P2000 2026",
+      "display": "Gator Baarn"
+    },
+    "090374": {
+      "callsign": "09-0374",
+      "type": "HV",
+      "label": "HV",
+      "station": "Baarn",
+      "source": "P2000 2026",
+      "display": "HV Baarn"
+    },
+    "090380": {
+      "callsign": "09-0380",
+      "type": "FR",
+      "label": "FR",
+      "station": "Baarn",
+      "source": "P2000 2026",
+      "display": "First Responder ruw terrein Baarn"
+    },
+    "090411": {
+      "callsign": "09-0411",
+      "type": "WO",
+      "label": "WO",
+      "station": "Bunschoten",
+      "source": "P2000 2026",
+      "display": "WO Bunschoten"
+    },
+    "090431": {
+      "callsign": "09-0431",
+      "type": "TS",
+      "label": "TS",
+      "station": "Bunschoten",
+      "source": "P2000 2026",
+      "display": "TS Bunschoten"
+    },
+    "090432": {
+      "callsign": "09-0432",
+      "type": "TS",
+      "label": "TS",
+      "station": "Bunschoten",
+      "source": "P2000 2026",
+      "display": "TS Bunschoten"
+    },
+    "091601": {
+      "callsign": "09-1601",
+      "type": "DB",
+      "label": "DB",
+      "station": "Eemnes",
+      "source": "P2000 2026",
+      "display": "DB Eemnes"
+    },
+    "091631": {
+      "callsign": "09-1631",
+      "type": "TS",
+      "label": "TS",
+      "station": "Eemnes",
+      "source": "P2000 2026",
+      "display": "TS Eemnes"
+    },
+    "091632": {
+      "callsign": "09-1632",
+      "type": "TS",
+      "label": "TS",
+      "station": "Eemnes",
+      "source": "P2000 2026",
+      "display": "TS Eemnes"
+    },
+    "093352": {
+      "callsign": "09-3352",
+      "type": "AL",
+      "label": "AL",
+      "station": "Soest Hoofdpost",
+      "source": "P2000 2026",
+      "display": "AL Soest Hoofdpost"
+    },
+    "093386": {
+      "callsign": "09-3386",
+      "type": "HA-KR",
+      "label": "HA-KR",
+      "station": "Soest Hoofdpost",
+      "source": "P2000 2026",
+      "display": "HA-KR Soest Hoofdpost"
+    },
+    "093387": {
+      "callsign": "09-3387",
+      "type": "BSH",
+      "label": "BSH",
+      "station": "Soest Hoofdpost",
+      "source": "P2000 2026",
+      "display": "BSH Soest Hoofdpost"
+    },
+    "093431": {
+      "callsign": "09-3431",
+      "type": "TS",
+      "label": "TS",
+      "station": "Soest Nevenpost",
+      "source": "P2000 2026",
+      "display": "TS Soest Nevenpost"
+    },
+    "093544": {
+      "callsign": "09-3544",
+      "type": "TST-NB",
+      "label": "TST-NB",
+      "station": "Soest / Eemland",
+      "source": "P2000 2026",
+      "display": "TST-NB Soest / Eemland"
+    },
+    "098032": {
+      "callsign": "09-8032",
+      "type": "TS",
+      "label": "TS",
+      "station": "Regionaal Utrecht",
+      "source": "P2000 2026",
+      "display": "Regionale tankautospuit Utrecht"
+    },
+    "098694": {
+      "callsign": "09-8694",
+      "type": "DA-OVD",
+      "label": "DA-OVD",
+      "station": "Eemland-Zuid",
+      "source": "P2000 2026",
+      "display": "OvD-B Eemland-Zuid"
+    },
+    "098794": {
+      "callsign": "09-8794",
+      "type": "DA-OVD",
+      "label": "DA-OVD",
+      "station": "Eemland-Zuid",
+      "source": "P2000 2026",
+      "display": "OvD-B Eemland-Zuid"
+    },
+    "099005": {
+      "callsign": "09-9005",
+      "type": "DA",
+      "label": "DA",
+      "station": "Regionaal Utrecht",
+      "source": "P2000 2026",
+      "display": "Dienstauto Alarmcentrale Utrecht"
+    },
+    "099129": {
+      "callsign": "09-9129",
+      "type": "DA-AGS",
+      "label": "DA-AGS",
+      "station": "Regionaal Utrecht",
+      "source": "P2000 2026",
+      "display": "Adviseur Gevaarlijke Stoffen Utrecht"
+    },
+    "099229": {
+      "callsign": "09-9229",
+      "type": "DB-AGS",
+      "label": "DB-AGS",
+      "station": "Regionaal Utrecht",
+      "source": "P2000 2026",
+      "display": "Adviseur Gevaarlijke Stoffen Utrecht"
+    },
+    "099283": {
+      "callsign": "09-9283",
+      "type": "PM-LO",
+      "label": "PM-LO",
+      "station": "Soesterberg / Regionaal",
+      "source": "P2000 2026",
+      "display": "Logistiek voertuig Soesterberg"
+    },
+    "099294": {
+      "callsign": "09-9294",
+      "type": "DA",
+      "label": "DA",
+      "station": "Regionaal Utrecht",
+      "source": "P2000 2026",
+      "display": "Leiding en coördinatie Utrecht"
+    },
+    "099387": {
+      "callsign": "09-9387",
+      "type": "GM",
+      "label": "GM",
+      "station": "Amersfoort Centrum",
+      "source": "P2000 2026",
+      "display": "Groot materieel Amersfoort"
+    },
+    "099388": {
+      "callsign": "09-9388",
+      "type": "GM",
+      "label": "GM",
+      "station": "Amersfoort Centrum",
+      "source": "P2000 2026",
+      "display": "Groot materieel Amersfoort"
+    },
+    "099944": {
+      "callsign": "09-9944",
+      "type": "CCFM-NB",
+      "label": "CCFM-NB",
+      "station": "Amersfoort Centrum",
+      "source": "P2000 2026",
+      "display": "Natuurbrandvoertuig Amersfoort"
+    },
+    "141091": {
+      "callsign": "14-1091",
+      "type": "DA-OVD",
+      "label": "DA-OVD",
+      "station": "Flevoland / Gooi en Vechtstreek",
+      "source": "P2000 2026",
+      "display": "Reserve OvD"
+    },
+    "141131": {
+      "callsign": "14-1131",
+      "type": "TS",
+      "label": "TS",
+      "station": "Blaricum",
+      "source": "P2000 2026",
+      "display": "TS Blaricum"
+    },
+    "141231": {
+      "callsign": "14-1231",
+      "type": "TS",
+      "label": "TS",
+      "station": "Bussum",
+      "source": "P2000 2026",
+      "display": "TS Bussum"
+    },
+    "141252": {
+      "callsign": "14-1252",
+      "type": "AL",
+      "label": "AL",
+      "station": "Bussum",
+      "source": "P2000 2026",
+      "display": "AL Bussum"
+    },
+    "141302": {
+      "callsign": "14-1302",
+      "type": "DB-VEB",
+      "label": "DB-VEB",
+      "station": "Huizen",
+      "source": "P2000 2026",
+      "display": "DB-VEB Huizen"
+    },
+    "141303": {
+      "callsign": "14-1303",
+      "type": "PM",
+      "label": "PM",
+      "station": "Huizen",
+      "source": "P2000 2026",
+      "display": "PM Huizen"
+    },
+    "141331": {
+      "callsign": "14-1331",
+      "type": "TS",
+      "label": "TS",
+      "station": "Huizen Eemlandweg",
+      "source": "P2000 2026",
+      "display": "TS Huizen Eemlandweg"
+    },
+    "141352": {
+      "callsign": "14-1352",
+      "type": "AL",
+      "label": "AL",
+      "station": "Huizen",
+      "source": "P2000 2026",
+      "display": "AL Huizen"
+    },
+    "141383": {
+      "callsign": "14-1383",
+      "type": "HA",
+      "label": "HA",
+      "station": "Huizen",
+      "source": "P2000 2026",
+      "display": "HA Huizen"
+    },
+    "141531": {
+      "callsign": "14-1531",
+      "type": "TS",
+      "label": "TS",
+      "station": "Muiderberg",
+      "source": "P2000 2026",
+      "display": "TS Muiderberg"
+    },
+    "141631": {
+      "callsign": "14-1631",
+      "type": "TS",
+      "label": "TS",
+      "station": "Naarden",
+      "source": "P2000 2026",
+      "display": "TS Naarden"
+    },
+    "141731": {
+      "callsign": "14-1731",
+      "type": "TS",
+      "label": "TS",
+      "station": "Huizen BMW",
+      "source": "P2000 2026",
+      "display": "TS Huizen BMW"
+    },
+    "142091": {
+      "callsign": "14-2091",
+      "type": "DA-OVD",
+      "label": "DA-OVD",
+      "station": "Cluster Zuid",
+      "source": "P2000 2026",
+      "display": "OvD-B Cluster Zuid"
+    },
+    "142131": {
+      "callsign": "14-2131",
+      "type": "TS",
+      "label": "TS",
+      "station": "Hilversum",
+      "source": "P2000 2026",
+      "display": "TS Hilversum"
+    },
+    "142152": {
+      "callsign": "14-2152",
+      "type": "AL",
+      "label": "AL",
+      "station": "Hilversum",
+      "source": "P2000 2026",
+      "display": "AL Hilversum"
+    },
+    "142182": {
+      "callsign": "14-2182",
+      "type": "HA",
+      "label": "HA",
+      "station": "Hilversum",
+      "source": "P2000 2026",
+      "display": "HA Hilversum"
+    },
+    "142331": {
+      "callsign": "14-2331",
+      "type": "TS",
+      "label": "TS",
+      "station": "Laren",
+      "source": "P2000 2026",
+      "display": "TS Laren"
+    },
+    "142631": {
+      "callsign": "14-2631",
+      "type": "TS",
+      "label": "TS",
+      "station": "'s-Graveland",
+      "source": "P2000 2026",
+      "display": "TS 's-Graveland"
+    },
+    "142731": {
+      "callsign": "14-2731",
+      "type": "TS",
+      "label": "TS",
+      "station": "Loosdrecht",
+      "source": "P2000 2026",
+      "display": "TS Loosdrecht"
+    },
+    "147008": {
+      "callsign": "14-7008",
+      "type": "DV-DT",
+      "label": "DV-DT",
+      "station": "Muiderberg",
+      "source": "P2000 2026",
+      "display": "Droneteam"
+    },
+    "147062": {
+      "callsign": "14-7062",
+      "type": "SBH",
+      "label": "SBH",
+      "station": "Laren",
+      "source": "P2000 2026",
+      "display": "Schuimblushaakarmbak Laren"
+    },
+    "147063": {
+      "callsign": "14-7063",
+      "type": "TWH",
+      "label": "TWH",
+      "station": "Regionaal Gooi en Vechtstreek",
+      "source": "P2000 2026",
+      "display": "Tankwagen/haakarmbak regionaal"
+    },
+    "147073": {
+      "callsign": "14-7073",
+      "type": "HV",
+      "label": "HV",
+      "station": "Blaricum",
+      "source": "P2000 2026",
+      "display": "HV Blaricum"
+    },
+    "147086": {
+      "callsign": "14-7086",
+      "type": "VW-LO",
+      "label": "VW-LO",
+      "station": "Hilversum / Regionaal",
+      "source": "P2000 2026",
+      "display": "Logistiek en ondersteuning"
+    },
+    "147088": {
+      "callsign": "14-7088",
+      "type": "VW-LO",
+      "label": "VW-LO",
+      "station": "Regionaal Gooi en Vechtstreek",
+      "source": "P2000 2026",
+      "display": "Logistiek en ondersteuning"
+    },
+    "147181": {
+      "callsign": "14-7181",
+      "type": "HA",
+      "label": "HA",
+      "station": "Regionaal Gooi en Vechtstreek",
+      "source": "P2000 2026",
+      "display": "HA Regionaal Gooi en Vechtstreek"
+    },
+    "147182": {
+      "callsign": "14-7182",
+      "type": "HA",
+      "label": "HA",
+      "station": "Regionaal Gooi en Vechtstreek",
+      "source": "P2000 2026",
+      "display": "HA Regionaal Gooi en Vechtstreek"
+    },
+    "147184": {
+      "callsign": "14-7184",
+      "type": "HA",
+      "label": "HA",
+      "station": "Laren / Regionaal",
+      "source": "P2000 2026",
+      "display": "HA Laren / Regionaal"
+    },
+    "254091": {
+      "callsign": "25-4091",
+      "type": "DB-OVD",
+      "label": "DB-OVD",
+      "station": "Flevoland",
+      "source": "P2000 2026",
+      "display": "OvD-B Flevoland"
+    },
+    "254132": {
+      "callsign": "25-4132",
+      "type": "TS",
+      "label": "TS",
+      "station": "Almere",
+      "source": "P2000 2026",
+      "display": "TS Almere"
+    },
+    "254133": {
+      "callsign": "25-4133",
+      "type": "TS",
+      "label": "TS",
+      "station": "Almere",
+      "source": "P2000 2026",
+      "display": "TS Almere"
+    },
+    "258001": {
+      "callsign": "25-8001",
+      "type": "DV",
+      "label": "DV",
+      "station": "Regionaal Flevoland",
+      "source": "P2000 2026",
+      "display": "Dienstvoertuig Flevoland"
+    },
+    "258131": {
+      "callsign": "25-8131",
+      "type": "TS-RES",
+      "label": "TS-RES",
+      "station": "Almere / Regionaal",
+      "source": "P2000 2026",
+      "display": "Reserve tankautospuit"
+    },
+    "258181": {
+      "callsign": "25-8181",
+      "type": "DA",
+      "label": "DA",
+      "station": "Almere / Regionaal",
+      "source": "P2000 2026",
+      "display": "Logistiek dienstvoertuig"
+    },
+    "258185": {
+      "callsign": "25-8185",
+      "type": "GM",
+      "label": "GM",
+      "station": "Almere / Regionaal",
+      "source": "P2000 2026",
+      "display": "Groot materieel"
+    },
+    "258385": {
+      "callsign": "25-8385",
+      "type": "GM",
+      "label": "GM",
+      "station": "Flevoland",
+      "source": "P2000 2026",
+      "display": "Groot materieel"
+    },
+    "209432": {
+      "callsign": "20-9432",
+      "type": "TS",
+      "label": "Tankautospuit",
+      "station": "Tilburg-Vossenberg",
+      "display": "Tankautospuit Tilburg-Vossenberg",
+      "region": "20",
+      "source": "verified-seed"
+    },
+    "209452": {
+      "callsign": "20-9452",
+      "type": "HW",
+      "label": "Hoogwerker",
+      "station": "Tilburg-Centrum",
+      "display": "Hoogwerker Tilburg-Centrum",
+      "region": "20",
+      "source": "verified-seed"
+    },
+    "209031": {
+      "callsign": "20-9031",
+      "type": "TS-RES",
+      "label": "Reserve tankautospuit",
+      "station": "Tilburg-Centrum",
+      "display": "Reserve tankautospuit Tilburg-Centrum",
+      "region": "20",
+      "source": "verified-seed"
+    },
+    "209092": {
+      "callsign": "20-9092",
+      "type": "OVD-B",
+      "label": "Officier van Dienst Brandweer",
+      "station": "Tilburg-Centrum",
+      "display": "OvD-B Hart van Brabant Oost",
+      "region": "20",
+      "source": "verified-seed"
+    }
+  },
+  "version": "4.1.1"
+}

@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#071018">
+  <title>P2000 Monitor • Instellingen</title>
+  <link rel="stylesheet" href="/styles.css?v=44150">
+  <style>
+    .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
+    .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
+    .feed-row,.unknown-row{padding:10px 12px;border-radius:12px;background:rgba(255,255,255,.045);word-break:break-word}
+    .feed-row code{font-size:.84rem}.scope-tags{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.scope-tags span{padding:6px 9px;border-radius:999px;background:rgba(255,255,255,.06);font-size:.82rem}
+    .service-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;margin-top:10px}
+    .service-grid label{display:flex;gap:9px;align-items:center;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:12px}
+    .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.wide{grid-column:1/-1}.status-grid.compact-grid{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+
+    .quick-card{border-color:rgba(91,216,255,.34);background:linear-gradient(135deg,rgba(91,216,255,.08),rgba(255,255,255,.025))}
+    .quick-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin:12px 0}.quick-actions button{min-height:44px}
+    .quick-status{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.quick-status>div{padding:10px;border-radius:12px;background:rgba(255,255,255,.04)}.quick-status small{display:block;opacity:.65}.quick-status b{display:block;margin-top:4px}
+    .mode-btn.active{outline:2px solid rgba(91,216,255,.7);background:rgba(91,216,255,.15)}.danger-btn{border-color:rgba(255,100,100,.38)!important}
+    .live-preview{margin-top:12px;padding:18px;border-radius:16px;background:#020506;border:1px solid rgba(255,255,255,.10);min-height:130px}.live-preview .preview-priority{font-weight:900;font-size:.86rem;letter-spacing:.08em}.live-preview h4{font-size:1.35rem;margin:8px 0 4px}.live-preview p{margin:3px 0;opacity:.86}.preview-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:12px}.preview-grid span{padding:8px;border-radius:10px;background:rgba(255,255,255,.05);font-size:.82rem}
+    .vehicle-history{display:grid;gap:7px;margin-top:10px;max-height:260px;overflow:auto}.history-row{padding:9px 10px;border-radius:10px;background:rgba(255,255,255,.04);font-size:.86rem}.history-row small{opacity:.65}
+    .idle-builder-preview{min-height:245px;border-radius:18px;background:radial-gradient(circle at 50% 40%,rgba(26,102,136,.22),#020506 66%);border:1px solid rgba(255,255,255,.10);padding:22px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;overflow:hidden}.idle-builder-preview[data-layout="left"]{align-items:flex-start;text-align:left}.idle-builder-preview[data-layout="split"]{display:grid;grid-template-columns:1.25fr .75fr;align-content:center;text-align:left}.idle-builder-preview[data-layout="minimal"] .idle-preview-name,.idle-builder-preview[data-layout="minimal"] .idle-preview-date,.idle-builder-preview[data-layout="minimal"] .idle-preview-status{display:none}.idle-preview-name{font-weight:900;letter-spacing:.06em;color:#5bd8ff;margin-bottom:16px}.idle-preview-time{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:800;line-height:1;color:#f4f9fb}.idle-preview-time small{font-size:.32em;color:#5bd8ff;margin-left:8px}.idle-preview-date{margin-top:14px;font-weight:700;opacity:.78;letter-spacing:.05em}.idle-preview-status{margin-top:22px;font-size:.75rem;opacity:.46;letter-spacing:.06em}
+    @media(max-width:760px){.control-shell{padding:10px}.control-header{gap:14px}.header-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.header-actions #saveBtn{grid-column:1/-1}.quick-card{position:relative;z-index:2}.quick-actions{grid-template-columns:1fr 1fr}.quick-actions button{min-height:52px;font-size:.95rem}.quick-status{grid-template-columns:1fr 1fr}.preview-grid{grid-template-columns:1fr 1fr}.button-row{display:grid!important;grid-template-columns:1fr 1fr}.button-row button{min-height:46px}.field input,.field select,.field textarea{font-size:16px}.status-grid.compact-grid{grid-template-columns:1fr 1fr}}
+  </style>
+</head>
+<body class="control-page">
+<main class="control-shell">
+  <header class="control-header command-hero">
+    <div class="hero-copy">
+      <span class="eyebrow">WINDOWS + LINUX • P2000 ONLY</span>
+      <h1>P2000 <span>Monitor</span></h1>
+      <p>P2000-monitor voor Windows én Linux met configureerbare standplaats, regio’s en disciplines.</p>
+      <div class="hero-badges"><span class="hero-badge"><i class="live-dot"></i> LIVE</span><span class="hero-badge" id="profileBadge">CONFIGUREERBAAR</span><span class="hero-badge">MULTIPLATFORM KIOSK</span></div>
+    </div>
+    <div class="header-actions">
+      <a class="secondary-btn" href="/setup.html?edit=1">Configuratiewizard</a>
+      <a class="secondary-btn" href="/" target="_blank" rel="noopener">Open monitor</a>
+      <button id="saveBtn" class="primary-btn">Instellingen opslaan</button>
+    </div>
+  </header>
+
+  <div class="control-grid">
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">INSTALLATIEPROFIEL</span><h3 id="profileTitle">Regio’s en standplaats</h3></div><span id="controlStatus" class="status-pill">verbinden…</span></div>
+      <div class="profile-note" id="profileSummary">Configuratie laden…</div>
+      <div class="scope-tags" id="scopeTags"></div>
+    </section>
+
+    <section class="control-card wide quick-card" id="quickControlCard">
+      <div class="panel-head compact"><div><span class="eyebrow">SNELBEDIENING</span><h3>Direct vanaf telefoon of pc</h3></div><span id="quickSupervisorPill" class="status-pill">watchdog…</span></div>
+      <div class="quick-actions">
+        <button id="quickNormalBtn" class="secondary-btn mode-btn" type="button">🔊 Normaal</button>
+        <button id="quickPriorityBtn" class="secondary-btn mode-btn" type="button">🚨 Alleen prioriteit</button>
+        <button id="quickMuteBtn" class="secondary-btn mode-btn danger-btn" type="button">🔇 STIL</button>
+        <button id="quickReplayBtn" class="secondary-btn" type="button">↻ Laatste herhalen</button>
+        <button id="quickStopBtn" class="secondary-btn" type="button">■ Stop geluid</button>
+        <button id="quickTuneTestBtn" class="secondary-btn" type="button">♫ Testtoon</button>
+        <button id="quickVoiceTestBtn" class="secondary-btn" type="button">🗣 Testomroep</button>
+        <button id="quickDisplayOnBtn" class="secondary-btn" type="button">☀ Scherm aan</button>
+        <button id="quickDisplayOffBtn" class="secondary-btn" type="button">☾ Scherm uit</button>
+        <button id="quickRestartKioskBtn" class="secondary-btn" type="button">⟳ Kiosk herstarten</button>
+        <button id="quickRestartBackendBtn" class="secondary-btn" type="button">↻ Backend herstarten</button>
+      </div>
+      <label class="field"><span>Mastervolume <b id="quickVolumeValue">100</b>%</span><input id="quickVolumeInput" type="range" min="0" max="100" step="5" value="100"></label>
+      <div class="quick-status"><div><small>Feed</small><b id="quickFeedStatus">—</b></div><div><small>Omroep</small><b id="quickSpeechMode">—</b></div><div><small>Watchdog</small><b id="quickSupervisorStatus">—</b></div><div><small>Laatste melding</small><b id="quickLastMessage">—</b></div></div>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">WEERGAVE</span><h3>Monitor</h3></div></div>
+      <label class="field"><span>Titel</span><input id="nameInput" type="text" maxlength="30" placeholder="P2000 Monitor"></label>
+      <label class="field"><span>Meldingweergave</span><select id="messageDisplayModeInput"><option value="raw">Originele P2000-regel groot</option><option value="parsed">Samengevatte incidentweergave</option></select><small>“Origineel” toont de echte P2000-regel prominent; parserdata en voertuigen blijven eronder beschikbaar.</small></label>
+      <div class="two-col">
+        <label class="field"><span>Melding zichtbaar (min)</span><input id="messageMinutesInput" type="number" min="0.25" max="15" step="0.25"></label>
+        <label class="field"><span>Max. leeftijd (min)</span><input id="maxAgeMinutesInput" type="number" min="0.25" max="30" step="0.25"></label>
+      </div>
+      <label class="switch-row"><span><b>Voertuigkop tonen</b><small>Bekende voertuignaam waar beschikbaar; onbekende roepnummers blijven zichtbaar.</small></span><input id="vehicleHeaderInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Incidentkaart tonen</b><small>Alleen bij een P2000-melding met bruikbare locatie.</small></span><input id="mapEnabledInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Burn-in bescherming</b><small>Verschuift statische elementen minimaal.</small></span><input id="burnInProtectionInput" type="checkbox"></label>
+      <label class="field"><span>Achtergrond</span><select id="backgroundStyleInput"><option value="black">Zwart</option><option value="nightblue">Nachtblauw</option><option value="graphite">Antraciet</option><option value="deepgreen">Donkergroen</option><option value="deepred">Donkerrood</option><option value="custom">Eigen kleur</option><option value="photo">Foto</option></select></label>
+      <label class="field" id="backgroundColorField"><span>Eigen achtergrondkleur</span><input id="backgroundColorInput" type="color" value="#020506"></label>
+      <div id="backgroundPhotoField" class="field" style="display:none">
+        <span>Achtergrondfoto</span>
+        <input id="backgroundPhotoInput" type="file" accept="image/jpeg,image/png,image/webp">
+        <div class="two-col">
+          <label class="field"><span>Donkere laag</span><input id="backgroundPhotoDarknessInput" type="range" min="0" max="90" step="5" value="60"></label>
+          <label class="field"><span>Weergave</span><select id="backgroundPhotoFitInput"><option value="cover">Scherm vullen</option><option value="contain">Hele foto tonen</option></select></label>
+        </div>
+        <div class="button-row"><button id="uploadBackgroundPhotoBtn" class="secondary-btn" type="button">Foto opslaan</button><button id="removeBackgroundPhotoBtn" class="secondary-btn" type="button">Foto verwijderen</button></div>
+        <p id="backgroundPhotoStatus" class="hint">Nog geen foto gekozen.</p>
+      </div>
+      <p class="hint">Kies een donkere kleur of een lokale JPG/PNG/WebP. Foto's worden lokaal op deze computer opgeslagen; de donkere laag houdt de P2000-tekst leesbaar.</p>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">RUSTSCHERM</span><h3>Eigen indeling wanneer er geen melding is</h3></div><span class="status-pill">LIVE PREVIEW</span></div>
+      <div class="two-col">
+        <div>
+          <label class="field"><span>Indeling</span><select id="idleLayoutInput"><option value="center">Gecentreerd</option><option value="left">Links uitgelijnd</option><option value="split">Gesplitst</option><option value="minimal">Alleen klok</option></select></label>
+          <label class="field"><span>Eigen koptekst</span><input id="idleHeadlineInput" type="text" maxlength="90" placeholder="Leeg = naam van de monitor"></label>
+          <label class="field"><span>Onderregel</span><input id="idleSublineInput" type="text" maxlength="160" placeholder="P2000 MELDINGEN HEBBEN DIRECT VOORRANG"></label>
+          <label class="field"><span>Klokgrootte <b id="idleClockScaleValue">100</b>%</span><input id="idleClockScaleInput" type="range" min="65" max="135" step="5" value="100"></label>
+          <div class="service-grid">
+            <label><input id="idleShowNameInput" type="checkbox"> Koptekst</label>
+            <label><input id="idleShowDateInput" type="checkbox"> Datum</label>
+            <label><input id="idleShowSecondsInput" type="checkbox"> Seconden</label>
+            <label><input id="idleShowStatusInput" type="checkbox"> Onderregel</label>
+          </div>
+          <p class="hint">Achtergrondkleur/foto uit de monitorinstellingen blijft gelden. Burn-in-bescherming en nacht-dimming blijven automatisch actief.</p>
+        </div>
+        <div id="idleBuilderPreview" class="idle-builder-preview" data-layout="center">
+          <div class="idle-preview-name">P2000 MONITOR</div><div class="idle-preview-time">15:44<small>32</small></div><div class="idle-preview-date">VRIJDAG 04 SEPTEMBER 2026</div><div class="idle-preview-status">P2000 MELDINGEN HEBBEN DIRECT VOORRANG</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">FILTER</span><h3>Hulpdiensten</h3></div></div>
+      <p class="hint">De configuratiewizard bepaalt welke regio/discipline-combinaties werkelijk worden opgehaald. Met deze schakelaars kun je een discipline daarnaast tijdelijk op de lichtkrant verbergen.</p>
+      <div class="service-grid">
+        <label><input type="checkbox" data-service="brandweer"> Brandweer</label>
+        <label><input type="checkbox" data-service="ambulance"> Ambulance</label>
+        <label><input type="checkbox" data-service="politie"> Politie</label>
+        <label><input type="checkbox" data-service="lifeliner"> Lifeliner / traumaheli</label>
+        <label><input type="checkbox" data-service="knrm"> Waterhulpverlening</label>
+        <label><input type="checkbox" data-service="overig"> Overig P2000</label>
+      </div>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">OMROEP</span><h3>Kazerne-omroep</h3></div><span id="ttsStatus" class="status-pill">controleren…</span></div>
+      <label class="switch-row"><span><b>P2000 voorlezen</b><small>Bij nieuwe lokale meldingen.</small></span><input id="speechEnabledInput" type="checkbox"></label>
+      <div class="two-col"><label class="field"><span>Omroepmodus</span><select id="speechModeInput"><option value="normal">Normaal</option><option value="priority">Alleen prioriteit</option><option value="mute">STIL</option></select></label><label class="field"><span>Mastervolume <b id="masterVolumeValue">100</b>%</span><input id="masterVolumeInput" type="range" min="0" max="100" step="5" value="100"></label></div>
+      <label class="field"><span>Alleen deze steden uitspreken</span><textarea id="speechCitiesInput" rows="3" placeholder="Bijv. Tilburg, Goirle, Oisterwijk"></textarea></label>
+      <p class="hint">Komma, puntkomma of nieuwe regel gebruiken. Leeg = alle zichtbare meldingen mogen worden uitgesproken. Dit filter verandert alleen de omroep.</p>
+      <label class="field"><span>Omroepengine</span><select id="speechEngineInput"><option value="online">Lokale WAV-omroep • Chrome + Edge</option></select></label>
+      <div class="two-col">
+        <label class="field"><span>Snelheid</span><input id="speechRateInput" type="number" min="0.65" max="1.25" step="0.01"></label>
+        <label class="field"><span>Pitch (noodfallback)</span><input id="speechPitchInput" type="number" min="0.75" max="1.30" step="0.01"></label>
+      </div>
+      <div class="button-row"><button id="voiceTestBtn" class="secondary-btn">Test omroep</button><button id="stopSpeechBtn" class="secondary-btn">Stop geluid</button></div>
+      <p class="hint">De backend maakt één audiobestand voor het lichtkrant-tabblad. Windows gebruikt lokaal SAPI; Linux gebruikt lokaal eSpeak wanneer aanwezig en valt anders terug op de vaste Nederlandse online route. Als een handmatig geopende browser autoplay blokkeert, verschijnt op de lichtkrant éénmalig een knop om geluid te ontgrendelen.</p>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">DEUNTJES</span><h3>Alarmering vóór de omroep</h3></div><span id="tuneStatus" class="status-pill">klaar</span></div>
+      <label class="switch-row"><span><b>Deuntje afspelen</b><small>Speelt vóór de gesproken P2000-omroep. Per discipline kun je een andere keuze maken.</small></span><input id="dispatchTuneEnabledInput" type="checkbox"></label>
+      <div class="two-col">
+        <label class="field"><span>Standaard</span><select id="dispatchTuneDefaultInput" data-tune-select data-default-tune></select></label>
+        <label class="field"><span>Urgente meldingen</span><select id="dispatchTuneUrgentInput" data-tune-select></select></label>
+        <label class="field"><span>Brandweer</span><select id="dispatchTuneBrandweerInput" data-tune-select></select></label>
+        <label class="field"><span>Ambulance</span><select id="dispatchTuneAmbulanceInput" data-tune-select></select></label>
+        <label class="field"><span>Politie</span><select id="dispatchTunePolitieInput" data-tune-select></select></label>
+        <label class="field"><span>Lifeliner / MMT</span><select id="dispatchTuneLifelinerInput" data-tune-select></select></label>
+        <label class="field"><span>KNRM / waterhulp</span><select id="dispatchTuneKnrmInput" data-tune-select></select></label>
+        <label class="field"><span>Deuntjevolume</span><input id="dispatchTuneVolumeInput" type="range" min="0" max="100" step="5"><small><span id="dispatchTuneVolumeValue">80</span>%</small></label>
+      </div>
+      <label class="field"><span>YouTube-deuntje</span><input id="dispatchTuneYoutubeUrlInput" type="url" placeholder="https://www.youtube.com/watch?v=..."><small>De door jou opgegeven video staat standaard ingevuld. De monitor streamt alleen het gekozen fragment; de audio wordt niet in het pakket opgeslagen.</small></label>
+      <div class="two-col">
+        <label class="field"><span>YouTube afspeelduur (sec)</span><input id="dispatchTuneYoutubeSecondsInput" type="number" min="1" max="15" step="0.5"></label>
+        <div class="field"><span>Eigen deuntje</span><input id="dispatchTuneFileInput" type="file" accept="audio/mpeg,audio/wav,audio/ogg,.mp3,.wav,.ogg"><small id="dispatchTuneFileStatus">Nog geen bestand geladen.</small></div>
+      </div>
+      <div class="button-row"><button id="saveTuneSettingsBtn" class="primary-btn" type="button">Toontjes nu opslaan</button><button id="uploadDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje opslaan</button><button id="removeDispatchTuneBtn" class="secondary-btn" type="button">Eigen deuntje verwijderen</button><button id="testDispatchTuneBtn" class="secondary-btn" type="button">Test gekozen deuntje</button></div>
+      <p class="hint">Wijzigingen aan de toontjes worden automatisch opgeslagen (en kunnen ook met “Toontjes nu opslaan” direct worden vastgezet). Keuzes: geen geluid, drie ingebouwde kazerne-tonen, urgent-signaal, YouTube of je eigen MP3/WAV/OGG. “Overnemen” gebruikt de standaardkeuze. Bij urgente meldingen heeft de urgente keuze voorrang.</p>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">SCHERM</span><h3>Scherm & slaapstand</h3></div><span id="displayStatus" class="status-pill">controleren…</span></div>
+      <label class="field"><span>Lichtkrant openen op</span><select id="kioskMonitorInput"><option value="primary">Primair scherm</option></select></label>
+      <p class="hint" id="kioskMonitorHint">Aangesloten schermen worden automatisch gedetecteerd. Een nieuwe keuze wordt direct opgeslagen en de kiosk wordt meteen opnieuw op het gekozen scherm geplaatst.</p>
+      <label class="switch-row"><span><b>Scherm automatisch uit</b><small>Windows gebruikt SC_MONITORPOWER. Linux gebruikt waar mogelijk X11 DPMS (xset) of wlroots Wayland (wlr-randr).</small></span><input id="displaySleepInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Nachtstand</b><small>Gebruik de onderstaande tijden voor de donkere stand/slaapstand.</small></span><input id="nightModeInput" type="checkbox"></label>
+      <div class="two-col">
+        <label class="field"><span>Vanaf</span><input id="nightStartInput" type="time"></label>
+        <label class="field"><span>Tot</span><input id="nightEndInput" type="time"></label>
+      </div>
+      <div class="button-row"><button id="applyDisplayBtn" class="secondary-btn">Nu toepassen</button><button id="displayOffBtn" class="secondary-btn">Scherm uit</button><button id="displayOnBtn" class="secondary-btn">Scherm aan</button><button id="detectDisplayBtn" class="secondary-btn">Controleer scherm</button></div>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">HOOFDBRONNEN</span><h3>P2000-bronnen & snelheid</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
+      <label class="switch-row"><span><b>112-nu.nl is de hoofdbron</b><small>Brandweer, ambulance, politie, traumahelikopter en KNRM worden ieder via hun eigen landelijke 112-nu RSS-feed opgehaald. Alarmeringen blijft alleen race/fallback.</small></span><input id="feed112nuInput" type="checkbox" checked disabled aria-label="112-nu hoofdfeeds altijd actief"></label>
+      <div id="feedList" class="feed-list"><div class="feed-row">laden…</div></div>
+      <p class="hint">De vijf 112-nu disciplinefeeds zijn altijd primair. Alarmeringen wordt alleen als tweede bron/racefallback gebruikt. Exact dezelfde P2000-regel wordt bron-onafhankelijk gededupliceerd. Latency en bron-wins worden live gemeten.</p>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">TEST</span><h3>Eigen P2000-regel</h3></div></div>
+      <label class="field"><span>Originele melding</span><textarea id="testInput" rows="4">P 1 BR woning Hoofdstraat Utrecht</textarea></label>
+      <div class="button-row"><button id="testDisplayBtn" class="primary-btn">Toon testmelding</button><button id="testSpeakBtn" class="secondary-btn">Toon + spreek</button></div>
+      <div class="live-preview" id="livePreview"><span class="preview-priority" id="previewPriority">P1 • BRANDWEER</span><h4 id="previewType">Brand woning</h4><p id="previewLocation">Hoofdstraat</p><p id="previewCity">Utrecht</p><div class="preview-grid"><span id="previewIncident">Incident: —</span><span id="previewScale">Opschaling: —</span><span id="previewVehicle">Voertuigen: —</span><span id="previewSpeech">Omroep: —</span></div></div>
+      <div class="speech-builder" aria-label="Omroeptekst-builder">
+        <div class="builder-cell"><span>Originele P2000-regel</span><pre id="builderOriginal" class="mono">—</pre></div>
+        <div class="builder-cell"><span>Opgeschoonde schermtekst</span><pre id="builderScreen" class="mono">—</pre></div>
+        <div class="builder-cell"><span>Uiteindelijke omroeptekst</span><pre id="builderSpeech" class="mono">—</pre></div>
+        <div class="builder-cell"><span>Verwijderd / waarom</span><div id="builderRemoved" class="builder-removed">—</div><small id="builderUnitPolicy">—</small></div>
+      </div>
+      <details><summary>Alle parserdetails</summary><pre id="parserDebugDetails" class="mono">Typ een melding om live te analyseren.</pre></details>
+      <p id="testStatus" class="hint">Live preview gebruikt exact dezelfde parser als de lichtkrant. Tests worden niet als echte P2000-melding opgeslagen.</p>
+    </section>
+
+    <section class="control-card wide" id="incidentIntelligenceCard">
+      <div class="panel-head compact"><div><span class="eyebrow">INCIDENTEN</span><h3>Slimme prioriteit & tijdlijn</h3></div><button id="refreshIncidentsBtn" class="secondary-btn" type="button">Vernieuwen</button></div>
+      <p class="hint">Vervolgmeldingen en opschalingen met dezelfde locatie worden automatisch samengevoegd. Relevantie weegt onder andere opschaling, schiet-/steekincidenten, grote brand, MMT, bijzondere voertuigen en meerdere gekoppelde meldingen mee.</p>
+      <div id="incidentList" class="incident-list control-incident-list"><div class="incident-item">Incidenten laden…</div></div>
+    </section>
+
+    <section class="control-card wide" id="roepnummerApiCard">
+      <div class="panel-head compact"><div><span class="eyebrow">VOERTUIGEN</span><h3>SW Mediaproducties Roepnummer API</h3></div><button id="syncVehiclesBtn" class="secondary-btn">Nu synchroniseren</button></div>
+      <div class="status-grid compact-grid">
+        <div><dt>API</dt><dd id="swApiOnline">—</dd></div>
+        <div><dt>API-key</dt><dd id="swApiKeyStatus">—</dd></div>
+        <div><dt>SW-eenheden</dt><dd id="swApiUnitCount">—</dd></div>
+        <div><dt>Laatste sync</dt><dd id="swApiLastSync">—</dd></div>
+        <div><dt>Totaal bekend</dt><dd id="vehicleCount">—</dd></div>
+        <div><dt>Versie</dt><dd id="vehicleVersion">—</dd></div>
+        <div><dt>Fallback-cache</dt><dd id="vehicleRegionStatus">—</dd></div>
+      </div>
+      <div class="two-col">
+        <label class="field"><span>API-key</span><input id="swApiKeyInput" type="password" maxlength="512" autocomplete="new-password" placeholder="Nieuwe API-key invoeren"><small id="swApiSecretHint">De key blijft backend-only en wordt nooit naar GitHub of de lichtkrantfrontend gestuurd.</small></label>
+        <label class="field"><span>Base URL</span><input id="swApiBaseUrl" type="text" value="https://swmediaproducties.nl/roepnummers-api/v1" readonly><small>Vaste API voor de Lichtkrant. Synchronisatie: iedere 5 minuten.</small></label>
+      </div>
+      <div class="button-row"><button id="saveSwApiKeyBtn" class="primary-btn" type="button">API-key opslaan & testen</button><button id="clearSwApiKeyBtn" class="secondary-btn" type="button">API-key verwijderen</button></div>
+      <p id="vehicleSyncDetail" class="hint">SW Mediaproducties is de primaire roepnummerbron. Bij storing blijft de laatst geldige lokale cache actief.</p>
+      <p class="hint">Bronvolgorde: handmatige correctie → SW Mediaproducties API/cache → regionale online cache → meegeleverde hardcoded fallback.</p>
+      <details><summary>Laatste wijzigingen in voertuigdatabase</summary><div id="vehicleHistoryList" class="vehicle-history"><div class="history-row">laden…</div></div></details>
+    </section>
+
+    <section class="control-card wide" id="vehicleOverridesCard">
+      <div class="panel-head compact"><div><span class="eyebrow">HANDMATIGE CORRECTIES</span><h3 id="vehicleOverrideFormTitle">Nieuw of fout roepnummer corrigeren</h3></div><span id="vehicleOverrideCount" class="status-pill">laden…</span></div>
+      <div class="three-col">
+        <label class="field"><span>Roepnummer</span><input id="vehicleOverrideCallsign" type="text" maxlength="12" placeholder="20-3161"><small>Normaal of uitgebreid formaat, bijvoorbeeld 01-18-849.</small></label>
+        <label class="field"><span>Type / afkorting</span><input id="vehicleOverrideType" type="text" maxlength="32" placeholder="WTW-M"><small>Bijvoorbeeld TS, HW, OVD-B of WTW-M.</small></label>
+        <label class="field"><span>Standplaats</span><input id="vehicleOverrideStation" type="text" maxlength="120" placeholder="Breda"><small>Kazerne, plaats of specialistisch team.</small></label>
+      </div>
+      <div class="two-col">
+        <label class="field"><span>Weergavenaam op de lichtkrant</span><input id="vehicleOverrideDisplay" type="text" maxlength="180" placeholder="Watertankwagen met monitor Breda"><small>Exact de naam die je in de voertuigkop wilt zien.</small></label>
+        <label class="field"><span>Omschrijving voor omroep</span><input id="vehicleOverrideLabel" type="text" maxlength="180" placeholder="Watertankwagen met monitor"><small>Mag leeg blijven; dan wordt de weergavenaam gebruikt.</small></label>
+      </div>
+      <div class="button-row"><button id="saveVehicleOverrideBtn" class="primary-btn" type="button">Correctie opslaan</button><button id="resetVehicleOverrideBtn" class="secondary-btn" type="button">Nieuw / leegmaken</button></div>
+      <p class="hint">Handmatige correcties hebben altijd voorrang op de online voertuigbronnen, worden niet overschreven door “Nu bijwerken” en blijven behouden bij software-updates.</p>
+      <div id="vehicleOverrideList" class="vehicle-override-list"><div class="unknown-row">Correcties laden…</div></div>
+    </section>
+
+    <section class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">DIAGNOSE</span><h3>Nog onbekende roepnummers</h3></div><button id="refreshUnknownBtn" class="secondary-btn">Vernieuwen</button></div>
+      <div id="unknownList" class="unknown-list"><div class="unknown-row">laden…</div></div>
+    </section>
+
+    <section class="control-card wide" id="updatesCard">
+      <div class="panel-head compact"><div><span class="eyebrow">UPDATES</span><h3>Automatisch via GitHub</h3></div><span id="updateStatusPill" class="status-pill">controleren…</span></div>
+      <div class="three-col">
+        <label class="field"><span>GitHub repository</span><input id="githubRepoInput" type="text" value="xSophie1119/lichtkrant" placeholder="owner/repository of https://github.com/owner/repository"></label>
+        <label class="field"><span>Updatebranch</span><input id="githubBranchInput" type="text" value="main" placeholder="main"></label>
+        <label class="field"><span>Controle-interval</span><select id="githubCheckMinutesInput"><option value="5">Elke 5 minuten</option><option value="15">Elke 15 minuten</option><option value="30">Elke 30 minuten</option><option value="60">Elk uur</option><option value="180">Elke 3 uur</option><option value="360">Elke 6 uur</option></select></label>
+      </div>
+      <label class="switch-row"><span><b>Automatisch controleren</b><small>Controleert circa 10 seconden na opstarten en standaard daarna iedere 5 minuten.</small></span><input id="githubAutoCheckInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Nieuwe versie automatisch installeren</b><small>Downloadt de nieuwste complete GitHub-versie, maakt eerst een backup en herstart daarna de monitor.</small></span><input id="githubAutoInstallInput" type="checkbox"></label>
+      <label class="switch-row"><span><b>Ook gewone GitHub-pushes volgen</b><small>Vergelijkt zowel VERSION als de exacte commit-SHA. Iedere nieuwe push op de ingestelde branch wordt daardoor herkend.</small></span><input id="githubBranchUpdatesInput" type="checkbox"></label>
+      <div class="status-grid compact-grid">
+        <div><dt>Geïnstalleerd</dt><dd id="updateCurrentVersion">—</dd></div>
+        <div><dt>GitHub</dt><dd id="updateLatestVersion">—</dd></div>
+        <div><dt>Bron</dt><dd id="updateRepoStatus">—</dd></div>
+        <div><dt>Laatste status</dt><dd id="updateStateText">—</dd></div>
+      </div>
+      <p id="updateDetail" class="hint">Vul één openbaar GitHub repository in. De monitor gebruikt de nieuwste Release of de nieuwste commit op de gekozen branch.</p>
+      <div class="button-row"><button id="saveUpdateSettingsBtn" class="secondary-btn">Update-instellingen opslaan</button><button id="checkUpdateBtn" class="secondary-btn">Controleer nu</button><button id="installUpdateBtn" class="primary-btn" disabled>Update installeren</button><button id="rollbackUpdateBtn" class="secondary-btn">Vorige versie herstellen</button></div>
+      <p class="hint">Config, database, achtergrondfoto en regionale caches worden niet overschreven. Er worden maximaal drie programmabackups bewaard in <code>data/updates/backups</code>. Publieke GitHub Releases hebben geen account/token nodig.</p>
+    </section>
+
+    <section class="control-card wide" id="githubSettingsCard">
+      <div class="panel-head compact"><div><span class="eyebrow">CENTRALE INSTELLINGEN</span><h3>Instellingen automatisch vanuit GitHub</h3></div><span id="githubSettingsStatusPill" class="status-pill">controleren…</span></div>
+      <p class="hint">Zet <code>p2000-settings.json</code> in je repository. Na iedere push halen alle aangesloten monitoren de gewijzigde weergave-, filter-, omroep-, deuntje- en scherminstellingen automatisch op.</p>
+      <div class="three-col">
+        <label class="field"><span>JSON-bestand</span><input id="githubSettingsPathInput" type="text" value="p2000-settings.json"></label>
+        <label class="field"><span>Branch</span><input id="githubSettingsBranchInput" type="text" value="main"></label>
+        <label class="field"><span>Controle-interval</span><select id="githubSettingsMinutesInput"><option value="1">Elke minuut</option><option value="5">Elke 5 minuten</option><option value="15">Elke 15 minuten</option><option value="30">Elke 30 minuten</option><option value="60">Elk uur</option></select></label>
+      </div>
+      <label class="switch-row"><span><b>GitHub-instellingen automatisch toepassen</b><small>Alleen bekende, veilige monitorinstellingen worden overgenomen. Lokale databasebestanden, geüploade deuntjes en achtergrondfoto's blijven staan.</small></span><input id="githubSettingsAutoSyncInput" type="checkbox"></label>
+      <div class="status-grid compact-grid">
+        <div><dt>Status</dt><dd id="githubSettingsState">—</dd></div><div><dt>Revisie</dt><dd id="githubSettingsRevision">—</dd></div><div><dt>Laatste controle</dt><dd id="githubSettingsCheckedAt">—</dd></div><div><dt>Toegepast</dt><dd id="githubSettingsAppliedKeys">—</dd></div>
+      </div>
+      <p id="githubSettingsDetail" class="hint">Nog niet gecontroleerd.</p>
+      <div class="button-row"><button id="saveGithubSettingsBtn" class="secondary-btn">Synchronisatie opslaan</button><button id="pullGithubSettingsBtn" class="primary-btn">Nu ophalen en toepassen</button></div>
+    </section>
+
+    <section class="control-card wide">
+      <div class="panel-head compact"><div><span class="eyebrow">BACKEND</span><h3>Status</h3></div></div>
+      <div class="status-grid compact-grid">
+        <div><dt>Versie</dt><dd id="versionStatus">—</dd></div>
+        <div><dt>Feed</dt><dd id="feedStatus">—</dd></div>
+        <div><dt>Vandaag</dt><dd id="todayStatus">—</dd></div>
+        <div><dt>Laatste melding</dt><dd id="lastMessageStatus">—</dd></div>
+        <div><dt>Scope</dt><dd id="scopeStatus">—</dd></div>
+        <div><dt>Laatste fout</dt><dd id="errorStatus">—</dd></div>
+      </div>
+    </section>
+  </div>
+</main>
+<div id="pageFeedback" class="page-feedback" role="status" aria-live="polite" hidden></div>
+<script src="/control.js?v=44150" defer></script>
+</body>
+</html>
