@@ -1,2 +1,0 @@
-Windows 10/11
-Gebruik INSTALL_P2000.bat voor een nieuwe installatie of START_P2000.bat om te starten.
