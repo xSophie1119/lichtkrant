@@ -6,6 +6,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
@@ -94,7 +95,6 @@ def patch_package() -> None:
             payload = zf.read(str(op.get("payload") or ""))
             new_sha = str(op.get("new_sha256") or "").lower()
 
-            # VERSION must already advertise v4.5.0 so the legacy updater offers it.
             if target.is_file() and sha256_bytes(target.read_bytes()) == new_sha:
                 continue
 
@@ -116,7 +116,6 @@ def patch_package() -> None:
                 raise RuntimeError(f"bridge nieuwe hash klopt niet: {rel.as_posix()}")
             atomic_write(target, new_data, executable=target.suffix.lower() == ".sh")
 
-        # Final integrity pass before starting the real backend.
         for op in operations:
             target = ROOT / Path(str(op.get("path") or ""))
             if not target.is_file() or sha256_bytes(target.read_bytes()) != str(op.get("new_sha256") or "").lower():
@@ -140,7 +139,15 @@ def main() -> None:
         raise SystemExit(42)
 
     server = BACKEND / "server.py"
-    os.execv(sys.executable, [sys.executable, str(server), *sys.argv[1:]])
+    proc = subprocess.Popen(
+        [sys.executable, str(server), *sys.argv[1:]],
+        cwd=str(ROOT),
+        stdin=sys.stdin,
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+        env=os.environ.copy(),
+    )
+    raise SystemExit(proc.wait())
 
 
 if __name__ == "__main__":
