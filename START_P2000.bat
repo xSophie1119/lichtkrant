@@ -84,13 +84,13 @@ exit /b 0
 :launch_edge
 set "P2000_BROWSER_EXE="
 set "P2000_BROWSER_PROFILE=%LOCALAPPDATA%\P2000-Monitor\BrowserProfile-Edge-v%P2000_VERSION%"
-call :prepare_profile "%P2000_BROWSER_PROFILE%"
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
 if not errorlevel 1 (
   echo [P2000] Edge lichtkrant-kiosk draait al.
   timeout /t 2 /nobreak >nul
   exit /b 0
 )
+call :prepare_profile "%P2000_BROWSER_PROFILE%"
 if exist "%EDGE_X86%" set "P2000_BROWSER_EXE=%EDGE_X86%"
 if exist "%EDGE_X64%" set "P2000_BROWSER_EXE=%EDGE_X64%"
 if not defined P2000_BROWSER_EXE goto :launch_chrome
@@ -112,13 +112,13 @@ goto :launch_chrome
 :launch_chrome
 set "P2000_BROWSER_EXE="
 set "P2000_BROWSER_PROFILE=%LOCALAPPDATA%\P2000-Monitor\BrowserProfile-Chrome-v%P2000_VERSION%"
-call :prepare_profile "%P2000_BROWSER_PROFILE%"
 call :kiosk_running "%P2000_BROWSER_PROFILE%"
 if not errorlevel 1 (
   echo [P2000] Chrome lichtkrant-kiosk draait al.
   timeout /t 2 /nobreak >nul
   exit /b 0
 )
+call :prepare_profile "%P2000_BROWSER_PROFILE%"
 if exist "%CHROME_X64%" set "P2000_BROWSER_EXE=%CHROME_X64%"
 if exist "%CHROME_X86%" set "P2000_BROWSER_EXE=%CHROME_X86%"
 if not defined P2000_BROWSER_EXE goto :fatal_browser
