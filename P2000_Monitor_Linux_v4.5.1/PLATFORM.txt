@@ -1,0 +1,2 @@
+Linux
+Gebruik INSTALL_P2000.sh voor een nieuwe installatie of START_P2000.sh om te starten.

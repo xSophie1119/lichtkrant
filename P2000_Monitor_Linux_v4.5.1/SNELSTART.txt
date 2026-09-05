@@ -1,0 +1,52 @@
+P2000 MONITOR v4.5.1 — WINDOWS + LINUX
+======================================
+
+WINDOWS
+Aanbevolen installatie: INSTALL_P2000.bat
+Portable: START_P2000.bat
+Eerste start: wizard afronden.
+Diagnose: WINDOWS_CHECK.bat
+
+LINUX
+Aanbevolen installatie:
+  chmod +x *.sh tools/*.py
+  ./INSTALL_P2000.sh
+Portable: ./START_P2000.sh
+Eerste start: wizard afronden.
+Diagnose: ./LINUX_CHECK.sh
+
+INSTELLINGEN
+Windows: OPEN_INSTELLINGEN.bat
+Linux:   ./OPEN_INSTELLINGEN.sh
+
+CONFIGURATIEWIZARD
+Windows: CONFIGURATIE_WIZARD.bat
+Linux:   ./CONFIGURATIE_WIZARD.sh
+
+AUTOSTART
+Windows: INSTALL_AUTOSTART.bat
+Linux:   ./INSTALL_AUTOSTART.sh
+
+STOPPEN
+Windows: STOP_P2000.bat
+Linux:   ./STOP_P2000.sh
+
+VORIGE VERSIE HERSTELLEN
+Windows: HERSTEL_VORIGE_VERSIE.bat
+Linux:   ./HERSTEL_VORIGE_VERSIE.sh
+
+Linux heeft Python 3.10+ nodig. Geen pip-installatie nodig.
+Voor lokale Linux-omroep is espeak-ng aanbevolen.
+Voor X11-schermbeheer zijn xrandr + xset aanbevolen.
+Voor wlroots-Wayland is wlr-randr aanbevolen.
+
+Webinterface:
+Monitor:      http://127.0.0.1:8765/
+Instellingen: http://127.0.0.1:8765/control
+Wizard:       http://127.0.0.1:8765/setup.html?edit=1
+
+SNELBEDIENING v4.5.1
+- Normaal / Alleen prioriteit / STIL
+- mastervolume, stop/replay omroep, testtoon/testomroep
+- scherm aan/uit, kiosk/backend herstart
+- live parserpreview en watchdog/feed-status in /control
