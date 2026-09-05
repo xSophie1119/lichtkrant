@@ -1,0 +1,22 @@
+{
+  "manifest_version": 1,
+  "version": "4.5.0",
+  "published_at": "2026-09-05T12:30:00Z",
+  "required": false,
+  "min_supported_version": "4.4.17",
+  "notes": "v4.5.0: nieuwe incident/core-architectuur, SW Mediaproducties als centrale voertuigbron, native TTS/audioqueue, vier kaartmodi, health/debugdashboard en veilige platform-updater.",
+  "platforms": {
+    "windows": {
+      "name": "P2000_Monitor_Windows_v4.5.0.zip",
+      "url": "https://raw.githubusercontent.com/xSophie1119/lichtkrant/release-assets/P2000_Monitor_Windows_v4.5.0.zip",
+      "sha256": "bbc1b05b5f8d0859083b19f64c4a28b798351ba50284ca7b192b2b94869b1275",
+      "size": 865527
+    },
+    "linux": {
+      "name": "P2000_Monitor_Linux_v4.5.0.zip",
+      "url": "https://raw.githubusercontent.com/xSophie1119/lichtkrant/release-assets/P2000_Monitor_Linux_v4.5.0.zip",
+      "sha256": "4a5c79653a20b776f9fb041f3100d59d71823d57670ea0db2a7d0e14d8e4c95c",
+      "size": 869664
+    }
+  }
+}
