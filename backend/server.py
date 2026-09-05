@@ -6,141 +6,86 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
-COMPAT_PATH = HERE / "compat451.py"
+COMPAT454_PATH = HERE / "compat454.py"
 
-spec = importlib.util.spec_from_file_location("p2000_compat451", COMPAT_PATH)
+spec = importlib.util.spec_from_file_location("p2000_compat454", COMPAT454_PATH)
 if spec is None or spec.loader is None:
-    raise RuntimeError("v4.5.1 compatibility bridge kon niet worden geladen")
-compat = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(compat)
+    raise RuntimeError("v4.5.4 compatibility bridge kon niet worden geladen")
+compat454 = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(compat454)
+compat = compat454.compat
 
-_original_apply_v451_hotfix = compat.apply_v451_hotfix
+_apply_v454 = compat.apply_v451_hotfix
 
-V451_SERVER_SHA = "34cfa04906379cf6c07d3b49185cf9bb4be541fc9414807ff7f36cdb715766fc"
 V454_SERVER_SHA = "2a5654899bcb6ebfa2309297d53d2cceab961936d57d72fa0eefc730f8318a45"
-V451_APP_SHA = "1f1f6b474ee6d7c9fc0f03712bed4e9e7150b6004c5a6f67e47c2acccf61cd53"
+V455_SERVER_SHA = "aa98643455b9d2a26dfe49ad223b449f576137e3fb59e183f1913013a82ae95a"
 V454_APP_SHA = "8c8d326b4c08f54b7da584b7cfc2aeb36a499dde866197b76c8b6f520d9bd7ad"
-V451_INDEX_SHA = "5ebbeaae58409bdda4393e1ee76add55b6d6888a43a2ee3adbace061d20e7014"
+V455_APP_SHA = "915ee43a84f259e92bab133dbc05d496e8aa3b0bc9744e9fbbf94308df09a0fb"
 V454_INDEX_SHA = "84b57f64a78e2d10b0bac85b3b73a5b9f495e7da3c42d3dfb518bafcb87185da"
+PARSER_SHA = "c3e9f1e959e928463396316f59b801a0b6b15d2f5bca47c06aca8b1741e51405"
+
+INSTALL_BLOCK = '''# v4.5.5: landelijke grammatica-/fallbackparser. Fail-open: een defect in deze\n# optionele laag mag nooit voorkomen dat de lichtkrant zelf start.\ntry:\n    from parser_nl_v455 import install_national_parser\n    install_national_parser(globals())\nexcept Exception as exc:\n    print(f"Waarschuwing: landelijke parserlaag v4.5.5 niet geladen: {exc}", file=sys.stderr, flush=True)\n\n\n'''
 
 
-def _replace_once(text: str, old: str, new: str, label: str) -> str:
-    if old in text:
-        if text.count(old) != 1:
-            raise RuntimeError(f"v4.5.4 hotfix vond {label} meerdere keren")
-        return text.replace(old, new, 1)
-    if new in text:
-        return text
-    raise RuntimeError(f"v4.5.4 hotfix kon {label} niet vinden")
+def _sha(path: Path) -> str:
+    return compat.sha256_bytes(path.read_bytes())
 
 
-def _verify(path: Path, expected: str, label: str) -> bytes:
-    data = path.read_bytes()
-    if compat.sha256_bytes(data) != expected:
-        raise RuntimeError(f"v4.5.4 {label} heeft onverwachte SHA-256")
-    return data
+def _apply_v455_hotfix() -> None:
+    # Build the exact, already field-tested v4.5.4 runtime first. Keeping that
+    # bridge byte-identical avoids reopening updater/TTS/reload/vehicle fixes.
+    _apply_v454()
 
+    parser = HERE / "parser_nl_v455.py"
+    if not parser.is_file() or _sha(parser) != PARSER_SHA:
+        raise RuntimeError("v4.5.5 landelijke parsermodule ontbreekt of heeft onverwachte SHA-256")
 
-def _apply_v454_hotfix() -> None:
     server = HERE / "server.py"
-    server_data = server.read_bytes()
-    server_sha = compat.sha256_bytes(server_data)
+    server_sha = _sha(server)
     if server_sha == V454_SERVER_SHA:
-        compat.atomic_write(ROOT / "VERSION", b"4.5.4\n")
-        return
-    if server_sha != V451_SERVER_SHA:
-        raise RuntimeError("v4.5.4 basis-server heeft onverwachte SHA-256")
-    server_text = server_data.decode("utf-8")
-    server_text = _replace_once(server_text, 'APP_VERSION = "4.5.1"', 'APP_VERSION = "4.5.4"', "backendversie")
-    server_text = _replace_once(
-        server_text,
-        'def load_vehicle_catalog(config: dict | None = None) -> tuple[dict[str, dict], dict[str, dict]]:\n    """Load only useful regional shards into one O(1) dictionary.\n\n    A full-NL profile is still small enough for memory, but a one-region monitor\n    will not parse/load the other 24 regional files at all.\n    """',
-        'def load_vehicle_catalog(config: dict | None = None) -> tuple[dict[str, dict], dict[str, dict]]:\n    """Load the nationwide exact SW catalogue plus lightweight regional fallbacks.\n\n    Region selection controls which incidents are shown, never which responding\n    vehicles can be recognised. SW Mediaproducties therefore stays nationwide;\n    the slower legacy/Brandbase shards remain scoped to selected regions.\n    """',
-        "landelijke voertuigcatalogus-documentatie",
-    )
-    server_text = _replace_once(
-        server_text,
-        '    sw_catalog = sw_units_to_vehicle_catalog(sw_units)\n    if wanted:\n        sw_catalog = {k: v for k, v in sw_catalog.items() if k[:2] in wanted or k[:2] in {"26", "28"}}\n    catalog.update(sw_catalog)',
-        '    sw_catalog = sw_units_to_vehicle_catalog(sw_units)\n    # SW Mediaproducties is intentionally nationwide. A MWB incident may receive\n    # assistance from Brabant-Noord/BZO/Zeeland/ZHZ (or any other region), so the\n    # selected incident regions must never remove those units from recognition.\n    catalog.update(sw_catalog)',
-        "landelijke SW-voertuigscope",
-    )
-    server_text = _replace_once(
-        server_text,
-        '        Police/ambulance incident numbers can also contain six digits.  Never feed\n        those into the unknown-fire list; only inspect actual fire dispatches and\n        region prefixes relevant to the configured fire scope (plus 26/28 national\n        fire/NIPV/Defence prefixes).',
-        '        Police/ambulance incident numbers can also contain six digits. Never feed\n        those into the unknown-fire list; only inspect actual fire dispatches.\n        Within a fire dispatch all Dutch region prefixes are valid because mutual\n        aid can cross the configured incident-region boundary.',
-        "landelijke live-resolver-documentatie",
-    )
-    server_text = _replace_once(
-        server_text,
-        '        selected = set(selected_fire_region_codes(self.config))\n        allowed_prefixes = selected | {"26", "28"}',
-        '        allowed_prefixes = set(FIRE_REGION_CODE_TO_SLUG) | {"26", "28"}',
-        "landelijke live-resolver-prefixen",
-    )
-    new_server = server_text.encode("utf-8")
-    if compat.sha256_bytes(new_server) != V454_SERVER_SHA:
-        raise RuntimeError("v4.5.4 backend eindhash klopt niet")
-    compat.atomic_write(server, new_server)
+        text = server.read_text(encoding="utf-8")
+        if text.count('APP_VERSION = "4.5.4"') != 1:
+            raise RuntimeError("v4.5.5 kon backendversie niet eenduidig vervangen")
+        text = text.replace('APP_VERSION = "4.5.4"', 'APP_VERSION = "4.5.5"', 1)
+        marker = "def main():\n"
+        if text.count(marker) != 1:
+            raise RuntimeError("v4.5.5 kon parserinstallatiepunt niet eenduidig vinden")
+        text = text.replace(marker, INSTALL_BLOCK + marker, 1)
+        data = text.encode("utf-8")
+        if compat.sha256_bytes(data) != V455_SERVER_SHA:
+            raise RuntimeError("v4.5.5 backend eindhash klopt niet")
+        compat.atomic_write(server, data)
+    elif server_sha != V455_SERVER_SHA:
+        raise RuntimeError("v4.5.5 basis-server heeft onverwachte SHA-256")
 
     app = ROOT / "frontend" / "app.js"
-    app_data = _verify(app, V451_APP_SHA, "basis-app.js")
-    text = app_data.decode("utf-8")
-    text = _replace_once(text, "const CLIENT_VERSION='4.5.0';", "const CLIENT_VERSION='4.5.4';", "frontendversie")
-    text = _replace_once(
-        text,
-        "function localKioskHost(){const h=String(location.hostname||'').toLowerCase();return h==='127.0.0.1'||h==='localhost'||h==='::1'}\nasync function windowsHostSpeakFallback",
-        "function localKioskHost(){const h=String(location.hostname||'').toLowerCase();return h==='127.0.0.1'||h==='localhost'||h==='::1'}\nfunction windowsKioskHost(){const p=String(navigator.userAgent||navigator.platform||'');return localKioskHost()&&/Windows/i.test(p)}\nasync function windowsHostSpeakFallback",
-        "Windows-kioskdetectie",
-    )
-    text = _replace_once(
-        text,
-        "  try{return await playOnlineAudioInBrowser(text,requestSeq,volume,cueService,cueUrgent)}",
-        "  // Lokale Windows-kiosk: direct SAPI/SoundPlayer, browseraudio alleen fallback.\n  if(windowsKioskHost()){\n    try{const host=await windowsHostSpeakFallback(text,requestSeq,volume,cueService,cueUrgent);noteAudioSuccess(host.mode||'windows-host-audio');setAudioUnlockVisible(false);return host}\n    catch(hostError){noteAudioFailure(hostError,'windows-host');state.audioStats.fallbacks++;console.warn('Directe Windows host-TTS mislukt; browseraudio wordt fallback',hostError)}\n  }\n  try{return await playOnlineAudioInBrowser(text,requestSeq,volume,cueService,cueUrgent)}",
-        "directe Windows TTS",
-    )
-    text = _replace_once(
-        text,
-        "    const tuned=job.skipTune?false:await playDispatchTuneForJob(job);",
-        "    let tuned=false;\n    if(!job.skipTune){\n      const tunePromise=playDispatchTuneForJob(job).catch(()=>false);\n      const raced=await Promise.race([tunePromise.then(value=>({done:true,value})),waitMs(900).then(()=>({done:false,value:false}))]);\n      tuned=!!raced.value;\n      if(!raced.done)stopCurrentTune();\n    }",
-        "maximale deuntje-wachttijd",
-    )
-    text = _replace_once(text, "async function waitForDutchVoice(timeoutMs=900){", "async function waitForDutchVoice(timeoutMs=250){", "browserstem-wachttijd")
-    text = _replace_once(text, "const rendered=await fetchTtsBlob(text,16000,cueService,cueUrgent);", "const rendered=await fetchTtsBlob(text,8000,cueService,cueUrgent);", "TTS-fetch timeout")
-    text = _replace_once(text, "    startTimer=setTimeout(()=>{if(!started)finish(false,new Error('TTS-audio startte niet binnen 4 seconden'))},4000);", "    startTimer=setTimeout(()=>{if(!started)finish(false,new Error('TTS-audio startte niet binnen 1,2 seconde'))},1200);", "browseraudio starttimeout")
-    text = _replace_once(text, "      for(let i=0;i<3&&!settled;i++){", "      for(let i=0;i<2&&!settled;i++){", "browseraudio retries")
-    text = _replace_once(text, "await waitMs(180+i*240)", "await waitMs(80+i*100)", "browseraudio retry-wacht")
-    text = _replace_once(text, "job.queuedAt=Date.now()+1500;", "job.queuedAt=Date.now()+250;", "omroep retry timestamp")
-    text = _replace_once(text, "setTimeout(()=>{state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob()},1500);", "setTimeout(()=>{state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob()},250);", "omroep retry timer")
-    old_reload = """function runtimeReloadReason(status,currentIdentity=null){\n  const version=String(status?.version||'').trim();\n  if(version&&version!==CLIENT_VERSION)return'version';\n  const id=runtimeIdentity(status);if(!id)return'';\n  if(currentIdentity&&id!==currentIdentity)return'instance';\n  return'';\n}"""
-    new_reload = """function runtimeReloadReason(status,currentIdentity=null){\n  // v4.5.3: runtime changes are handled live through SSE/polling. Never force a\n  // browser reload here: a stale cached app.js used to create an endless loop\n  // on both Windows and Linux whenever backend/client versions differed.\n  return '';\n}"""
-    text = _replace_once(text, old_reload, new_reload, "runtime reload-loop")
-    new_app = text.encode("utf-8")
-    if compat.sha256_bytes(new_app) != V454_APP_SHA:
-        raise RuntimeError("v4.5.4 app.js eindhash klopt niet")
-    compat.atomic_write(app, new_app)
+    app_sha = _sha(app)
+    if app_sha == V454_APP_SHA:
+        text = app.read_text(encoding="utf-8")
+        old = "const CLIENT_VERSION='4.5.4';"
+        new = "const CLIENT_VERSION='4.5.5';"
+        if text.count(old) != 1:
+            raise RuntimeError("v4.5.5 kon frontendversie niet eenduidig vervangen")
+        data = text.replace(old, new, 1).encode("utf-8")
+        if compat.sha256_bytes(data) != V455_APP_SHA:
+            raise RuntimeError("v4.5.5 app.js eindhash klopt niet")
+        compat.atomic_write(app, data)
+    elif app_sha != V455_APP_SHA:
+        raise RuntimeError("v4.5.5 basis-app.js heeft onverwachte SHA-256")
 
     index = ROOT / "frontend" / "index.html"
-    index_data = _verify(index, V451_INDEX_SHA, "basis-index.html")
-    html = index_data.decode("utf-8")
-    html = _replace_once(
-        html,
-        "const script=document.createElement('script');script.src='/app.js?v=45000';script.defer=true;document.body.appendChild(script);",
-        "const assetKey=Date.now().toString(36);const css=document.querySelector('link[rel=\"stylesheet\"]');if(css)css.href=`/lightkrant.css?v=${assetKey}`;const script=document.createElement('script');script.src=`/app.js?v=${assetKey}`;script.defer=true;document.body.appendChild(script);",
-        "dynamische asset-cachekey",
-    )
-    new_index = html.encode("utf-8")
-    if compat.sha256_bytes(new_index) != V454_INDEX_SHA:
-        raise RuntimeError("v4.5.4 index.html eindhash klopt niet")
-    compat.atomic_write(index, new_index)
-    compat.atomic_write(ROOT / "VERSION", b"4.5.4\n")
+    if _sha(index) != V454_INDEX_SHA:
+        raise RuntimeError("v4.5.5 index.html heeft onverwachte SHA-256")
+
+    compat.atomic_write(ROOT / "VERSION", b"4.5.5\n")
 
 
-def _apply_v451_then_v454() -> None:
-    _original_apply_v451_hotfix()
-    _apply_v454_hotfix()
+def _apply_v454_then_v455() -> None:
+    _apply_v455_hotfix()
 
 
-compat.apply_v451_hotfix = _apply_v451_then_v454
-compat.TARGET_VERSION = "4.5.4"
+compat.apply_v451_hotfix = _apply_v454_then_v455
+compat.TARGET_VERSION = "4.5.5"
 
 if __name__ == "__main__":
     compat.main()
