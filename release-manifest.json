@@ -1,0 +1,23 @@
+{
+  "version": "4.5.7",
+  "algorithm": "sha256",
+  "files": {
+    "CHANGELOG_v4.5.7.md": "56a316ec871f40c4fb72b962d438f0d4078bc58ca67030854ec0c8ab5e9b200c",
+    "SECURITY.md": "36bdbe327cb91594f468a1120d0d80dceb7ed2d3f0209f02e6bf311119891cb6",
+    "START_P2000.bat": "515ed1c572bd774c8a76daa204fd735d3a6c8b0d1bf9c16e03d2c8ab2f20c788",
+    "START_P2000.sh": "e6565974a1c10efd829ef6aa259e03800d4b1a9a153f7d3a00815a1f981b1770",
+    "STOP_P2000.bat": "59aa51c5e139408e028da6d092d9d25ded4b75c5ad313caad2f64fe42caac1c2",
+    "STOP_P2000.sh": "3c5844eb20b51ee03377e1fffdcab1ed69594c9a59d7ae566dc7ce145f6ddbf7",
+    "VERSION": "5186e88612feecac695acd0f27bd3b758213febb46a6fa4a105164a68d07c3c8",
+    "backend/compat457.py": "d68fa34e4e1b80e43598a773026447b2ccb42e3cf687c70bf73254566a31d661",
+    "backend/server.py": "c3cf8c46fb39e2b2048f01abd77a43adfd2eca98b8b30697e8b4d521a2bf9151",
+    "tools/health_gate.py": "edd99bd98802faba749042f4620a9ffb84ed7f62aadf7a18332525a475c4dbf0",
+    "tools/linux_desktop.py": "8bd79cd14551956181ffbe14d900c2dc7e8a5c8babae57d31b32a2339c730152",
+    "tools/recovery_bootstrap.py": "ef7972306c4b752c38832a5a2468fd49b18da4574c7cba99ba1f79e8f07a14c0",
+    "tools/rollback_latest.py": "6fb5970b525b28c63f39f921c24385bc41763f36b1e11be89c3d6b53ecda2b7b",
+    "tools/run_tests.py": "ff925e0d0320f16483d6b3caedbe3beba11cd2ad8de95864965ebf89df2a5b5f",
+    "tools/startup_guard.py": "6e0144c7c2068afa5815089e509c87499310b50765f593fb57c8dac8f216c354",
+    "tools/stop_verify.py": "8d3c0403844efd78fca8f544c782e87795b6b6ef16829220a7e90730c4acaf43",
+    "tools/supervisor.py": "77a73f2b553a872859b57ed2c3162f3e774324bbdfd3117c3b2eee83fc8e9c70"
+  }
+}
