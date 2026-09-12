@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0c151d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="referrer" content="no-referrer">
+  <title>Lichtkrant · Bedienpaneel</title>
+  <link rel="manifest" href="/remote.webmanifest">
+  <link rel="stylesheet" href="/remote.css?v=460">
+  <script src="/auth.js?v=460" defer></script>
+  <script src="/qr-local.js" defer></script>
+  <script src="/remote.js?v=460" defer></script>
+</head>
+<body>
+<main class="remote-shell">
+  <header class="topbar"><a class="brand" href="/remote"><span class="brand-mark">112</span> LICHTKRANT</a><span id="connection" class="connection" role="status">Verbinden…</span></header>
+  <section class="intro"><p class="eyebrow">JOUW BEDIENPANEEL</p><h1>Alles onder controle.</h1><p id="monitorName">Je lichtkrant, binnen handbereik.</p></section>
+  <div id="feedback" role="status" aria-live="polite" hidden></div>
+  <section id="pairing" class="card pairing" hidden>
+    <div class="section-title"><div><p class="eyebrow">EENMALIG INSTELLEN OP DE PC</p><h2>Neem de bediening mee</h2></div><span class="tag">TELEFOON</span></div>
+    <p>Zet telefoontoegang aan en verbind je telefoon met hetzelfde wifi-netwerk als deze pc. Scan daarna de QR-code.</p>
+    <button id="enableRemote" class="primary">Telefoontoegang aanzetten</button>
+    <div id="pairDetails" hidden><div id="pairQr" aria-label="QR-code voor telefoon koppelen"></div><div class="pair-copy"><label for="pairAddress">Bedienpaneel op je telefoon</label><input id="pairAddress" readonly><button id="copyPair" class="secondary">Koppellink kopiëren</button><details><summary>Handmatig koppelen</summary><p>Open het adres hierboven en plak deze code. Deel hem alleen met mensen die jouw lichtkrant mogen bedienen.</p><input id="pairCode" type="password" readonly aria-label="Koppelcode"><button id="copyCode" class="secondary">Koppelcode kopiëren</button></details><button id="disableRemote" class="text-button">Telefoontoegang uitzetten</button></div></div>
+    <p id="pairHelp" class="muted">Eenmalig kan Windows vragen om Python toegang te geven tot je privénetwerk.</p>
+  </section>
+  <div class="status-strip"><div><span class="status-dot"></span><p>Bronnen<strong id="feedState">—</strong></p></div><div><span class="screen-symbol">▣</span><p>Lichtkrant<strong id="screenState">—</strong></p></div><div><span class="screen-symbol">↻</span><p>Bijgewerkt<strong id="lastRefresh">—</strong></p></div></div>
+  <div class="dashboard-grid">
+    <section class="card sound" id="sound">
+      <div class="section-title"><div><p class="eyebrow">OMROEP</p><h2>Geluid & volume</h2></div><span id="volumeValue" class="volume-badge">100%</span></div>
+      <label class="sr-only" for="volume">Hoofdvolume</label><input id="volume" type="range" min="0" max="100" step="1" value="100"><div class="range-labels"><span>Stil</span><span>Voluit</span></div>
+      <div class="segmented" role="group" aria-label="Omroepmodus"><button data-action="speech-normal" data-mode="normal">Normaal</button><button data-action="speech-priority" data-mode="priority">Prioriteit</button><button data-action="speech-mute" data-mode="mute">Stil</button></div>
+      <p class="muted" id="modeHint">Alle ingestelde meldingen worden omgeroepen.</p>
+      <div class="button-grid"><button class="secondary" data-action="replay-last">↻ Laatste herhalen</button><button class="secondary" data-action="stop-speech">■ Omroep stoppen</button></div>
+    </section>
+    <section class="card" id="screen">
+      <div class="section-title"><div><p class="eyebrow">LICHTKRANT</p><h2>Scherm & weergave</h2></div><span class="tag">DIRECT</span></div>
+      <div class="button-grid"><button class="secondary" data-power="on">☀ Scherm aan</button><button class="secondary" data-power="off">☾ Scherm uit</button></div>
+      <label class="toggle-row" for="mapEnabled"><span>Kaart bij de melding<small>Incidentlocatie zichtbaar op de tv</small></span><input id="mapEnabled" type="checkbox" data-setting="mapEnabled"></label>
+      <label class="toggle-row" for="nightMode"><span>Nachtmodus<small>Gebruik je ingestelde nachttijden</small></span><input id="nightMode" type="checkbox" data-setting="nightMode"></label>
+      <div class="select-row"><label for="mapMode">Kaartweergave</label><select id="mapMode" data-setting="mapMode"><option value="auto">Automatisch</option><option value="posts">Posten + incident</option><option value="route">Standplaats + incident</option><option value="incident">Alleen incident</option></select></div>
+      <a class="inline-link" href="/control#displayCard">Schermkeuze en alle weergave-instellingen →</a>
+    </section>
+    <section class="card messages" id="messages"><div class="section-title"><div><p class="eyebrow">ACTUEEL</p><h2>Laatste meldingen</h2></div><span id="messageCount" class="tag">0 MELDINGEN</span></div><div id="messageList"><p class="empty">Meldingen laden…</p></div></section>
+    <section class="card" id="test">
+      <div class="section-title"><div><p class="eyebrow">CONTROLE</p><h2>Test je lichtkrant</h2></div></div>
+      <p class="muted">De test speelt af op de lichtkrant-pc.</p><div class="button-grid"><button class="secondary" data-test="tune-only">♫ Test deuntje</button><button class="secondary" data-test="speech-only">◖ Test omroep</button></div>
+      <label class="field-label" for="testText">Eigen testmelding</label><textarea id="testText" rows="3" placeholder="P 1 BR Woning Hoofdstraat Tilburg 20-9432"></textarea><button id="sendTest" class="primary">Toon + spreek testmelding</button>
+      <p id="testResult" class="muted" aria-live="polite">Open de lichtkrant om afspeelbevestigingen te ontvangen.</p>
+    </section>
+    <section class="card management" id="management"><div class="section-title"><div><p class="eyebrow">BEHEER</p><h2>Stel het in zoals jij wilt</h2></div></div><div class="link-list"><a href="/control">Alle instellingen<span>Geluid, tonen, achtergrond, voertuigen en updates ↗</span></a><a href="/setup.html?edit=1">Regio’s & disciplines<span>Pas je werkgebied en standplaats aan ↗</span></a></div><div class="button-grid"><button class="secondary" id="reconnect">Bronnen herverbinden</button><button class="secondary" data-action="restart-kiosk">Lichtkrant heropenen</button></div><details class="maintenance"><summary>Onderhoud</summary><p class="muted">Een herstart onderbreekt de bediening kort.</p><button class="secondary" data-action="restart-backend">Backend herstarten</button><button id="logout" class="text-button">Telefoon afmelden</button></details></section>
+  </div>
+  <footer><span>Tilburg112 · P2000 Monitor</span><span id="version">v4.6.0</span></footer>
+</main>
+<nav class="bottom-nav" aria-label="Snel naar"><a href="#sound">Geluid</a><a href="#screen">Scherm</a><a href="#messages">Meldingen</a><a href="#management">Beheer</a></nav>
+</body>
+</html>

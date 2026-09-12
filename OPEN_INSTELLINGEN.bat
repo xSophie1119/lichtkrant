@@ -22,24 +22,8 @@ timeout /t 2 /nobreak >nul
 exit /b 0
 
 :ensure_backend
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
-if errorlevel 1 exit /b 1
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" >nul 2>&1
-if not errorlevel 1 exit /b 0
-call :start_backend_once
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 15 >nul 2>&1
-if not errorlevel 1 exit /b 0
-if exist "%P2000_LOGDIR%\backend.log" type "%P2000_LOGDIR%\backend.log" >>"%P2000_LOGDIR%\startup.log"
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --kill-stale >>"%P2000_LOGDIR%\startup.log" 2>&1
-if errorlevel 1 exit /b 1
-call :start_backend_once
-"%P2000_PYTHON%" "%~dp0tools\runtime_probe.py" --version "%P2000_VERSION%" --wait 18 >nul 2>&1
+"%P2000_PYTHON%" "%~dp0tools\startup_guard.py" >>"%P2000_LOGDIR%\startup.log" 2>&1
 exit /b %errorlevel%
-
-:start_backend_once
->>"%P2000_LOGDIR%\backend.log" echo ==== P2000 backend gestart %date% %time% ====
-start "P2000 Monitor Backend" /min "%~dp0RUN_BACKEND.bat"
-exit /b 0
 
 :fatal_python
 echo [FOUT] Python-runtime mislukt.

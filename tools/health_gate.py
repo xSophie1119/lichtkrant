@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib, json, sqlite3
 from pathlib import Path
 
-REQUIRED_FRONTEND = ("frontend/index.html", "frontend/app.js", "frontend/control.js")
+REQUIRED_FRONTEND = ("frontend/index.html", "frontend/app.js", "frontend/control.js", "frontend/control.html", "frontend/auth.js", "frontend/remote.html", "frontend/remote.js", "frontend/remote.css")
 
 
 def sha256_file(path: Path) -> str:
@@ -27,7 +27,11 @@ def evaluate_installation_health(root: Path, *, expected_version: str | None=Non
             parsed=json.loads(cfg.read_text(encoding='utf-8'))
             if not isinstance(parsed,dict): critical.append('config/config.json is geen object')
         except Exception as exc: critical.append(f'config/config.json ongeldig: {exc}')
-    for rel in REQUIRED_FRONTEND:
+    # Rollback may restore a release predating the mobile panel.
+    try: modern=tuple(int(x) for x in version.split('.')[:3]) >= (4,6,0)
+    except ValueError: modern=True
+    required=REQUIRED_FRONTEND if modern else REQUIRED_FRONTEND[:3]
+    for rel in required:
         p=root/rel
         if not p.is_file() or p.stat().st_size < 10: critical.append(f'vereist frontendbestand ontbreekt/leeg: {rel}')
     db=root/'data'/'p2000.sqlite3'

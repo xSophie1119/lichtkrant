@@ -1,15 +1,13 @@
-# Security model
+# Toegang en updates
 
-P2000 Monitor is standaard een localhost-applicatie. Poort 8765 bindt standaard aan `127.0.0.1`.
+P2000 Monitor bindt standaard aan `127.0.0.1:8765`. De eigenaar kan op de lichtkrant-pc via `/remote` bewust LAN-bediening aanzetten. Dat slaat de bindinstelling op en herstart de backend.
 
-## LAN-beheer
+Alle API-verzoeken vanaf andere apparaten vereisen het installatietoken als `X-P2000-Admin-Token` of een geldige HttpOnly/SameSite=Strict-cookie. De QR-koppeling zet die cookie; de code verdwijnt uit de URL. Alleen de pc zelf kan de koppelcode opvragen of LAN-toegang wijzigen. Requests met een vreemde Host/Origin of cross-site browsercontext worden geweigerd. Lokale scripts zonder Origin blijven werken.
 
-Wie bewust een andere bind-address configureert, moet voor muterende API-calls het installatietoken meesturen als `X-P2000-Admin-Token`. Het token wordt lokaal aangemaakt in `data/secrets/admin-token.txt` en is op Unix owner-only.
+Het token staat in `data/secrets/admin-token.txt`, op Unix met owner-only rechten. Deze map hoort nooit in Git. De sessiecookie verloopt na 30 dagen; afmelden verwijdert hem op dat apparaat. Voor het intrekken van alle bestaande koppelingen: stop het programma, verwijder uitsluitend `data/secrets/admin-token.txt`, en start opnieuw om een nieuw token te genereren.
 
-## Updates
+LAN-bediening gebruikt HTTP en is bestemd voor een vertrouwd lokaal netwerk. Publiceer deze poort niet rechtstreeks op internet. Er worden geen firewallregels, routerinstellingen of externe tunnels aangemaakt.
 
-Executable ZIP-upload via de beheer-API is uitgeschakeld. Staged officiële updates moeten een `release-manifest.json` bevatten waarvan alle opgenomen SHA-256 hashes overeenkomen voordat de staged backend wordt gestart.
+Executable ZIP-upload via de beheer-API blijft uitgeschakeld. GitHub-updates moeten door manifestcontrole en een geïsoleerde backend-healthcheck komen voordat bestanden worden vervangen. SHA-256 controleert volledigheid en integriteit; het is geen cryptografische uitgevershandtekening. De ingestelde GitHub-repository blijft de vertrouwensbron.
 
-## Recovery
-
-`pending-health.json` en `transaction.json` zijn recoverybewijs. Ze worden niet op leeftijd weggegooid. Na een mislukte rollback blijft de foutstatus met attempt-count staan. Een update wordt pas committed nadat de semantische health-gate groen is.
+Recovery gebruikt `pending-health.json` en `transaction.json`. Mislukte herstelpogingen behouden hun foutbewijs; een update wordt pas bevestigd na een geslaagde health-gate. Ongeldige backupverwijzingen mogen de installatie niet over zichzelf terugzetten.

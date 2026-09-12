@@ -16,6 +16,8 @@ def writej(p,o):
 
 def mirror_restore(src:Path,dst:Path,preserve=('data','config')):
     src=src.resolve(); dst=dst.resolve(); preserve=set(preserve)
+    if src == dst or src in dst.parents:
+        raise ValueError('backup mag niet de installatie of een bovenliggende map zijn')
     wanted={p.name for p in src.iterdir() if p.name!='backup.json'}
     for child in list(dst.iterdir()):
         if child.name in preserve or child.name.startswith('.git'): continue
@@ -33,14 +35,14 @@ def mirror_restore(src:Path,dst:Path,preserve=('data','config')):
 
 def recover_pending() -> dict:
     if JOURNAL.exists():
-        meta=readj(JOURNAL); backup=Path(str(meta.get('backup') or ''))
-        if str(meta.get('state') or '') in {'applying','rollback-failed'} and backup.is_dir():
+        meta=readj(JOURNAL); backup=Path(str(meta.get('backup') or ROOT))
+        if str(meta.get('state') or '') in {'applying','rollback-failed'} and backup.is_dir() and backup.resolve()!=ROOT.resolve() and backup.resolve() not in ROOT.resolve().parents:
             mirror_restore(backup,ROOT); meta.update(state='recovered',recovered_at=now());writej(JOURNAL,meta)
     if not PENDING.exists(): return {'ok':True,'action':'none'}
     meta=readj(PENDING); backup=Path(str(meta.get('backup') or ''))
     attempts=int(meta.get('attempt_count') or 0)+1
     meta.update(attempt_count=attempts,last_attempt_at=now())
-    if not backup.is_dir():
+    if not str(meta.get('backup') or '').strip() or not backup.is_dir() or backup.resolve()==ROOT.resolve() or backup.resolve() in ROOT.resolve().parents:
         meta['last_error']='backup ontbreekt';writej(PENDING,meta);return {'ok':False,'error':'backup ontbreekt'}
     try:
         mirror_restore(backup,ROOT)

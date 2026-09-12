@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, os, shutil, signal, subprocess, time
+import argparse, json, os, shutil, signal, subprocess, time
 from pathlib import Path
 DEFAULT_URL='http://127.0.0.1:8765/';STATE=Path(os.environ.get('XDG_STATE_HOME') or Path.home()/'.local/state')/'p2000-monitor';DATA=Path(os.environ.get('XDG_DATA_HOME') or Path.home()/'.local/share')/'p2000-monitor';LOG=STATE/'browser.log'
 def log(s):
-    try:STATE.mkdir(parents=True,exist_ok=True);LOG.open('a').write(f'[{time.strftime("%F %T")}] {s}\n')
+    try:
+        STATE.mkdir(parents=True,exist_ok=True)
+        with LOG.open('a') as stream:stream.write(f'[{time.strftime("%F %T")}] {s}\n')
     except Exception:pass
 def _cmd(pid):
     try:return (Path('/proc')/str(pid)/'cmdline').read_bytes().replace(b'\0',b' ').decode('utf-8','replace')
@@ -33,7 +35,7 @@ def _browsers(pref=''):
             if p and p not in seen:seen.add(p);rows.append((kind,[p]));break
     snap=shutil.which('snap')
     if snap:
-        rows += [('chromium-snap',[snap,'run','chromium']),('chrome-snap',[snap,'run','chromium'])]
+        rows += [('chromium-snap',[snap,'run','chromium'])]
     flat=shutil.which('flatpak')
     if flat:
         rows += [('chromium-flatpak',[flat,'run','org.chromium.Chromium']),('chrome-flatpak',[flat,'run','com.google.Chrome'])]
@@ -82,10 +84,33 @@ def launch(url,position,size,rundir,pref=''):
     op=shutil.which('xdg-open')
     if op:subprocess.Popen([op,url],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True);return 0
     return 2
+def open_page(url):
+    # Settings use a normal browser tab, never a kiosk profile or kiosk restart.
+    from urllib.parse import urlparse
+    parsed=urlparse(url)
+    if parsed.scheme not in {'http','https'} or parsed.hostname not in {'localhost','127.0.0.1','::1'}:
+        return 2
+    opener=shutil.which('xdg-open')
+    commands=[[opener,url]] if opener else []
+    commands += [[*base,url] for _,base in _browsers()]
+    firefox=shutil.which('firefox')
+    if firefox:commands.append([firefox,url])
+    for command in commands:
+        try:
+            subprocess.Popen(command,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
+            return 0
+        except OSError:continue
+    return 2
+
 def main():
     ap=argparse.ArgumentParser();sp=ap.add_subparsers(dest='c',required=True);p=sp.add_parser('launch');p.add_argument('--url',default=DEFAULT_URL);p.add_argument('--position',default='0,0');p.add_argument('--size',default='1920,1080');p.add_argument('--browser',default='');p.add_argument('--rundir',required=True)
     for n in ('kiosk-status','stop-kiosk'):q=sp.add_parser(n);q.add_argument('--rundir',required=True)
-    a=ap.parse_args();r=Path(a.rundir)
+    sp.add_parser('probe')
+    page=sp.add_parser('open');page.add_argument('--url',required=True);page.add_argument('--rundir')
+    a=ap.parse_args()
+    if a.c=='probe':print(json.dumps({'candidates':[{'kind':kind,'command':base} for kind,base in _browsers()]}));return 0
+    if a.c=='open':return open_page(a.url)
+    r=Path(a.rundir)
     if a.c=='kiosk-status':return 0 if status(r) else 1
     if a.c=='stop-kiosk':return 0 if stop(r) else 2
     return launch(a.url,a.position,a.size,r,a.browser)

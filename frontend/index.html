@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#000000">
   <title>P2000 Monitor</title>
-  <link rel="stylesheet" href="/lightkrant.css?v=44150">
+  <link rel="stylesheet" href="/lightkrant.css?v=45000">
   <link rel="manifest" href="/manifest.webmanifest">
 </head>
 <body>
@@ -51,13 +51,15 @@
       <button id="fullscreenBtn" title="Volledig scherm (F)">⛶</button>
     </div>
   </main>
+  <script src="/auth.js?v=460"></script>
   <script>
   (async()=>{
+    await window.P2000Auth.ready;
     try{
       const r=await fetch('/api/setup',{cache:'no-store'}),d=await r.json();
       if(!d?.setup?.setup_complete){location.replace('/setup.html');return;}
     }catch(e){console.warn('Setupcontrole mislukt; monitor probeert normaal te starten.',e)}
-    const script=document.createElement('script');script.src='/app.js?v=44150';script.defer=true;document.body.appendChild(script);
+    const assetKey=Date.now().toString(36);const css=document.querySelector('link[rel="stylesheet"]');if(css)css.href=`/lightkrant.css?v=${assetKey}`;const script=document.createElement('script');script.src=`/app.js?v=${assetKey}`;script.defer=true;document.body.appendChild(script);
   })();
 </script>
 </body>

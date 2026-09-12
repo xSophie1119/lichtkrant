@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, hashlib, json, os, signal, subprocess, sys, time, urllib.request
+import argparse, hashlib, json, os, signal, subprocess, sys, time, urllib.request, threading
 from datetime import datetime, timezone
 from pathlib import Path
-from health_gate import evaluate_installation_health
+from supervisor_commands import claim_next, execute
 ROOT=Path(__file__).resolve().parents[1];DATA=ROOT/'data';PID=DATA/'supervisor.pid';LOCK=DATA/'supervisor.lock';STATUS=DATA/'supervisor-status.json';VERSION=(ROOT/'VERSION').read_text().strip();INSTALL_ID=hashlib.sha256(os.path.realpath(str(ROOT)).encode()).hexdigest()[:16]
 
 def now():return datetime.now(timezone.utc).isoformat(timespec='seconds')
@@ -23,8 +23,7 @@ def api(path,t=1.2):
 def health_ok():
     rt=api('/api/runtime');h=api('/api/health')
     if not rt or rt.get('app')!='P2000 Monitor' or str(rt.get('version'))!=VERSION or str(rt.get('install_id') or '')!=INSTALL_ID:return False
-    loc=evaluate_installation_health(ROOT,expected_version=VERSION,runtime_payload=rt)
-    return bool(loc['ok'] and isinstance(h,dict) and h.get('ok') is True and not h.get('critical_failures'))
+    return bool(isinstance(h,dict) and h.get('ok') is True and not h.get('critical_failures'))
 def claim():
     DATA.mkdir(parents=True,exist_ok=True);f=LOCK.open('a+b');
     if f.seek(0,2)==0:f.write(b'0');f.flush()
@@ -60,18 +59,32 @@ def main():
     f=claim()
     if not f:return 0
     failures=0
+    command_worker=None; command_result={}
+    def run_command(command):
+        nonlocal command_result
+        try: command_result=execute(ROOT,command)
+        except Exception as exc: command_result={'ok':False,'action':command.get('action'),'error':str(exc)}
     try:
         while True:
+            # Updating files does not update this process's imported VERSION.
+            if (ROOT/'VERSION').read_text().strip()!=VERSION:
+                f.close()
+                os.execv(sys.executable,[sys.executable,str(ROOT/'tools'/'supervisor.py')])
+            if command_worker is None or not command_worker.is_alive():
+                command=claim_next(DATA)
+                if command:
+                    command_worker=threading.Thread(target=run_command,args=(command,),daemon=True)
+                    command_worker.start()
             ok=health_ok();state='healthy' if ok else 'unhealthy'
             if ok:failures=0
             else:
                 failures+=1
                 if failures>=3:
-                    subprocess.run([sys.executable,str(ROOT/'tools'/'runtime_probe.py'),'--stop'],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                    subprocess.run([sys.executable,str(ROOT/'tools'/'runtime_probe.py'),'--stop'],cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=20)
                     start_backend();end=time.monotonic()+20
                     while time.monotonic()<end and not health_ok():time.sleep(.5)
                     ok=health_ok();state='healthy' if ok else 'backend-restart-failed';failures=0
-            writej(STATUS,{'version':VERSION,'pid':os.getpid(),'heartbeat_at':now(),'state':state,'backend_ok':ok})
+            writej(STATUS,{'version':VERSION,'pid':os.getpid(),'heartbeat_at':now(),'state':state,'backend_ok':ok,'last_command':command_result,'command_running':bool(command_worker and command_worker.is_alive())})
             if a.once:return 0 if ok else 2
             time.sleep(2)
     finally:

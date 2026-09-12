@@ -1,0 +1,6 @@
+data/
+config/
+__pycache__/
+*.py[cod]
+*.log
+node_modules/

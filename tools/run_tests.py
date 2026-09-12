@@ -10,7 +10,7 @@ def load(name,path):
     spec=importlib.util.spec_from_file_location(name,path);m=importlib.util.module_from_spec(spec);sys.modules[name]=m;spec.loader.exec_module(m);return m
 
 def compile_case():
-    for rel in ['backend/compat457.py','backend/server.py','tools/health_gate.py','tools/recovery_bootstrap.py','tools/startup_guard.py','tools/supervisor.py','tools/linux_desktop.py','tools/rollback_latest.py','tools/stop_verify.py','tools/run_tests.py']:
+    for rel in ['backend/remote_control.py','tools/supervisor_commands.py','backend/server.py','tools/health_gate.py','tools/recovery_bootstrap.py','tools/startup_guard.py','tools/supervisor.py','tools/linux_desktop.py','tools/rollback_latest.py','tools/stop_verify.py','tools/run_tests.py']:
         py_compile.compile(str(ROOT/rel),doraise=True)
 def shell_case():
     b=shutil.which('bash');
@@ -19,7 +19,7 @@ def health_case():
     h=load('hg',ROOT/'tools/health_gate.py')
     with tempfile.TemporaryDirectory() as td:
         r=Path(td);(r/'frontend').mkdir();(r/'config').mkdir();(r/'data').mkdir();(r/'VERSION').write_text('4.5.7');
-        for n in ['index.html','app.js','control.js']:(r/'frontend'/n).write_text('x'*20)
+        for rel in h.REQUIRED_FRONTEND:(r/rel).write_text('x'*20)
         (r/'config'/'config.json').write_text('{}')
         import sqlite3;c=sqlite3.connect(r/'data'/'p2000.sqlite3');c.execute('create table x(a)');c.commit();c.close()
         req(h.evaluate_installation_health(r,expected_version='4.5.7')['ok'],'healthy install rejected')
@@ -50,7 +50,8 @@ def stop_static_case():
     for p in [ROOT/'STOP_P2000.sh',ROOT/'STOP_P2000.bat']:
         req('stop_verify.py' in p.read_text(),'STOP has no verification')
 def security_static_case():
-    t=(ROOT/'backend/compat457.py').read_text();req('127.0.0.1' in t and 'Handmatige executable ZIP-updates zijn uitgeschakeld' in t,'security patch absent');req('X-P2000-Admin-Token' in t and 'Vary\", \"Origin' in t,'admin auth/CORS absent')
+    t=(ROOT/'backend/server.py').read_text();req('127.0.0.1' in t and 'Handmatige executable ZIP-updates zijn uitgeschakeld' in t,'security guard absent')
+    t=(ROOT/'backend/remote_control.py').read_text();req('X-P2000-Admin-Token' in t and 'SameSite=Strict' in t,'pairing guards absent')
 def linux_handoff_case():
     m=load('ld',ROOT/'tools/linux_desktop.py');profile=m._profile('chromium');m._all=lambda:[(123,f'/usr/lib/chromium --user-data-dir={profile} --kiosk http://127.0.0.1:8765/')];req(m._owned(profile),'handoff child not recognized');req(m._profile_in_use(profile),'active profile not protected')
 def browser_sources_case():
@@ -60,7 +61,10 @@ def concurrency_case():
     with tempfile.TemporaryDirectory() as td:
         lock=Path(td)/'l';out=Path(td)/'o';code=f'''import importlib.util,sys,time\nfrom pathlib import Path\ns=importlib.util.spec_from_file_location("g",r"{guard}");m=importlib.util.module_from_spec(s);sys.path.insert(0,r"{ROOT/'tools'}");s.loader.exec_module(m);m.LOCK=Path(r"{lock}");m.semantic_ok=lambda:False\nf=m.lock_handle(timeout=5);open(r"{out}","a").write(f"{{time.time()}}\\n");time.sleep(.7);m.unlock(f)'''
         a=subprocess.Popen([sys.executable,'-c',code]);b=subprocess.Popen([sys.executable,'-c',code]);a.wait(8);b.wait(8);req(a.returncode==0 and b.returncode==0,'concurrent workers failed');rows=[float(x) for x in out.read_text().splitlines()];req(len(rows)==2 and abs(rows[1]-rows[0])>.55,'startup mutex did not serialize')
-CASES=[compile_case,shell_case,health_case,manifest_case,recovery_marker_case,mirror_case,startup_static_case,stop_static_case,security_static_case,linux_handoff_case,browser_sources_case,concurrency_case]
+def runtime_case():
+    result=subprocess.run([sys.executable,str(ROOT/'tests'/'test_runtime.py')],cwd=ROOT,timeout=60)
+    req(result.returncode==0,'runtime regression suite failed')
+CASES=[runtime_case,compile_case,shell_case,health_case,manifest_case,recovery_marker_case,mirror_case,startup_static_case,stop_static_case,security_static_case,linux_handoff_case,browser_sources_case,concurrency_case]
 def main():
     fail=0
     for fn in CASES:

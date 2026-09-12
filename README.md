@@ -1,11 +1,21 @@
-# P2000 Monitor — Windows v4.4.19
+# P2000 Monitor — Windows + Linux v4.6.0
 
-> **Deze map is de zelfstandige Windows-release.** Gebruik alleen de starters in deze map; bestanden voor het andere platform staan bewust in de andere hoofdmap.
+Configureerbare P2000-lichtkrant met een lokaal mobiel bedienpaneel.
 
+## Starten en telefoon koppelen
 
-Configureerbare P2000-lichtkrant voor **Windows 10/11**. Deze map is volledig zelfstandig en bevat alleen de Windows-starters/installers.
+- Windows: `START_P2000.bat`. Linux: `./START_P2000.sh`.
+- Open op de pc `http://127.0.0.1:8765/remote`, zet telefoontoegang aan en scan de QR-code met een telefoon op hetzelfde wifi-netwerk.
+- Volume, omroep, scherm, tests en meldingen staan in het mobiele paneel. Alle overige opties zijn bereikbaar via **Alle instellingen** en de configuratiewizard.
+- Zie [Telefoonbediening](TELEFOONBEDIENING.md) voor de volledige uitleg, verbindingstips en herstel van een niet-startende v4.5.7-installatie.
 
-> Informatieve monitor. Niet bedoeld als officieel of primair alarmeringsmiddel.
+## Nieuw in v4.6.0
+
+De oude, falende opstartbridge is vervangen door direct startbare broncode. Mobiele koppeling, betrouwbare gedeeltelijke instellingenopslag, echte supervisoropdrachten en meerdere prestatieverbeteringen zijn toegevoegd. Lees [alle wijzigingen en testgrenzen](CHANGELOG_v4.6.0.md).
+
+Ontwikkelcontroles: `python tools/run_tests.py`. Optionele DOM-tests: `npm ci` en `npm test`; Node/jsdom zijn niet nodig om de lichtkrant te draaien. Na bronwijzigingen: `python tools/build_manifest.py`.
+
+De onderstaande versiehistorie beschrijft eerdere releases. De huidige checkout bevat starters voor beide besturingssystemen.
 
 ## Nieuw in v4.4.19 — Windows-herstel, betrouwbare omroep en platformmappen
 
