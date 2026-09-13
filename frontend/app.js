@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.7.0';
+const CLIENT_VERSION='4.8.0';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -215,6 +215,7 @@ function applyMapData(q,map){
   if(!wasVisible||changed)render();
 }
 async function syncIncidentMap(){
+  if(window.P2000StudioLive?.mapBox()===null){hideIncidentMap();return}
   if(!activeVisible()){if(state.mapVisible||state.currentMapKey)hideIncidentMap();return}
   const q=currentMapQuery(); if(!q){hideIncidentMap(); return;}
   if(state.mapCache.has(q.key)){applyMapData(q,state.mapCache.get(q.key)); return;}
@@ -271,9 +272,9 @@ function mmtResourceInfo(m){
 function isLL23(m){return !!mmtResourceInfo(m)}
 function llNumber(m){return mmtResourceInfo(m)?.team||null}
 function ovdgNumber(m){const h=`${m.title||''} ${m.summary||''}`;const x=/12[- ]?2080([345])/.exec(h);return x?`80${x[1]}`:null}
-function remoteUrgent(m){return /^(P\s*1|A\s*[01])$/i.test(String(m?.priority||''))||Number(m?.scale_score)>0||/lifeliner/i.test(m?.service||'')}
+function remoteUrgent(m){if(window.P2000StudioLive?.result(m)?.urgent)return true;return /^(P\s*1|A\s*[01])$/i.test(String(m?.priority||''))||Number(m?.scale_score)>0||/lifeliner/i.test(m?.service||'')}
 let remotePinUntil=0;
-function filterMessage(m){if(!m?.__test&&(state.settings.exerciseMode||(state.settings.urgentOnly&&!remoteUrgent(m))))return false;let svc=String(m?.service||'').toLowerCase();const resource=mmtResourceInfo(m);if(resource)svc=resource.kind==='helicopter'?'lifeliner':'ambulance';if(state.settings.services?.length&&!state.settings.services.includes(svc))return false;const cs=(state.settings.cities||[]).map(x=>x.toLowerCase()).filter(Boolean);if(cs.length&&!cs.some(c=>(m.city||'').toLowerCase().includes(c)))return false;const ks=(state.settings.keywords||[]).map(x=>x.toLowerCase()).filter(Boolean);if(ks.length){const hay=`${m.title||''} ${m.summary||''} ${m.city||''} ${m.location||''}`.toLowerCase();if(!ks.some(k=>hay.includes(k)))return false}return true}
+function filterMessage(m){if(!m?.__test){const decision=window.P2000StudioLive?.result(m);if(decision?.enabled)return !state.settings.exerciseMode&&(!state.settings.urgentOnly||remoteUrgent(m))&&decision.show;}if(!m?.__test&&(state.settings.exerciseMode||(state.settings.urgentOnly&&!remoteUrgent(m))))return false;let svc=String(m?.service||'').toLowerCase();const resource=mmtResourceInfo(m);if(resource)svc=resource.kind==='helicopter'?'lifeliner':'ambulance';if(state.settings.services?.length&&!state.settings.services.includes(svc))return false;const cs=(state.settings.cities||[]).map(x=>x.toLowerCase()).filter(Boolean);if(cs.length&&!cs.some(c=>(m.city||'').toLowerCase().includes(c)))return false;const ks=(state.settings.keywords||[]).map(x=>x.toLowerCase()).filter(Boolean);if(ks.length){const hay=`${m.title||''} ${m.summary||''} ${m.city||''} ${m.location||''}`.toLowerCase();if(!ks.some(k=>hay.includes(k)))return false}return true}
 function filteredMessages(){return state.messages.filter(filterMessage).sort(compareMessageNewest)}
 function latestMessage(){return filteredMessages()[0]||null}
 function cleanCandidate(value,m){let s=norm(value||'');const ll=llNumber(m),ovd=ovdgNumber(m);s=s.replace(/\(\s*DIA\s*:\s*(?:JA|NEE)\s*\)/g,' ').replace(/\bDIA\s*:?\s*(?:JA|NEE)?\b/g,' ');s=s.replace(/\b(?:P\s*[123]|A[012]|B[12])\b/g,' ');s=s.replace(/\b(?:AMBU|AMBULANCE|BRW|BRANDWEER|POLITIE|P2000)\b/g,' ');s=s.replace(/\b(?:RIT|BON)\s*:?\s*\d+\b/g,' ').replace(/\bREGIO\s*\d+\b/g,' ');s=s.replace(/\b\d{4}\s*[A-Z]{2}\b/g,' ');s=s.replace(/\b(?:13991|13901|17992|17902|17901|08993|08903|1220803|1220804|1220805)\b/g,' ');s=s.replace(/\b12[- ]?2080[345]\b/g,' ');s=s.replace(/\b[A-Z]{2,5}-\d{2}\b/g,' ');s=s.replace(/\b\d{5,8}\b/g,' ');s=s.replace(/\b(?:INZET|MELDING)\b(?=\s*$)/g,' ');s=s.replace(/\s+/g,' ').trim();if(ovd){s=s.replace(/\bOVD-?G\b/g,' ').replace(/\s+/g,' ').trim();s=`OVD-G ${ovd} ${s}`}if(ll&&!s.includes(`LIFELINER ${ll}`))s=`LIFELINER ${ll} ${s.replace(/\bMMT\s*(?:2|3)?\b/g,' ')}`;for(let i=0;i<3;i++)s=s.replace(/\b([A-Z0-9-]{2,})\s+\1\b/g,'$1');return norm(s)}
@@ -406,7 +407,8 @@ function vehicleAllowedForMessage(m,v,digits=''){
   return svc==='brandweer'&&fireVehicleAllowedForMessage(m);
 }
 function vehicleDetails(m){
-  const hay=`${m?.title||''} ${m?.summary||''} ${(m?.units||[]).join(' ')}`;
+  const correctedUnits=(m?.parser_notes||[]).includes('Lokale voertuigcorrectie');
+  const hay=correctedUnits?(m?.units||[]).join(' '):`${m?.title||''} ${m?.summary||''} ${(m?.units||[]).join(' ')}`;
   const out=[],seen=new Set();
   const add=(key,header,speech,meta={})=>{key=String(key||header);if(!header||seen.has(key))return;seen.add(key);out.push({key,header,speech:speech||header,...meta})};
   for(const [digits,meta] of Object.entries(MMT_RESOURCES)){
@@ -683,6 +685,7 @@ function urgencyInfo(m){
   else if(/\bMIDDEL\s*(?:BR|BRAND)\b/.test(h))out={rank:4,label:'MIDDELBRAND',special:false,volume:80,speechPriority:68,carouselWeight:2};
   else if(/\b(?:WATEROVERLAST|STORMSCHADE|LIFTOPSLUITING|DIER IN PROBLEMEN)\b/.test(h)||/^(?:Wateroverlast|Stormschade|Liftopsluiting)/i.test(info.type))out={rank:1,label:'',special:false,volume:55,speechPriority:30,carouselWeight:1};
   if(specialVehicle){out.rank=Math.max(out.rank,4);out.carouselWeight+=.8;out.speechPriority=Math.max(out.speechPriority,64);if(!out.label)out.label='BIJZONDERE EENHEID'}
+  if(window.P2000StudioLive?.result(m)?.urgent){out.rank=Math.max(6,out.rank);out.speechPriority=Math.max(88,out.speechPriority);out.carouselWeight=Math.max(3,out.carouselWeight);if(!out.label)out.label='VOORRANG VOLGENS REGEL'}
   if(linked>1){out.carouselWeight+=Math.min(1.5,(linked-1)*.35);out.speechPriority+=Math.min(8,(linked-1)*2);if(!out.label)out.label=`${linked} MELDINGEN`;out.linkedCount=linked}
   return out;
 }
@@ -750,6 +753,7 @@ function priorityModeEligible(m){
   return /\b(?:MIDDEL|GROTE|ZEER\s+GROTE)\s+(?:BR|BRAND)\b|\bGRIP\s*[1-5]\b|SCHIET|STEEK|BR\s+(?:NATUUR|BOS|INDUSTRIE)|ONGEVAL\s+WEGVERVOER|ASS\.?\s*POL/i.test(raw);
 }
 function shouldSpeakMessage(m,now=new Date()){
+  if(!m?.__test&&window.P2000StudioLive?.result(m)?.speak===false)return false;
   if(!state.settings.speechEnabled||Number(state.settings.masterVolume??100)<=0||!speechCity(m))return false;
   const mode=String(state.settings.speechMode||'normal').toLowerCase();
   if(mode==='mute')return false;
@@ -860,6 +864,7 @@ function incidentDeltaFor(m){
 }
 function speechTemplate(key,fallback,vars={}){let t=String(state.settings?.speechTemplates?.[key]||fallback);for(const [k,v] of Object.entries(vars))t=t.replaceAll(`{${k}}`,String(v??''));return t.replace(/\s+/g,' ').replace(/ \./g,'.').trim()}
 function speechPhrase(m){
+  const custom=window.P2000StudioLive?.speech(m);if(custom!==null&&custom!==undefined)return custom;
   if(m?.__incidentDelta?.speech)return m.__incidentDelta.speech;
   const city=speechCity(m),info=speechIncidentInfo(m),scale=speechScale(m);
   if(!city)return '';
@@ -1223,7 +1228,7 @@ function startNextSpeechJob(){
 function maybeSpeakMessage(m,{force=false,onResult=null}={}){
   if(!m)return false;if(!force&&m?.__incidentDelta?.noChange)return false;if(force){if(!state.settings.speechEnabled||state.settings.speechMode==='mute'||Number(state.settings.masterVolume??100)<=0||!speechCity(m))return false}else if(!shouldSpeakMessage(m))return false;
   const key=String(m.id||`${m.published||''}|${originalMessage(m)}`);if(!force&&state.spokenIds.has(key))return false;state.spokenIds.add(key);if(state.spokenIds.size>150){const first=state.spokenIds.values().next().value;state.spokenIds.delete(first)}
-  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);return queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,groupKey:`incident:${m.incident_key||dedupeKey(m)}`,cueService:(/lifeliner/i.test(m?.service||'')?'lifeliner':String(m?.service||'overig')),cueUrgent:urg.rank>=5,onResult});
+  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);return queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,groupKey:`incident:${m.incident_key||dedupeKey(m)}`,cueService:window.P2000StudioLive?.cue(m,(/lifeliner/i.test(m?.service||'')?'lifeliner':String(m?.service||'overig')))??String(m?.service||'overig'),cueUrgent:urg.rank>=5&&window.P2000StudioLive?.cue(m,'auto')!=='',onResult});
 }
 
 function updateLastP2000ActivityFromMessages(){
@@ -1254,7 +1259,7 @@ function rememberMessage(m){
   state.incidentMemory.set(key,{scale:Math.max(base.scale,Number(m.scale_score)||0),priority:Math.max(base.priority,priorityRank(m.priority)),sig,at:Math.max(Number(base.at)||0,at),unitKeys:[...unitKeys].slice(-80),services:[...services],incidentType:String(speechIncidentInfo(m)?.type||base.incidentType||'')});
   for(const [k,t] of state.recentSignatures)if(now-t>SIGNATURE_MEMORY_MS)state.recentSignatures.delete(k);for(const [k,v] of state.incidentMemory)if(now-v.at>60*60*1000)state.incidentMemory.delete(k)
 }
-function shouldTrigger(m){if(!filterMessage(m)||!isFresh(m))return false;const sig=dedupeKey(m),t=state.recentSignatures.get(sig),at=publishedMs(m)||Date.now();const key=m.incident_key||sig;let prev=state.incidentMemory.get(key)||null;if(prev&&Math.abs(at-prev.at)>30*60*1000)prev=null;const escalated=!!prev&&((Number(m.scale_score)||0)>prev.scale||priorityRank(m.priority)>prev.priority);const duplicate=!!t&&Math.abs(at-t)<SIGNATURE_MEMORY_MS;return escalated||!duplicate}
+function shouldTrigger(m){if(!filterMessage(m)||!isFresh(m))return false;const sig=dedupeKey(m),t=state.recentSignatures.get(sig),at=publishedMs(m)||Date.now();const key=m.incident_key||sig;let prev=state.incidentMemory.get(key)||null;if(prev&&Math.abs(at-prev.at)>30*60*1000)prev=null;const escalated=!!prev&&((Number(m.scale_score)||0)>prev.scale||priorityRank(m.priority)>prev.priority);const duplicate=!!t&&Math.abs(at-t)<SIGNATURE_MEMORY_MS;const newUnits=!!prev&&vehicleDetails(m).some(v=>!(prev.unitKeys||[]).includes(String(v.key||v.header)));return escalated||newUnits||!duplicate}
 function wrapText(text,cols){const words=norm(text).split(' ').filter(Boolean),lines=[];let line='';for(let word of words){while(word.length>cols){if(line){lines.push(line);line=''}lines.push(word.slice(0,cols));word=word.slice(cols)}if(!word)continue;if(!line)line=word;else if(line.length+1+word.length<=cols)line+=' '+word;else{lines.push(line);line=word}}if(line)lines.push(line);return lines.length?lines:['GEEN MELDING']}
 function chooseCols(m){if(!state.settings.autoTextSize)return 20;const text=bodyFor(m);for(const cols of [14,16,18,20,22,24,28])if(wrapText(text,cols).length<=BODY_ROWS)return cols;return 28}
 function messageLayout(m){const cols=chooseCols(m),lines=wrapText(bodyFor(m),cols),pages=[];for(let i=0;i<lines.length;i+=BODY_ROWS)pages.push(lines.slice(i,i+BODY_ROWS));return {cols,pages:pages.length?pages:[['GEEN MELDING']]}}
@@ -1585,12 +1590,22 @@ function finishStartupBaseline(){
   // browser, backend or machine restart. Only rows ingested after this page
   // started may enter through processNew().
   const ordered=[...(state.messages||[])].sort((a,b)=>-compareMessageNewest(a,b));
-  ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m)});
+  ordered.forEach(m=>{state.knownIds.add(m.id);rememberMessage(m);window.P2000StudioLive?.report(m,false,'Al aanwezig bij opstarten')});
   clearActiveMessages();state.started=true;pruneKnownIds();syncDisplayPower();render();
 }
 function replayLast(){const m=state.lastDisplayedMessage||latestMessage();if(m)activateMessage(m,{force:true,durationMs:REPLAY_MS,appendLive:false})}
 function shouldDisplayIncoming(m){return !!m&&filterMessage(m)&&isFresh(m)&&isLiveMessageActive(m)}
-function processNew(m){if(!m||state.knownIds.has(m.id))return;if(remotePinUntil>Date.now()&&!remoteUrgent(m)){state.knownIds.add(m.id);pruneKnownIds();rememberMessage(m);return}if(remoteUrgent(m))remotePinUntil=0;state.knownIds.add(m.id);pruneKnownIds();if(!isNewSinceMonitorStart(m)){rememberMessage(m);return}if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)}
+function processNew(m){if(!m||state.knownIds.has(m.id))return;
+  const sd=window.P2000StudioLive?.result(m),report=(shown,reason)=>window.P2000StudioLive?.report(m,shown,reason);
+  let reason='';
+  if(!isNewSinceMonitorStart(m))reason='Al aanwezig bij opstarten';
+  else if(!filterMessage(m))reason=state.settings.exerciseMode?'Oefenmodus':state.settings.urgentOnly&&!remoteUrgent(m)?'Profiel: alleen urgent':sd?.enabled?sd.reason:(window.P2000StudioEngine?.legacy(m,state.settings).reason||'Schermfilter');
+  else if(!isFresh(m)||!isLiveMessageActive(m))reason='Te oud voor het live scherm';
+  else if(!shouldTrigger(m))reason='Dubbele melding zonder opschaling';
+  else if(remotePinUntil>Date.now()&&!remoteUrgent(m))reason='Een andere melding is vastgezet';
+  if(reason){report(false,reason);state.knownIds.add(m.id);pruneKnownIds();rememberMessage(m);return}
+  report(true,sd?.enabled?sd.reason:'Doorgegeven aan scherm');
+if(remotePinUntil>Date.now()&&!remoteUrgent(m)){state.knownIds.add(m.id);pruneKnownIds();rememberMessage(m);return}if(remoteUrgent(m))remotePinUntil=0;state.knownIds.add(m.id);pruneKnownIds();if(!isNewSinceMonitorStart(m)){rememberMessage(m);return}if(shouldDisplayIncoming(m)){const speak=shouldSpeakMessage(m),stopped=speak?prepareP2000Speech():Promise.resolve();activateMessage(m,{force:true});if(speak)stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)}
 
 function runtimeIdentity(status){return status&&status.server_instance?`${status.version||''}:${status.server_instance}`:''}
 function runtimeReloadReason(status,currentIdentity=null){
@@ -1620,6 +1635,7 @@ function syncSourceAttribution(){const el=$('#sourceAttribution');if(!el)return;
 function draw(){
   syncSourceAttribution();const perfStarted=perfNow(),r=canvas.getBoundingClientRect(),w=r.width,h=r.height;
   if(Date.now()<state.testBlackoutUntil){idleLastFrameWasClock=false;ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);recordRenderPerf(perfStarted);return}
+  if(window.P2000StudioLive?.drawCustom()){recordRenderPerf(perfStarted);return}
   if(activeVisible()){idleLastFrameWasClock=false;drawActiveSolid(w,h);recordRenderPerf(perfStarted);return}
   const layout=idleDisplay();
   if(layout.black){idleLastFrameWasClock=false;ctx.fillStyle='#000';ctx.fillRect(0,0,w,h);recordRenderPerf(perfStarted);return}
@@ -1631,7 +1647,7 @@ function draw(){
   recordRenderPerf(perfStarted);
 }
 
-let renderPending=false;function render(){if(renderPending)return;renderPending=true;(globalThis.requestAnimationFrame||((fn)=>setTimeout(fn,0)))(()=>{renderPending=false;draw();syncIncidentMap()})}
+let renderPending=false;function render(){if(renderPending)return;renderPending=true;(globalThis.requestAnimationFrame||((fn)=>setTimeout(fn,0)))(()=>{renderPending=false;draw();syncIncidentMap().finally(()=>window.P2000StudioLive?.placeMap())})}
 async function json(url,opts={}){const {timeoutMs=12000,...fetchOpts}=opts||{},controller=!fetchOpts.signal&&typeof AbortController!=='undefined'?new AbortController():null,timer=controller?setTimeout(()=>controller.abort(),Math.max(500,timeoutMs)):null;try{const r=await fetch(url,{cache:'no-store',...fetchOpts,signal:fetchOpts.signal||controller?.signal});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return await r.json()}catch(e){if(e?.name==='AbortError')throw new Error(`Verzoek duurde langer dan ${Math.round(timeoutMs/1000)} seconden`);throw e}finally{if(timer)clearTimeout(timer)}}
 let monitorRuntimeIdentity=null,monitorReloading=false,monitorRuntimeFailures=0,monitorEventSource=null,monitorRuntimeRetryTimer=null,monitorRuntimePromise=null,refreshPromise=null,lastDisplayCommandSeq=null,displayCommandPollPromise=null,lastDisplayCommandPollAt=0;
 const DISPLAY_CLIENT_ID=(()=>{try{let id=sessionStorage.getItem('p2000DisplayClientId');if(!id){id=`display-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;sessionStorage.setItem('p2000DisplayClientId',id)}return id}catch{return `display-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`}})();
@@ -1665,12 +1681,12 @@ function syncLiveAudioVolume(previousMaster,nextMaster){const entry=state.curren
 function renderProfileBanner(){let banner=document.querySelector('#profileBanner');if(!banner){banner=document.createElement('div');banner.id='profileBanner';banner.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:20;background:#402e08;color:#ffe39a;padding:7px 16px;border-radius:8px;font:700 14px system-ui;pointer-events:none';document.body.append(banner)}banner.hidden=!state.settings.exerciseMode;banner.textContent='OEFENMODUS · LIVE MELDINGEN ALLEEN IN ARCHIEF'}
 function renderMonitorAudioControls(){renderProfileBanner();const value=Math.round(Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)))),mode=String(state.settings.speechMode||'normal');const label=$('#monitorVolumeLabel'),mute=$('#monitorMuteBtn');if(label)label.textContent=`${value}%`;if(mute){mute.textContent=mode==='mute'||value===0?'🔇':'🔊';mute.title=mode==='mute'?'Geluid inschakelen (M)':'Geluid dempen (M)';mute.classList.toggle('active',mode==='mute'||value===0)}}
 function applySharedSettings(settings){const wasExercise=!!state.settings.exerciseMode;const previousMaster=Number(state.settings?.masterVolume??100),incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);if(!['native','piper','espeak','sapi','online'].includes(String(merged.speechEngine)))merged.speechEngine='native';merged.speechMode=['normal','priority','mute'].includes(String(merged.speechMode))?String(merged.speechMode):'normal';merged.masterVolume=Math.max(0,Math.min(100,Number(merged.masterVolume??100)));sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;if((merged.exerciseMode&&!wasExercise)||(merged.urgentOnly&&state.activeMessage&&!state.activeMessage.__test&&!remoteUrgent(state.activeMessage))){remotePinUntil=0;clearActiveMessages();stopSpeechPlayback({clearQueue:true})}syncLiveAudioVolume(previousMaster,merged.masterVolume);renderMonitorAudioControls();syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&merged.speechMode!=='mute'&&merged.masterVolume>0&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false||merged.speechMode==='mute'||merged.masterVolume<=0){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
-async function loadSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};if(Object.keys(remote).length){applySharedSettings(remote);return}const local=loadSettings();applySharedSettings(local);const saved=await json('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(local)});applySharedSettings(saved.settings||local)}catch{state.settings=loadSettings()}}
-async function pollSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};const sig=settingsSignature(remote);if(Object.keys(remote).length&&sig!==sharedSettingsSignature)applySharedSettings(remote)}catch{}}
+async function loadSharedSettings(){await window.P2000StudioLive?.load();try{const d=await json('/api/settings'),remote=d.settings||{};if(Object.keys(remote).length){applySharedSettings(remote);return}const local=loadSettings();applySharedSettings(local);const saved=await json('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(local)});applySharedSettings(saved.settings||local)}catch{state.settings=loadSettings()}}
+async function pollSharedSettings(){await window.P2000StudioLive?.load();try{const d=await json('/api/settings'),remote=d.settings||{};const sig=settingsSignature(remote);if(Object.keys(remote).length&&sig!==sharedSettingsSignature)applySharedSettings(remote)}catch{}}
 async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.displaySleep)return;if(!force&&state.lastPowerWanted===wanted)return;state.lastPowerWanted=wanted;try{const r=await json('/api/display/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:wanted})});if(!r?.ok)state.lastPowerWanted=null;else if(r?.held){const retry=Math.max(1,Number(r.retry_after)||5)*1000;setTimeout(()=>{if(state.lastPowerWanted===wanted){state.lastPowerWanted=null;syncDisplayPower()}},retry+250)}}catch{state.lastPowerWanted=null}}
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
-function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){finishStartupBaseline()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(processNew);state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds()}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
-function incoming(m){if(!m||state.knownIds.has(m.id))return;state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
+function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];if(state.started)await window.P2000StudioLive?.prepareAll(state.messages.filter(m=>!state.knownIds.has(m.id)));updateLastP2000ActivityFromMessages();if(!state.started){finishStartupBaseline()}else{const freshNew=state.messages.filter(m=>!state.knownIds.has(m.id));freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(processNew);state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds()}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
+async function incoming(m){if(!m||state.knownIds.has(m.id))return;await window.P2000StudioLive?.prepare(m);state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
 function commandReceipt(seq,status,detail){return window.P2000ScreenRemote?.receipt(json,DISPLAY_CLIENT_ID,seq,status,detail)}
 let remoteCommandChain=Promise.resolve();
 function handleDisplayCommand(p){remoteCommandChain=remoteCommandChain.then(()=>executeDisplayCommand(p)).catch(e=>commandReceipt(Number(p?._command_seq),"error",e?.message||"Opdracht mislukt"));return remoteCommandChain}
@@ -1700,9 +1716,10 @@ async function executeDisplayCommand(p){
   }
 }
 async function pollDisplayCommands(){if(displayCommandPollPromise||monitorReloading)return displayCommandPollPromise;if(monitorEventSource?.readyState===1&&Date.now()-lastDisplayCommandPollAt<10000)return;lastDisplayCommandPollAt=Date.now();displayCommandPollPromise=(async()=>{try{const initial=lastDisplayCommandSeq===null;const after=initial?0:Number(lastDisplayCommandSeq)||0;const d=await json(`/api/display-commands?after=${after}&initial=${initial?1:0}&_=${Date.now()}`,{timeoutMs:5000});for(const cmd of (d.commands||[]))await handleDisplayCommand(cmd);if(Number.isFinite(Number(d.latest_seq)))lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,Number(d.latest_seq)||0);return true}catch{return false}})().finally(()=>{displayCommandPollPromise=null});return displayCommandPollPromise}
-function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'||p.type==='replay'||p.type==='remote-message'){handleDisplayCommand(p)}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
+function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='studio'){window.P2000StudioLive?.apply(p.design)}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'||p.type==='replay'||p.type==='remote-message'){handleDisplayCommand(p)}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
 function tick(){
+  if(window.P2000StudioLive?.design.config.layout?.enabled)render();
   const now=Date.now();
   if((state.activeMessages||[]).length){
     const changed=pruneExpiredActiveMessages(now);
@@ -1762,7 +1779,9 @@ function handleTest(payload){
     }else if(!maybeSpeakMessage(m,{force:true,onResult:r=>reportTestResult(payload,!!r?.ok,r?.detail||'Omroep afgerond')}))reportTestResult(payload,false,'Omroep niet gestart door audio-instellingen');
   }else reportTestResult(payload,true,'Testmelding getoond zonder omroep');
 }
-let controlsTimer=null;function showControls(){const room=$('#room');room.classList.add('show-controls');clearTimeout(controlsTimer);controlsTimer=setTimeout(()=>room.classList.remove('show-controls'),2200)}
+window.P2000StudioLive?.init({state,canvas,clientId:DISPLAY_CLIENT_ID,json:(...args)=>json(...args),render:()=>render(),filterMessage,clearPin:()=>{remotePinUntil=0},clearActiveMessages,stopSpeechPlayback,speechCity,speechIncidentInfo,speechLocation,speechScale,vehicleDetails,applySpeechDictionary,spokenIncidentWhere,joinSpeechParts,trueBlack,activeVisible,hideIncidentMap});
+window.P2000SpeechPreview={loadVehicles:loadVehicleDb,format:(message,design,settings)=>{state.settings={...DEFAULTS,...(settings||{})};window.P2000StudioLive?.apply(design);return speechPhrase(message)}};
+let controlsTimer=null;if(!window.P2000_STUDIO_PREVIEW){function showControls(){const room=$('#room');room.classList.add('show-controls');clearTimeout(controlsTimer);controlsTimer=setTimeout(()=>room.classList.remove('show-controls'),2200)}
 $('#fullscreenBtn').addEventListener('click',fullscreen);$('#lastBtn').addEventListener('click',replayLast);
 let monitorVolumeSerial=0,monitorPreviousVolume=50;
 async function monitorQuickAction(action,payload={}){const serial=++monitorVolumeSerial;try{const d=await json('/api/quick-action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...payload}),timeoutMs:8000});if(serial===monitorVolumeSerial&&d?.settings)applySharedSettings(d.settings);return d}catch(e){console.warn('Geluidsbediening mislukt',e);return null}}
@@ -1780,4 +1799,6 @@ document.addEventListener('keydown',e=>{if(state.audioBus.locked||!state.audioBu
 window.addEventListener('resize',resizeCanvas);
 window.addEventListener('storage',e=>{if(e.key==='p2000MonitorSettingsV4'){state.settings=loadSettings();syncBackgroundPhoto();invalidateIdleStatic();syncDisplayPower();render()}if(e.key==='p2000TestMessage'&&e.newValue){try{handleTest(JSON.parse(e.newValue))}catch{handleTest({})}}});
 try{const bc=new BroadcastChannel('p2000-monitor');bc.onmessage=e=>{if(e.data?.type==='test')handleTest(e.data)}}catch{}
-setInterval(tick,1000);setInterval(pollDisplayCommands,1500);setInterval(watchMonitorRuntime,10000);setInterval(reportClientHealth,10000);setInterval(pollSharedSettings,30000);setInterval(refresh,300000);window.addEventListener('online',()=>scheduleRuntimeWatch(250));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){scheduleRuntimeWatch(250);if(state.settings.speechEnabled!==false&&!state.audioBus.armed)armAudioBus().catch(()=>{});if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()}});resizeCanvas();setTimeout(reportClientHealth,1200);setTimeout(pollDisplayCommands,800);window.P2000Auth.ready.then(()=>Promise.all([loadVehicleDb(),loadSharedSettings(),loadSetupProfile()])).then(async()=>{if(state.settings.speechEnabled!==false&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),250);await refresh();if(!monitorReloading){connect()}});
+setInterval(tick,1000);setInterval(pollDisplayCommands,1500);setInterval(watchMonitorRuntime,10000);setInterval(reportClientHealth,10000);setInterval(pollSharedSettings,30000);setInterval(refresh,300000);window.addEventListener('online',()=>scheduleRuntimeWatch(250));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){scheduleRuntimeWatch(250);if(state.settings.speechEnabled!==false&&!state.audioBus.armed)armAudioBus().catch(()=>{});if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()}});resizeCanvas();setTimeout(reportClientHealth,1200);setTimeout(pollDisplayCommands,800);window.P2000Auth.ready.then(()=>Promise.all([loadVehicleDb(),loadSharedSettings(),loadSetupProfile()])).then(async()=>{if(state.settings.speechEnabled!==false&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),250);await reportClientHealth();await refresh();if(!monitorReloading){connect()}});
+
+}

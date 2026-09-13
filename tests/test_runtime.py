@@ -162,7 +162,7 @@ class RuntimeTests(unittest.TestCase):
     def test_actual_http_health_and_dashboard(self):
         self.assertTrue(self.request('/api/health')[1]['ok'])
         code, data, _ = self.request('/api/remote/status', phone=True, token=True)
-        self.assertEqual(code, 200); self.assertEqual(data['version'], '4.7.0'); self.assertIsInstance(data['displays'], list)
+        self.assertEqual(code, 200); self.assertEqual(data['version'], (self.root/'VERSION').read_text(encoding='utf-8').strip()); self.assertIsInstance(data['displays'], list)
         for path in ['/remote', '/remote.js', '/auth.js', '/control', '/setup.html']:
             self.assertEqual(self.request(path)[0], 200)
 
@@ -247,7 +247,7 @@ class RuntimeTests(unittest.TestCase):
                 bundle.write(self.root/name, 'lichtkrant-release/'+name)
         package, version = self.module._validate_and_extract_update(archive)
         try:
-            self.assertEqual(version, '4.7.0')
+            self.assertEqual(version, (self.root/'VERSION').read_text(encoding='utf-8').strip())
             self.assertTrue(self.module._preflight_staged_update(package, version)['ok'])
         finally:
             stage = package.parent if (package.parent/'.p2000-update-stage').exists() else package

@@ -129,7 +129,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.7.0"
+APP_VERSION = "4.8.0"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -3240,6 +3240,8 @@ def read_vehicle_history(limit: int = 100) -> list[dict]:
 
 from remote_dashboard import Dashboard, measured
 import remote_api
+from monitor_studio import Studio
+import studio_api
 from playback_tracker import PlaybackTracker, attenuate_wav
 HOST_PLAYBACK = PlaybackTracker()
 
@@ -3348,6 +3350,7 @@ class AppState:
         self.street_index_warm_lock = threading.Lock()
         cached_places, cached_meta = load_nl_place_cache()
         self.dashboard = Dashboard(self, DATA_DIR)
+        self.studio = Studio(DATA_DIR)
         self.place_gazetteer_status = {
             "online": None, "count": _set_nl_place_index(cached_places),
             "last_sync": cached_meta.get("updated_at"), "last_error": None,
@@ -5881,6 +5884,7 @@ class FeedPoller(threading.Thread):
 
     def _process_payload(self, url: str, payload: bytes, diag: dict) -> tuple[int, int, int]:
         messages = self.parse_feed(payload, source_url=url)
+        messages = studio_api.process_feed(self.state, messages, sys.modules[__name__])
         scoped = [m for m in messages if self._accept_for_feed(url, m)]
         inserted = self.state.add_messages(scoped)
         latest_entry = max((m.published for m in messages), default=None)
@@ -8472,8 +8476,9 @@ class Handler(BaseHTTPRequestHandler):
             raw_length = int(self.headers.get("Content-Length", "0") or 0)
         except (TypeError, ValueError, OverflowError):
             return self.send_json({"ok": False, "error": "Ongeldige Content-Length"}, 400)
-        if raw_length < 0 or raw_length > 65536:
-            return self.send_json({"ok": False, "error": "API-request is groter dan 64 KB"}, 413)
+        request_limit = 524288 if parsed.path.startswith("/api/remote/studio/") else 65536
+        if raw_length < 0 or raw_length > request_limit:
+            return self.send_json({"ok": False, "error": f"API-request is groter dan {request_limit // 1024} KB"}, 413)
         try:
             payload = json.loads(self.rfile.read(raw_length) or b"{}")
         except Exception:

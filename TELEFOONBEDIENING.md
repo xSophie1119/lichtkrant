@@ -52,3 +52,7 @@ De telefoon gebruikt een aparte statusverbinding met automatische herverbinding.
 ## Herstel van de oude v4.5.7-opstartbridge
 
 Als v4.5.7 niet meer start door `bridge basishash klopt niet`, kan die installatie zichzelf niet bijwerken. Pak de nieuwe versie uit in een nieuwe map, sluit de oude lichtkrant en kopieer je eigen `data`- en `config`-mappen naar de nieuwe map. Start daarna `START_P2000.bat` of `START_P2000.sh`. Bewaar de oude map als terugvaloptie.
+
+## Lichtkrantstudio (v4.8.0)
+
+Via Beheer → Lichtkrantstudio bedien je gebieden, regels, omroepopbouw, parsercorrecties, schermontwerp en de terugspeler. Hiervoor zijn bedienrechten nodig. Zie [LICHTKRANTSTUDIO.md](LICHTKRANTSTUDIO.md).

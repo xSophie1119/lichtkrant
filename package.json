@@ -1,6 +1,10 @@
 {
   "name": "p2000-monitor-ui-tests",
   "private": true,
-  "scripts": {"test": "node --test tests/frontend.test.cjs"},
-  "devDependencies": {"jsdom": "26.1.0"}
+  "scripts": {
+    "test": "node --test tests/frontend.test.cjs tests/studio.test.cjs"
+  },
+  "devDependencies": {
+    "jsdom": "26.1.0"
+  }
 }
