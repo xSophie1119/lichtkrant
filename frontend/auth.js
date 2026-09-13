@@ -30,7 +30,7 @@
       dialog.querySelector('form').onsubmit = async event => {
         event.preventDefault();
         const button = dialog.querySelector('button'); button.disabled = true;
-        try { await login(dialog.querySelector('input').value); dialog.close(); dialog.remove(); resolve({ok: true, local: false}); }
+        try { const session=await login(dialog.querySelector('input').value); dialog.close(); dialog.remove(); resolve(session); }
         catch (error) { dialog.querySelector('[role=status]').textContent = error.status === 401 ? 'Deze koppelcode klopt niet. Scan de QR-code opnieuw.' : error.message; }
         finally { button.disabled = false; }
       };

@@ -129,7 +129,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.6.0"
+APP_VERSION = "4.7.0"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -3238,6 +3238,12 @@ def read_vehicle_history(limit: int = 100) -> list[dict]:
         return []
 
 
+from remote_dashboard import Dashboard, measured
+import remote_api
+from playback_tracker import PlaybackTracker, attenuate_wav
+HOST_PLAYBACK = PlaybackTracker()
+
+
 class AppState:
     def __init__(self, config: dict):
         self.config = config
@@ -3341,6 +3347,7 @@ class AppState:
         self.street_index_warming: set[str] = set()
         self.street_index_warm_lock = threading.Lock()
         cached_places, cached_meta = load_nl_place_cache()
+        self.dashboard = Dashboard(self, DATA_DIR)
         self.place_gazetteer_status = {
             "online": None, "count": _set_nl_place_index(cached_places),
             "last_sync": cached_meta.get("updated_at"), "last_error": None,
@@ -3391,6 +3398,10 @@ class AppState:
                     parser_confidence INTEGER NOT NULL DEFAULT 0,
                     parser_notes_json TEXT NOT NULL DEFAULT '[]'
                 );
+                CREATE INDEX IF NOT EXISTS idx_messages_archive ON messages(published DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_messages_city_nocase ON messages(city COLLATE NOCASE, published DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_messages_service_nocase ON messages(service COLLATE NOCASE, published DESC, id DESC);
+                CREATE INDEX IF NOT EXISTS idx_messages_priority_nocase ON messages(priority COLLATE NOCASE, published DESC, id DESC);
                 CREATE INDEX IF NOT EXISTS idx_messages_published ON messages(published DESC);
                 CREATE INDEX IF NOT EXISTS idx_messages_service ON messages(service, published DESC);
                 CREATE INDEX IF NOT EXISTS idx_messages_city ON messages(city, published DESC);
@@ -4424,6 +4435,9 @@ class AppState:
                 pass
         # Tune settings have their own durable source of truth. Overlay them last.
         value.update(self.get_tune_settings())
+        value.setdefault("activeProfile", "normal")
+        value.setdefault("urgentOnly", False)
+        value.setdefault("exerciseMode", False)
         if isinstance(value.get("services"), list):
             allowed = {"brandweer", "ambulance", "politie", "lifeliner", "knrm", "overig"}
             value["services"] = [x for x in value["services"] if x in allowed]
@@ -4431,15 +4445,16 @@ class AppState:
                 value["services"] = ["brandweer", "politie", "lifeliner", "knrm", "overig"]
         return value
 
-    def save_display_settings(self, payload: dict) -> dict:
+    def save_display_settings(self, payload: dict, *, replace: bool = False) -> dict:
         # The HTTP server handles requests concurrently.  Keep the complete
         # read/merge/write transaction under one re-entrant lock so two partial
         # saves cannot silently overwrite each other's unrelated fields.
         with self.config_lock:
-            return self._save_display_settings_locked(payload)
+            return self._save_display_settings_locked(payload, replace=replace)
 
-    def _save_display_settings_locked(self, payload: dict) -> dict:
+    def _save_display_settings_locked(self, payload: dict, *, replace: bool = False) -> dict:
         allowed = {
+            "activeProfile", "urgentOnly", "exerciseMode",
             "name", "services", "cities", "keywords", "nightMode", "nightStart", "nightEnd",
             "messageMinutes", "maxAgeMinutes", "dateFormat", "idleCentered", "burnInProtection",
             "burnInPixels", "autoTextSize", "darkLedPercent", "vehicleHeader", "displaySleep",
@@ -4462,11 +4477,13 @@ class AppState:
         self.settings_cache = None
         existing = self.get_display_settings()
         clean = dict(incoming)
+        if "activeProfile" in clean and (not isinstance(clean["activeProfile"], str) or clean["activeProfile"] not in {"normal", "night", "exercise", "urgent"}):
+            clean.pop("activeProfile")
         # Server-side type/range hygiene as well as frontend validation. A bad
         # control request must never leave persistent settings in a state that
         # makes the kiosk render or speak unpredictably.
         bool_keys = (
-            "nightMode", "idleCentered", "burnInProtection", "autoTextSize",
+            "urgentOnly", "exerciseMode", "nightMode", "idleCentered", "burnInProtection", "autoTextSize",
             "vehicleHeader", "displaySleep", "speechEnabled",
             "mapEnabled", "idleDimEnabled", "idleShowName", "idleShowDate", "idleShowSeconds", "idleShowStatus",
             "smartSilenceEnabled", "postIncidentQuietEnabled", "dispatchTuneEnabled",
@@ -4615,12 +4632,14 @@ class AppState:
             if url and not re.match(r"^https?://(?:www\.)?(?:youtube\.com|youtu\.be)/", url, re.I):
                 url = ""
             clean["dispatchTuneYoutubeUrl"] = url
-        merged = dict(existing)
+        merged = {} if replace else dict(existing)
         merged.update(clean)
         clean = merged
         if clean == existing:
             return copy.deepcopy(clean)
-        if any(k in incoming for k in TUNE_SETTING_KEYS):
+        if any(existing.get(k) != clean.get(k) for k in incoming if k not in {"masterVolume", "speechMode", "speechEnabled"}):
+            self.dashboard.checkpoint("Vóór wijzigen instellingen", existing)
+        if replace or any(k in incoming for k in TUNE_SETTING_KEYS):
             self._write_tune_settings_file(clean)
         with self.connect() as con:
             con.execute(
@@ -4974,6 +4993,7 @@ class AppState:
 
         threading.Thread(target=worker, daemon=True, name=f"street-index-{city_key[:24]}").start()
 
+    @measured("map")
     def geocode_incident(self, city: str, location: str, zoom: int = 16) -> dict:
         city = normalize_space(city)
         location = normalize_space(location)
@@ -5418,6 +5438,7 @@ class AppState:
         return inserted
 
     def broadcast(self, payload: dict) -> int:
+        self.dashboard.notify()
         dead = []
         with self.sub_lock:
             for q in self.subscribers:
@@ -5444,6 +5465,7 @@ class AppState:
             row["_command_created_at"] = utcnow_iso()
             row["_command_created_monotonic"] = time.monotonic()
             self.display_commands.append(row)
+        self.dashboard.expect(seq, str(row.get("action") or row.get("payload", {}).get("mode") or row.get("type")), str(row.get("target_client_id", "")))
         delivered = self.broadcast(row)
         return delivered, seq
 
@@ -5479,6 +5501,8 @@ class AppState:
                 if float(self.display_clients[key].get("seen_monotonic") or 0) < cutoff:
                     self.display_clients.pop(key, None)
 
+        self.dashboard.notify()
+
     def active_display_clients(self, max_age_seconds: float = 45.0) -> int:
         cutoff = time.monotonic() - max(5.0, float(max_age_seconds))
         with self.display_clients_lock:
@@ -5503,6 +5527,7 @@ class AppState:
             rows = self.feed_latency_history.setdefault(url, [])
             rows.append(float(source_latency_seconds)); del rows[:-120]
         if fetch_ms is not None:
+            self.dashboard.measure("fetch", fetch_ms)
             rows = self.feed_fetch_history.setdefault(url, [])
             rows.append(float(fetch_ms)); del rows[:-120]
 
@@ -5689,6 +5714,7 @@ class FeedPoller(threading.Thread):
         # creation and pairs with the global HTTP connection pool.
         self.executor: ThreadPoolExecutor | None = None
 
+    @measured("parse")
     def parse_feed(self, xml_bytes: bytes, source_url: str = "") -> list[Message]:
         """Parse either RSS 2.0 (Alarmeringen) or Atom for backwards-safe tests."""
         root = ET.fromstring(xml_bytes)
@@ -5911,6 +5937,7 @@ class FeedPoller(threading.Thread):
             diag["curl_error"]=f"{type(e).__name__}: {e}"
             return None
 
+    @measured("fetch_total")
     def fetch_url(self, url: str, force_full: bool = False, role: str = "primary") -> tuple[int, int, int]:
         cfg = self.state.config
         if not force_full and not self._feed_ready(url):
@@ -6152,7 +6179,7 @@ def query_messages(state: AppState, qs: dict[str, list[str]]) -> list[dict]:
     for key in ("service", "city", "priority"):
         value = normalize_space(qs.get(key, [""])[0])
         if value:
-            where.append(f"LOWER({key}) = LOWER(?)")
+            where.append(f"{key} = ? COLLATE NOCASE")
             args.append(value)
     message_id = normalize_space(qs.get("id", [""])[0])
     if message_id:
@@ -6167,10 +6194,17 @@ def query_messages(state: AppState, qs: dict[str, list[str]]) -> list[dict]:
     if since:
         where.append("published >= ?")
         args.append(parse_dt(since))
+    until = normalize_space(qs.get("until", [""])[0])
+    if until:
+        where.append("published < ?")
+        args.append(parse_dt(until))
+    if qs.get("before_published") and qs.get("before_id"):
+        where.append("(published, id) < (?, ?)")
+        args.extend([qs["before_published"][0], qs["before_id"][0]])
     sql = "SELECT * FROM messages"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY published DESC, ingested_at DESC, rowid DESC LIMIT ?"
+    sql += " ORDER BY published DESC, id DESC LIMIT ?" if qs.get("archive") else " ORDER BY published DESC, ingested_at DESC, rowid DESC LIMIT ?"
     args.append(limit)
     with state.connect() as con:
         return [row_to_message(r) for r in con.execute(sql, args).fetchall()]
@@ -6813,7 +6847,7 @@ _TTS_LAST_PLAYED = ""
 
 
 def detect_local_audio_player(volume: int = 100, media_path: str | Path | None = None) -> tuple[str, list[str]] | tuple[None, None]:
-    volume=max(0,min(100,int(volume or 100)))
+    volume=max(0,min(100,int(volume)))
     if os.name=="nt":
         ps=shutil.which("powershell.exe") or shutil.which("powershell")
         if not ps:return None,None
@@ -6928,12 +6962,14 @@ def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, 
     if not text:
         raise ValueError("empty tts text")
     audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=cue_service or "brandweer", urgent=bool(cue_urgent), attention=True)
+    volume = max(0, min(100, int(volume)))
+    if mime == "audio/wav": audio = attenuate_wav(audio, volume)
     ext = ".wav" if mime == "audio/wav" else ".mp3"
-    key = hashlib.sha256((f"host-dispatch-v1|{rate}|{volume}|{cue_service}|{int(bool(cue_urgent))}|" + text).encode("utf-8")).hexdigest()
+    key = hashlib.sha256((f"host-dispatch-v2-volume|{rate}|{volume}|{cue_service}|{int(bool(cue_urgent))}|" + text).encode("utf-8")).hexdigest()
     TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = TTS_CACHE_DIR / f"host-{key}{ext}"
     if not cache_file.exists() or cache_file.stat().st_size < 100:
-        tmp = cache_file.with_suffix(cache_file.suffix + ".tmp")
+        tmp = cache_file.with_name(cache_file.name + f".{time.time_ns()}.tmp")
         tmp.write_bytes(audio)
         os.replace(tmp, cache_file)
     player, argv = detect_local_audio_player(volume, cache_file)
@@ -6942,6 +6978,7 @@ def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, 
     with _TTS_PLAYER_LOCK:
         if _TTS_PLAYER_PROCESS is not None and _TTS_PLAYER_PROCESS.poll() is None:
             try:
+                HOST_PLAYBACK.cancel(_TTS_PLAYER_PROCESS)
                 _TTS_PLAYER_PROCESS.terminate(); _TTS_PLAYER_PROCESS.wait(timeout=.5)
             except Exception:
                 try: _TTS_PLAYER_PROCESS.kill()
@@ -6951,12 +6988,13 @@ def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, 
         except Exception as exc:
             _TTS_LAST_ERROR = f"Windows host-audio start niet: {exc}"
             raise RuntimeError(_TTS_LAST_ERROR) from exc
+        playback_token = HOST_PLAYBACK.add(_TTS_PLAYER_PROCESS)
         _TTS_LAST_PLAYER = player
         _TTS_LAST_ERROR = ""
         _TTS_LAST_PLAYED = utcnow_iso()
     return {
-        "ok": True, "player": player, "engine": engine, "played_at": _TTS_LAST_PLAYED,
-        "bytes": len(audio), "volume": max(0, min(100, int(volume or 100))),
+        "ok": True, "player": player, "engine": engine, "played_at": _TTS_LAST_PLAYED, "playback_token": playback_token,
+        "bytes": len(audio), "volume": volume,
         "estimated_ms": _estimate_dispatch_ms(text, rate) + 900,
     }
 
@@ -6971,6 +7009,7 @@ def play_online_tts_on_host(text: str, volume: int = 100, cue_service: str = "",
     with _TTS_PLAYER_LOCK:
         if _TTS_PLAYER_PROCESS is not None and _TTS_PLAYER_PROCESS.poll() is None:
             try:
+                HOST_PLAYBACK.cancel(_TTS_PLAYER_PROCESS)
                 _TTS_PLAYER_PROCESS.terminate()
                 _TTS_PLAYER_PROCESS.wait(timeout=.6)
             except Exception:
@@ -7018,6 +7057,7 @@ def stop_host_tts() -> bool:
     with _TTS_PLAYER_LOCK:
         if _TTS_PLAYER_PROCESS is not None and _TTS_PLAYER_PROCESS.poll() is None:
             try:
+                HOST_PLAYBACK.cancel(_TTS_PLAYER_PROCESS)
                 _TTS_PLAYER_PROCESS.terminate()
                 _TTS_PLAYER_PROCESS.wait(timeout=.6)
             except Exception:
@@ -8391,8 +8431,13 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         if not _REMOTE_ACCESS.valid_request(self):
             return self.send_json({"ok": False, "error": "Onbekende host of verzoek vanaf een andere website"}, 403)
+        if parsed.path == "/api/remote/session":
+            try: return _REMOTE_ACCESS.pair(self)
+            except OSError: return self.send_json({"ok": False, "error": "Apparaattoegang kon niet worden opgeslagen"}, 500)
         if not _v457_mutation_allowed(self):
             return self.send_json({"ok": False, "error": "Koppel eerst deze telefoon via de QR-code op de lichtkrant-pc"}, 401)
+        if not _REMOTE_ACCESS.permitted(self, parsed.path, "POST"):
+            return self.send_json({"ok": False, "error": "Dit apparaat heeft alleen kijkrechten"}, 403)
         if not parsed.path.startswith("/api/"):
             return self.send_json({"error":"not found"}, 404)
 
@@ -8435,8 +8480,6 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"ok": False, "error":"invalid json"}, 400)
         if not isinstance(payload, dict):
             return self.send_json({"ok": False, "error": "JSON-object verwacht"}, 400)
-        if parsed.path == "/api/remote/session":
-            return _REMOTE_ACCESS.login(self)
         if parsed.path == "/api/remote/logout":
             return _REMOTE_ACCESS.logout(self)
         if parsed.path == "/api/remote/config":
@@ -8455,6 +8498,8 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "enabled": enabled, "restarting": True})
             schedule_self_restart()
             return
+        if parsed.path.startswith("/api/remote/"):
+            return remote_api.post(self, parsed.path, payload, sys.modules[__name__])
         if parsed.path == "/api/tune/settings":
             try:
                 saved = self.state.save_display_settings(payload)
@@ -8561,7 +8606,7 @@ class Handler(BaseHTTPRequestHandler):
             with self.state.client_health_lock:
                 self.state.client_health = clean
             self.state.record_display_client(client_id, clean)
-            return self.send_json({"ok": True, "active_display_clients": self.state.active_display_clients(), "latest_command_seq": self.state.display_command_seq})
+            return self.send_json({"ok": True, "active_display_clients": self.state.active_display_clients(), "latest_command_seq": self.state.display_command_seq, "preview_requested": self.state.dashboard.preview_until > time.monotonic()})
         if parsed.path == "/api/incidents/correct":
             try:return self.send_json(apply_incident_correction(self.state,payload))
             except ValueError as exc:return self.send_json({"ok":False,"error":str(exc)},400)
@@ -8624,7 +8669,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not matched:
                     return self.send_json({"ok":False,"error":f"Scherm '{requested_selector}' is niet aangesloten of kon niet exact worden herkend","display":self.state.display_info(force=True)},409)
                 payload=dict(payload);payload["kioskMonitor"]=monitor_selector(selected);self.state._save_display_snapshot(payload["kioskMonitor"],selected)
-            saved=self.state.save_display_settings(payload)
+            try: saved=self.state.save_display_settings(payload)
+            except (OSError, ValueError) as exc: return self.send_json({"ok":False,"error":str(exc)},500)
             response={"settings":saved,"display_reposition_requested":False}
             if display_changed:
                 sup=ensure_supervisor_running()
@@ -8749,8 +8795,9 @@ class Handler(BaseHTTPRequestHandler):
                 merged={"masterVolume":bounded_int(payload.get("value",100),100,0,100)}
                 return self.send_json({"ok":True,"settings":self.state.save_display_settings(merged),"action":action})
             if action=="stop-speech":
-                token=f"quick-stop-{int(time.time()*1000)}";self.state.publish_display_command({"type":"test","payload":{"token":token,"mode":"stop-speech"}})
-                return self.send_json({"ok":True,"action":action})
+                stop_host_tts()
+                token=f"quick-stop-{time.time_ns()}";_,stop_seq=self.state.publish_display_command({"type":"test","payload":{"token":token,"mode":"stop-speech"}})
+                return self.send_json({"ok":True,"action":action,"command_seq":stop_seq})
             if action=="replay-last":
                 rows=query_messages(self.state,{"limit":["1"]})
                 if not rows:return self.send_json({"ok":False,"error":"Nog geen melding om te herhalen"},404)
@@ -8788,30 +8835,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": False, "error": "Onbekende host of verzoek vanaf een andere website"}, 403)
             if not _REMOTE_ACCESS.authorized(self):
                 return self.send_json({"ok": False, "error": "Telefoon nog niet gekoppeld"}, 401)
+            if not _REMOTE_ACCESS.permitted(self, parsed.path, "GET"):
+                return self.send_json({"ok": False, "error": "Dit apparaat heeft alleen kijkrechten"}, 403)
             return self.handle_api(parsed)
         return self.serve_static(parsed.path)
 
     def handle_api(self, parsed):
         qs = parse_qs(parsed.query)
         if parsed.path == "/api/remote/session":
-            return self.send_json({"ok": True, "local": _REMOTE_ACCESS.is_loopback(self.client_address[0])})
+            return self.send_json({"ok": True, **_REMOTE_ACCESS.identity(self)})
         if parsed.path == "/api/remote/info":
             local = _REMOTE_ACCESS.is_loopback(self.client_address[0])
             port = int(self.state.config.get("port", 8765))
             urls = [f"http://{x['address']}:{port}/remote" for x in local_lan_addresses()]
             enabled = not _REMOTE_ACCESS.is_loopback(self.state.config.get("bind", "127.0.0.1"))
             data = {"ok": True, "local": local, "enabled": enabled, "urls": urls}
-            if local:
-                data["token"] = _REMOTE_ACCESS.token
             return self.send_json(data)
         if parsed.path == "/api/remote/status":
-            settings = self.state.get_display_settings()
-            return self.send_json({"ok": True, "version": APP_VERSION, "settings": settings,
-                "feed_status": self.state.feed_status, "last_error": self.state.last_error,
-                "displays": self.state.display_clients_view(),
-                "messages": query_messages(self.state, {"limit": ["8"]}),
-                "display_power": self.state.display_power_status,
-                "server_instance": self.state.server_instance})
+            return self.send_json(self.state.dashboard.snapshot(sys.modules[__name__]))
+        if parsed.path.startswith("/api/remote/"):
+            return remote_api.get(self, parsed, sys.modules[__name__])
         if parsed.path == "/api/background/info":
             return self.send_json(self._background_info())
         if parsed.path == "/api/tune/info":
@@ -8835,6 +8878,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as exc:
                 return self.send_json({"error": str(exc)}, 500)
 
+        if parsed.path == "/api/tts/play-status":
+            return self.send_json(HOST_PLAYBACK.status(str(qs.get("token", [""])[0])[:120]))
         if parsed.path == "/api/tts/status":
             return self.send_json(tts_runtime_status())
         if parsed.path == "/api/update/github/settings":
@@ -9394,6 +9439,7 @@ def main():
     state = AppState(config)
     state.startup_selftest = boot_selftest
     state.init_db()
+    state.dashboard.start_sampler()
     try:
         previous_update = update_runtime_status()
         if previous_update.get("state") in {"staged", "installing", "restarting"}:

@@ -1,34 +1,54 @@
-# Lichtkrant bedienen vanaf je telefoon
+# Lichtkrant bedienen vanaf je telefoon — v4.7.0
 
-Vanaf v4.6.0 heeft de lichtkrant een apart mobiel bedienpaneel.
+1. Start de nieuwe lichtkrant op de Windows- of Linux-pc.
+2. Open op **diezelfde pc** `http://127.0.0.1:8765/remote`.
+3. Kies **Telefoontoegang aanzetten**. De backend herstart kort.
+4. Vul een apparaatnaam in en kies **Bedienen** of **Alleen kijken**.
+5. Klik op **Nieuwe koppelcode maken**. Verbind de telefoon met hetzelfde wifi-netwerk en scan de QR-code. Elke code werkt één keer en verloopt na vijf minuten.
+6. Voeg de pagina eventueel toe aan het beginscherm via je telefoonbrowser.
 
-1. Start de nieuwe lichtkrant op je Windows- of Linux-pc.
-2. Open op **diezelfde pc** de instellingen en kies **Telefoonbediening & QR-code**. Je kunt ook `http://127.0.0.1:8765/remote` openen.
-3. Klik op **Telefoontoegang aanzetten**. De backend herstart kort.
-4. Verbind je telefoon met hetzelfde wifi-netwerk en scan de QR-code. Je telefoon wordt gekoppeld en opent het bedienpaneel.
-5. Voeg de pagina eventueel toe aan het beginscherm via het menu van je telefoonbrowser.
+Na een update vanaf v4.6.0 moet je telefoons opnieuw koppelen: de oude gedeelde code wordt niet meer geaccepteerd. Een apparaatsessie blijft maximaal dertig dagen geldig. **Telefoon afmelden** trekt die sessie ook op de server in. Op de pc kun je onder **Wie heeft toegang?** ieder apparaat apart verwijderen.
 
-In het paneel kun je het volume aanpassen, normale/prioriteitsomroep of stilte kiezen, de laatste melding herhalen, spraak stoppen, het scherm aan/uit zetten, de kaart en nachtmodus aanpassen, meldingen bekijken en de omroep testen. Via **Alle instellingen** zijn ook tonen, achtergrondfoto, voertuigcorrecties, updates en overige opties bereikbaar. **Regio’s & disciplines** opent de volledige configuratiewizard.
+## Meekijken en opdrachten
 
-De omroep en schermacties vinden plaats op de lichtkrant-pc. Voor testgeluid moet het lichtkrantscherm geopend zijn. Bij een geluidstest verschijnt pas een geslaagd-resultaat nadat het scherm het afspelen bevestigt.
+**Live meekijken** toont een verkleinde kopie van het echte tekstcanvas, de huidige melding, de leeftijd van het beeld en de opdrachtbevestigingen per scherm. Gebruik de keuzelijst om een scherm te selecteren. Nieuwe beelden komen ongeveer elke tien seconden binnen, alleen zolang een bedienpaneel actief meekijkt. De afzonderlijke kaartlaag en fysieke aan/uitstand van de monitor zitten niet in de canvasafbeelding. De kaartstatus wordt apart vermeld. Een externe achtergrondfoto kan een canvasvoorvertoning blokkeren; de hartslag blijft dan beschikbaar.
 
-## Verbinding lukt niet
+Opdrachten onderscheiden **ontvangen**, **getoond**, **afgerond** en **mislukt**. Een ontbrekende bevestiging wordt nooit als succes getoond. Afspeelbevestigingen komen van de browser of de lokale audiospeler; zij kunnen niet meten of een fysieke luidspreker hoorbaar is. De Windows-route wacht op het audioproces en gebruikt geen geschatte duur als afspeelbewijs.
 
-- Beide apparaten moeten op hetzelfde lokale netwerk zitten. Een gastnetwerk kan communicatie tussen apparaten blokkeren.
-- Sta Python zo nodig toe op het **privénetwerk** in Windows Firewall. Het programma past firewallregels niet automatisch aan.
-- De pc moet aan staan en de backend moet draaien.
-- Gebruik op je telefoon het netwerkadres dat het paneel toont. `localhost` op je telefoon verwijst naar je telefoon zelf.
-- Als de pc meerdere netwerkadapters heeft, kan het getoonde adres bij een andere adapter horen. `/api/remote/info` toont lokaal de gevonden adressen; gebruik zo nodig het wifi-/ethernetadres van de pc met poort 8765.
-- Scherm uitschakelen hangt af van ondersteuning door Windows/Linux, de desktopsessie en de monitor. Een mislukte systeemactie verschijnt als fout.
+## Profielen
 
-## Toegang
+| Profiel | Gedrag |
+| --- | --- |
+| Normaal | Herstelt het normale volume en de weergave die actief waren vóór de profielwissel. |
+| Nacht | Volume 25%, prioriteitsomroep en de bestaande nacht-/dimregeling. De ingestelde nachttijden blijven gelden. |
+| Oefening | Volume 50%, scherm wakker; live meldingen blijven in het archief. Alleen handmatige tests/archiefacties worden getoond. |
+| Alleen urgent | Alleen P1/A0/A1, MMT en opgeschaalde meldingen tonen en omroepen, binnen je bestaande plaats- en dienstenfilters. |
 
-De QR-code bevat de koppelcode. Deel hem alleen met mensen die je lichtkrant mogen beheren. De code wordt via een URL-fragment overgedragen en daarna uit de adresbalk verwijderd. De browser gebruikt vervolgens een HttpOnly-cookie, die maximaal 30 dagen wordt bewaard.
+Je plaats-, diensten- en zoekwoordfilters worden niet gewist. Normaal herstellen brengt je eerdere volume terug, ook als je tussendoor meerdere andere profielen gebruikt.
 
-De standaardinstelling blijft alleen toegang vanaf de pc zelf. Met **Telefoontoegang uitzetten** op de pc sluit je de toegang vanaf andere apparaten weer. **Telefoon afmelden** verwijdert de sessie op die telefoon.
+## Archief en herstelpunten
 
-Het paneel is bedoeld voor een vertrouwd lokaal netwerk en gebruikt daar HTTP. Zet poort 8765 niet rechtstreeks open naar internet. Bediening via mobiel internet is geen onderdeel van deze versie.
+Zoek op tekst, plaats, dienst, prioriteit en datum. De einddatum is inclusief, volgens de lokale dag van je telefoon. **Meer meldingen** haalt de volgende vijftig op. Open een incident op de kaart, laat het opnieuw omroepen of zet het maximaal vijf minuten vast op het gekozen scherm. Urgente live meldingen mogen een vastgezette archiefmelding onderbreken. **Losmaken op scherm** beëindigt de vastgezette melding. Archiefmeldingen krijgen een herkenbare archiefaanduiding op de lichtkrant.
 
-## Update vanuit een defecte v4.5.7-installatie
+Belangrijke wijzigingen van lichtkrantinstellingen krijgen vooraf automatisch een herstelpunt. Je kunt ook zelf een beschrijving opgeven. Bekijk eerst de verschillen en zet vervolgens de instellingen terug. Als iemand tussendoor instellingen wijzigt, moet je de verschillen opnieuw bekijken. De veertig recentste herstelpunten worden bewaard. Volume schuiven maakt niet telkens een extra herstelpunt.
 
-Als de oude versie al niet meer start met `bridge basishash klopt niet: START_P2000.bat`, kan de ingebouwde updater niet draaien. Stop de oude lichtkrant, download de nieuwe versie, pak die uit in een nieuwe map en kopieer desgewenst je bestaande mappen `data` en `config` naar de nieuwe map. Start vervolgens `START_P2000.bat` of `START_P2000.sh`. Bewaar de oude map als terugvaloptie.
+Herstelpunten bevatten de lichtkrantinstellingen: volume, filters, tonenkeuze en schermweergave. Ze bevatten geen audio-/fotobestanden, regio-configuratie, API-sleutels of complete programmaversie. De bestaande updateback-ups blijven afzonderlijk beschikbaar.
+
+## Storingen en prestaties
+
+**Werkt alles?** toont de bronstatus, de laatste geslaagde broncontrole, het verbonden scherm en audioterugkoppeling apart. Geen nieuwe meldingen ontvangen is niet hetzelfde als een defecte bron. Heropen het scherm, verbind bronnen opnieuw of stuur een omroeptest vanuit het paneel. Bij geblokkeerde browseraudio kan een tik op het lichtkrantscherm nodig zijn.
+
+Onder **Snelheid en geheugengebruik** staan recente ophaal-, parser-, kaart- en tekentijden. De backend meet CPU en resident geheugen iedere tien seconden en bewaart maximaal één uur in geheugen. CPU 100% betekent één volledig gebruikte processorkern. Browser-JavaScriptgeheugen wordt alleen getoond als de browser die meting ondersteunt. Dit zijn meetwaarden van je eigen installatie, geen garantie over de snelheid van externe feeds.
+
+De telefoon gebruikt een aparte statusverbinding met automatische herverbinding. Als die niet werkt, valt het paneel terug op periodiek ophalen. Verbindingen sluiten wanneer de pagina op de achtergrond staat. Een telefoonpaneel telt nooit als lichtkrantscherm.
+
+## Verbindingsproblemen
+
+- Gebruik hetzelfde wifi-/LAN-netwerk. Dit paneel is bedoeld voor een vertrouwd lokaal netwerk; er wordt geen internettoegang of routerpoort ingesteld.
+- Geef Python indien nodig toegang tot het privénetwerk in Windows Firewall.
+- Bij meerdere netwerkadapters kan het getoonde adres niet je wifi-/ethernetadres zijn. Gebruik dan het juiste lokale pc-adres met poort 8765 en plak de koppelcode handmatig.
+- Een verlopen of gebruikte koppelcode vervang je op de pc door een nieuwe.
+
+## Herstel van de oude v4.5.7-opstartbridge
+
+Als v4.5.7 niet meer start door `bridge basishash klopt niet`, kan die installatie zichzelf niet bijwerken. Pak de nieuwe versie uit in een nieuwe map, sluit de oude lichtkrant en kopieer je eigen `data`- en `config`-mappen naar de nieuwe map. Start daarna `START_P2000.bat` of `START_P2000.sh`. Bewaar de oude map als terugvaloptie.

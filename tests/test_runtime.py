@@ -49,11 +49,17 @@ class RuntimeTests(unittest.TestCase):
             def setup(self):
                 super().setup()
                 self.client_address = ('192.168.1.200', self.client_address[1])
+        cls.auth_headers = {'Cookie': ''}
         cls.servers = []
         for handler in (LocalHandler, PhoneHandler):
             server = m.QuietThreadingHTTPServer(('127.0.0.1', 0), handler)
             thread = threading.Thread(target=server.serve_forever, daemon=True); thread.start()
             cls.servers.append(server)
+        client=cls()
+        invitation=m._REMOTE_ACCESS.invite('Regression controller')
+        status,_,headers=client.request('/api/remote/session', {}, phone=True, headers={'X-P2000-Admin-Token': invitation['token']})
+        assert status==200
+        cls.auth_headers={'Cookie': headers['Set-Cookie'].split(';',1)[0]}
 
     @classmethod
     def tearDownClass(cls):
@@ -66,7 +72,9 @@ class RuntimeTests(unittest.TestCase):
         server = self.servers[int(phone)]
         connection = http.client.HTTPConnection('127.0.0.1', server.server_port, timeout=5)
         fields = dict(headers or {})
-        if token: fields['X-P2000-Admin-Token'] = self.module._REMOTE_ACCESS.token
+        if token:
+            if path == '/api/remote/session': fields['X-P2000-Admin-Token'] = self.module._REMOTE_ACCESS.invite('Test phone')['token']
+            else: fields.update(self.auth_headers)
         if payload is not None: fields['Content-Type'] = 'application/json'
         connection.request('GET' if payload is None else 'POST', path, body=json.dumps(payload) if payload is not None else None, headers=fields)
         response = connection.getresponse(); status = response.status; response_headers = dict(response.getheaders()); raw = response.read(); connection.close()
@@ -91,7 +99,7 @@ class RuntimeTests(unittest.TestCase):
 
     def test_local_pair_info(self):
         status, data, _ = self.request('/api/remote/info')
-        self.assertEqual(status, 200); self.assertTrue(data['local']); self.assertGreaterEqual(len(data['token']), 32)
+        self.assertEqual(status, 200); self.assertTrue(data['local']); self.assertNotIn('token', data)
 
     def test_origin_and_host_guards(self):
         for headers in ({'Origin': 'https://example.com'}, {'Sec-Fetch-Site': 'cross-site'}, {'Host': 'attacker.example:8765'}):
@@ -154,7 +162,7 @@ class RuntimeTests(unittest.TestCase):
     def test_actual_http_health_and_dashboard(self):
         self.assertTrue(self.request('/api/health')[1]['ok'])
         code, data, _ = self.request('/api/remote/status', phone=True, token=True)
-        self.assertEqual(code, 200); self.assertEqual(data['version'], '4.6.0'); self.assertIsInstance(data['displays'], list)
+        self.assertEqual(code, 200); self.assertEqual(data['version'], '4.7.0'); self.assertIsInstance(data['displays'], list)
         for path in ['/remote', '/remote.js', '/auth.js', '/control', '/setup.html']:
             self.assertEqual(self.request(path)[0], 200)
 
@@ -239,7 +247,7 @@ class RuntimeTests(unittest.TestCase):
                 bundle.write(self.root/name, 'lichtkrant-release/'+name)
         package, version = self.module._validate_and_extract_update(archive)
         try:
-            self.assertEqual(version, '4.6.0')
+            self.assertEqual(version, '4.7.0')
             self.assertTrue(self.module._preflight_staged_update(package, version)['ok'])
         finally:
             stage = package.parent if (package.parent/'.p2000-update-stage').exists() else package

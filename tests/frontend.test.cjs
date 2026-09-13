@@ -83,14 +83,22 @@ test('Mobile dashboard renders safely, changes zero volume and saves toggles', a
   assert.deepEqual(writes[1].payload,{mapEnabled:false});instance.window.close();
 });
 
-test('Pairing QR is generated locally and contains an authenticated fragment',async()=>{
+test('Pairing QR uses a new single-use invitation created explicitly on the pc',async()=>{
   const instance=dom('remote.html','http://127.0.0.1:8765/remote'),{window}=instance;
-  window.HTMLCanvasElement.prototype.getContext=()=>({fillStyle:'',fillRect(){}});
-  window.P2000Auth={ready:Promise.resolve({local:true}),request:async(url)=>url==='/api/remote/info'?{ok:true,local:true,enabled:true,urls:['http://192.168.1.5:8765/remote'],token:'a'.repeat(43)}:{ok:true,settings:{},messages:[],displays:[]}};
-  window.eval(read('qr-local.js'));window.eval(read('remote.js'));await settle();
-  assert.ok(window.document.querySelector('#pairQr canvas'));
-  assert.equal(window.document.querySelector('#pairCode').value,'a'.repeat(43));
-  assert.equal(window.document.querySelector('#pairDetails').hidden,false);instance.window.close();
+  try{
+    window.HTMLCanvasElement.prototype.getContext=()=>({fillStyle:'',fillRect(){}});
+    window.P2000Auth={ready:Promise.resolve({local:true,role:'admin'}),request:async(url)=>{
+      if(url==='/api/remote/info')return{ok:true,local:true,enabled:true,urls:['http://192.168.1.5:8765/remote']};
+      if(url==='/api/remote/invite')return{ok:true,invite:{token:'a'.repeat(43),expires_at:Date.now()/1000+300}};
+      return{ok:true,settings:{},messages:[],displays:[],devices:[]};
+    }};
+    window.eval(read('qr-local.js'));window.eval(read('remote-plus.js'));window.eval(read('remote.js'));await settle();
+    assert.equal(window.document.querySelector('#pairQr canvas'),null);
+    window.document.querySelector('#createInvite').click();await settle();
+    assert.ok(window.document.querySelector('#pairQr canvas'));
+    assert.equal(window.document.querySelector('#pairCode').value,'a'.repeat(43));
+    assert.equal(window.document.querySelector('#pairDetails').hidden,false);
+  }finally{window.close();}
 });
 
 test('Pairing removes the token from history and sends it only in an admin header',async()=>{
@@ -99,4 +107,130 @@ test('Pairing removes the token from history and sends it only in an admin heade
   window.eval(read('auth.js'));await window.P2000Auth.ready;
   assert.equal(window.location.hash,'');assert.equal(calls[0].url,'/api/remote/session');assert.equal(calls[0].options.headers['X-P2000-Admin-Token'],token);
   assert.equal(window.localStorage.length,0);instance.window.close();
+});
+
+function mobile(role='controller'){
+  const instance=dom('remote.html'),{window}=instance,calls=[];
+  const status={ok:true,version:'4.7.0',settings:{masterVolume:55,activeProfile:'normal'},messages:[],displays:[],profiles:[{id:'normal',label:'Normaal',description:'Normaal'},{id:'exercise',label:'Oefening',description:'Tests'}],diagnostics:{sources:[]},metrics:{stages:{},process:[]},commands:[]};
+  let response=null;
+  window.P2000Auth={ready:Promise.resolve({role,local:false}),request:async(url,options={})=>{
+    calls.push({url,options});if(response){const result=response(url,options);if(result)return result;}
+    if(url==='/api/remote/info')return{ok:true,local:false};
+    if(url.startsWith('/api/remote/archive'))return{ok:true,messages:[{id:'<bad-id>',title:'<img src=x onerror=alert(1)>',city:'Tilburg',service:'brandweer',priority:'P1',published:'2026-09-12T10:00:00Z'}]};
+    return status;
+  }};
+  window.eval(read('remote-plus.js'));window.eval(read('remote.js'));
+  return{instance,window,calls,status,setResponse:fn=>{response=fn;}};
+}
+
+test('Viewer dashboard has read-only controls and archive output is escaped',async()=>{
+  const {instance,window,calls}=mobile('viewer');
+  try{
+    await settle();assert.equal(window.document.body.classList.contains('viewer'),true);
+    window.document.querySelector('#archiveForm').dispatchEvent(new window.Event('submit',{cancelable:true}));await settle();
+    assert.equal(window.document.querySelector('#archiveResults img'),null);
+    assert.equal(window.document.querySelector('#archiveResults [data-message]'),null);
+    assert.ok(window.document.querySelector('#archiveResults [data-map]'));
+    assert.equal(calls.filter(x=>x.options.method==='POST').length,0);
+  }finally{window.close();}
+});
+
+test('Archive filters use local day boundaries and selected-screen commands',async()=>{
+  const {window,calls,status}=mobile();
+  try{
+    await settle();status.displays=[{client_id:'screen-2',online:true}];window.P2000RemotePlus.update(status);
+    const form=window.document.querySelector('#archiveForm');form.elements.from.value='2026-09-12';form.elements.to.value='2026-09-12';form.elements.city.value='Tilburg';
+    form.dispatchEvent(new window.Event('submit',{cancelable:true}));await settle();
+    const request=calls.find(x=>x.url.startsWith('/api/remote/archive'));
+    assert.match(request.url,/city=Tilburg/);assert.match(request.url,/until=/);
+    window.document.querySelector('[data-message-action=pin]').click();await settle();
+    const command=calls.find(x=>x.url==='/api/remote/message-action');
+    assert.deepEqual(JSON.parse(command.options.body),{id:'<bad-id>',action:'pin',client_id:'screen-2'});
+  }finally{window.close();}
+});
+
+test('Profiles confirm exercise mode and apply the returned settings',async()=>{
+  const {window,calls,setResponse}=mobile();
+  try{
+    await settle();setResponse(url=>url==='/api/remote/profile'?{ok:true,settings:{masterVolume:50,exerciseMode:true}}:null);
+    window.document.querySelector('[data-profile=exercise]').click();await settle();
+    assert.equal(JSON.parse(calls.find(x=>x.url==='/api/remote/profile').options.body).id,'exercise');
+    assert.equal(window.document.querySelector('#volume').value,'50');
+  }finally{window.close();}
+});
+
+test('Restore sends the fingerprint from preview and renders values as text',async()=>{
+  const {window,calls,setResponse}=mobile();
+  try{
+    await settle();setResponse(url=>{
+      if(url==='/api/remote/history')return{ok:true,points:[{id:'restore1',description:'<script>bad</script>',created_at:'2026-09-12'}]};
+      if(url.startsWith('/api/remote/restore-preview'))return{ok:true,preview:{id:'restore1',expected:'fingerprint',changes:[{key:'name',before:'Old',after:'<img src=x>'}]}};
+      if(url==='/api/remote/restore')return{ok:true,settings:{masterVolume:55}};
+    });
+    window.document.querySelector('#loadHistory').click();await settle();window.document.querySelector('[data-restore]').click();await settle();
+    assert.equal(window.document.querySelector('#restoreChanges img'),null);
+    window.document.querySelector('#confirmRestore').click();await settle();
+    assert.deepEqual(JSON.parse(calls.find(x=>x.url==='/api/remote/restore').options.body),{id:'restore1',expected:'fingerprint'});
+  }finally{window.close();}
+});
+
+test('Live status uses its own stream, closes on hiding and reopens on return',async()=>{
+  const instance=dom('remote.html'),{window}=instance,sockets=[];
+  try{
+    class Stream{constructor(url){this.url=url;this.readyState=1;sockets.push(this)}addEventListener(){}close(){this.closed=true;this.readyState=2}}
+    window.EventSource=Stream;window.P2000Auth={ready:Promise.resolve({role:'viewer'}),request:async url=>url==='/api/remote/info'?{local:false}:{ok:true,settings:{},messages:[],displays:[]}};
+    window.eval(read('remote.js'));await settle();assert.equal(sockets[0].url,'/api/remote/events');
+    Object.defineProperty(window.document,'hidden',{configurable:true,value:true});window.document.dispatchEvent(new window.Event('visibilitychange'));assert.equal(sockets[0].closed,true);
+    Object.defineProperty(window.document,'hidden',{configurable:true,value:false});window.document.dispatchEvent(new window.Event('visibilitychange'));await settle();assert.equal(sockets.length,2);
+  }finally{window.close();}
+});
+
+function monitor(){
+  const instance=dom('index.html','http://127.0.0.1:8765/'),{window}=instance;
+  window.HTMLCanvasElement.prototype.getContext=()=>new Proxy({measureText:text=>({width:String(text).length*8}),createLinearGradient:()=>({addColorStop(){}})}, {get:(obj,key)=>obj[key]||(()=>{})});
+  window.matchMedia=()=>({matches:false});window.requestAnimationFrame=fn=>{fn();return 1;};
+  const source=read('app.js').split("let controlsTimer=null;")[0];
+  window.eval(source+`\nObject.assign(window,{screenState:state,filterMessage,remoteUrgent,pollDisplayCommands,handleDisplayCommand,handleTest,queueSpeech,finishSpeechJob,HOST_TEST:{},configureScreenTest:hooks=>{if(hooks.activate)activateMessage=hooks.activate;if(hooks.speak)maybeSpeakMessage=hooks.speak;reportClientHealth=async()=>{};commandReceipt=async(seq,status,detail)=>{hooks.receipts.push({seq,status,detail})};render=()=>{};clearActiveMessages=()=>{};},setJson:fn=>{json=fn},setQueueRunner:fn=>{startNextSpeechJob=fn},setTestReporter:fn=>{reportTestResult=fn}});`);
+  return{window,instance};
+}
+
+test('Screen replay accepts stored title fields, deduplicates and waits for audio result',async()=>{
+  const {window}=monitor(),receipts=[],shown=[];let audioDone;
+  try{
+    window.configureScreenTest({receipts,activate:(m)=>{shown.push(m);return true},speak:(_m,options)=>{audioDone=options.onResult;return true}});
+    const cmd={_command_seq:1,type:'replay',message:{id:'archive',title:'P1 brand',city:'Tilburg'},speak:true};
+    await window.handleDisplayCommand(cmd);await window.handleDisplayCommand(cmd);
+    assert.equal(shown.length,1);assert.equal(receipts.at(-1).status,'displayed');
+    audioDone({ok:true,detail:'Afgespeeld'});assert.equal(receipts.at(-1).status,'completed');
+  }finally{window.close();}
+});
+
+test('Exercise and urgent profiles filter live messages while preserving manual tests',()=>{
+  const {window}=monitor();
+  try{
+    const s=window.screenState;s.settings.services=['brandweer'];s.settings.cities=[];s.settings.keywords=[];
+    s.settings.exerciseMode=true;assert.equal(window.filterMessage({service:'brandweer',priority:'P1'}),false);
+    assert.equal(window.filterMessage({service:'brandweer',priority:'P1',__test:true}),true);
+    s.settings.exerciseMode=false;s.settings.urgentOnly=true;
+    assert.equal(window.filterMessage({service:'brandweer',priority:'P2'}),false);assert.equal(window.filterMessage({service:'brandweer',priority:'P1'}),true);
+  }finally{window.close();}
+});
+
+test('Replaced speech jobs receive cancellation rather than silent disappearance',()=>{
+  const {window}=monitor(),results=[];
+  try{
+    window.setQueueRunner(()=>{});window.queueSpeech('Old',{groupKey:'same',priority:10,onResult:r=>results.push(r)});window.queueSpeech('New',{groupKey:'same',priority:20});
+    assert.equal(window.screenState.speechQueue.length,1);assert.equal(results[0].ok,false);
+  }finally{window.close();}
+});
+
+test('Polling executes queued commands before advancing its cursor',async()=>{
+  const {window}=monitor(),receipts=[],shown=[];
+  try{
+    window.configureScreenTest({receipts,activate:m=>{shown.push(m.id);return true},speak:()=>false});
+    window.setJson(async()=>({commands:[{_command_seq:1,type:'replay',message:{id:'one',title:'One'},speak:false},{_command_seq:2,type:'replay',message:{id:'two',title:'Two'},speak:false}],latest_seq:2}));
+    await window.pollDisplayCommands();assert.deepEqual(shown,['one','two']);
+    await window.handleDisplayCommand({_command_seq:2,type:'replay',message:{id:'duplicate',title:'Duplicate'},speak:false});
+    assert.equal(shown.length,2);
+  }finally{window.close();}
 });

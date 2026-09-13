@@ -1,19 +1,23 @@
-# P2000 Monitor — Windows + Linux v4.6.0
+# P2000 Monitor — Windows + Linux v4.7.0
 
 Configureerbare P2000-lichtkrant met een lokaal mobiel bedienpaneel.
 
 ## Starten en telefoon koppelen
 
 - Windows: `START_P2000.bat`. Linux: `./START_P2000.sh`.
-- Open op de pc `http://127.0.0.1:8765/remote`, zet telefoontoegang aan en scan de QR-code met een telefoon op hetzelfde wifi-netwerk.
+- Open op de pc `http://127.0.0.1:8765/remote`, zet telefoontoegang aan, maak een koppelcode voor het apparaat en scan de QR-code met een telefoon op hetzelfde wifi-netwerk.
 - Volume, omroep, scherm, tests en meldingen staan in het mobiele paneel. Alle overige opties zijn bereikbaar via **Alle instellingen** en de configuratiewizard.
 - Zie [Telefoonbediening](TELEFOONBEDIENING.md) voor de volledige uitleg, verbindingstips en herstel van een niet-startende v4.5.7-installatie.
+
+## Nieuw in v4.7.0
+
+Schermvoorvertoning, opdrachtbevestigingen, bedieningsprofielen, afzonderlijke apparaatsessies met kijkrechten, storingsdiagnose, herstelpunten, een mobiel archief en live prestatiemeting. Windows-hostaudio meldt nu de echte processtatus en respecteert WAV-volume. CI controleert wijzigingen op Windows en Linux. Lees [wijzigingen en testresultaten](CHANGELOG_v4.7.0.md).
 
 ## Nieuw in v4.6.0
 
 De oude, falende opstartbridge is vervangen door direct startbare broncode. Mobiele koppeling, betrouwbare gedeeltelijke instellingenopslag, echte supervisoropdrachten en meerdere prestatieverbeteringen zijn toegevoegd. Lees [alle wijzigingen en testgrenzen](CHANGELOG_v4.6.0.md).
 
-Ontwikkelcontroles: `python tools/run_tests.py`. Optionele DOM-tests: `npm ci` en `npm test`; Node/jsdom zijn niet nodig om de lichtkrant te draaien. Na bronwijzigingen: `python tools/build_manifest.py`.
+Ontwikkelcontroles: `python tools/run_tests.py`. Optionele DOM-tests: `npm ci` en `npm test`; Node/jsdom zijn niet nodig om de lichtkrant te draaien. Na bronwijzigingen: `python tools/build_manifest.py`. CI controleert het vastgelegde manifest zonder het stilzwijgend te regenereren. Een geïsoleerde duurproef kan met `python tools/soak_dashboard.py --seconds 120 --clients 3`.
 
 De onderstaande versiehistorie beschrijft eerdere releases. De huidige checkout bevat starters voor beide besturingssystemen.
 

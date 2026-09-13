@@ -37,9 +37,13 @@
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('nl-NL', {day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'});
   }
-  let messagesFingerprint = '';
+  let messagesFingerprint = '', stream=null;
+  function showInvite(invite){$('#pairCode').value=invite.token;pairLink=`${$('#pairAddress').value}#token=${encodeURIComponent(invite.token)}`;$('#pairDetails').hidden=false;drawQr(pairLink);}
+  function connectStatus(){if(document.hidden||!window.EventSource||stream)return;stream=new EventSource('/api/remote/events');stream.onopen=()=>clearTimeout(timer);stream.onmessage=event=>{try{render(JSON.parse(event.data));$('#connection').textContent='● Verbonden';$('#connection').dataset.online='true';clearTimeout(timer)}catch{}};stream.onerror=()=>{if(!document.hidden)refresh()};stream.addEventListener('revoked',()=>{stream.close();location.reload()});}
+
   function render(data) {
     renderSettings(data.settings);
+    window.P2000RemotePlus?.update(data);
     $('#feedState').textContent = labels[data.feed_status] || data.feed_status || 'Onbekend';
     $('#feedState').title = data.last_error || '';
     const displays = (data.displays || []).filter(row => row.online);
@@ -61,8 +65,9 @@
       $('#connection').textContent = '● Verbonden'; $('#connection').dataset.online = 'true';
     } catch (error) {
       $('#connection').textContent = error.status === 401 ? 'Opnieuw koppelen' : 'Verbinding herstellen…'; $('#connection').dataset.online = 'false';
+      $('#screenPreview').dataset.stale='true';
       if (error.status === 401) { location.reload(); return; }
-    } finally { busy = false; if (!document.hidden) timer = setTimeout(refresh, 5000); }
+    } finally { busy = false; if (!document.hidden && stream?.readyState!==1) timer = setTimeout(refresh, 5000); }
   }
   async function action(name, payload = {}) {
     return serialize(async () => {
@@ -126,12 +131,10 @@
     const data = await api('/api/remote/info'); local = data.local;
     $('#pairing').hidden = !local; $('#logout').hidden = local;
     if (!local) return;
-    $('#enableRemote').hidden = data.enabled; $('#pairDetails').hidden = !data.enabled;
+    $('#enableRemote').hidden = data.enabled; $('#inviteForm').hidden = !data.enabled; if(!data.enabled)$('#pairDetails').hidden=true;
     const url = data.urls?.[0];
     if (!url) { $('#pairHelp').textContent = 'Geen lokaal netwerkadres gevonden. Verbind de pc eerst met wifi of een netwerkkabel.'; $('#pairDetails').hidden = true; return; }
-    $('#pairAddress').value = url; $('#pairCode').value = data.token || '';
-    pairLink = `${url}#token=${encodeURIComponent(data.token)}`;
-    if (data.enabled) drawQr(pairLink);
+    $('#pairAddress').value = url;
   }
   async function setRemote(enabled) {
     await post('/api/remote/config', {enabled});
@@ -151,7 +154,8 @@
     });
   }
   async function init() {
-    await window.P2000Auth.ready;
+    const session=await window.P2000Auth.ready;
+    await window.P2000RemotePlus?.init({api,post,notice,bind:bindButton,settings:renderSettings,session,showInvite});
     for (const button of document.querySelectorAll('[data-action]')) bindButton(button, () => {
       const name = button.dataset.action;
       if (name.startsWith('restart-') && !confirm(name === 'restart-backend' ? 'Backend nu herstarten?' : 'Lichtkrantscherm nu sluiten en opnieuw openen?')) return;
@@ -172,9 +176,11 @@
     bindButton($('#enableRemote'), () => setRemote(true)); bindButton($('#disableRemote'), () => setRemote(false));
     bindButton($('#copyPair'), () => copy(pairLink)); bindButton($('#copyCode'), () => copy($('#pairCode').value));
     bindButton($('#logout'), async () => { await post('/api/remote/logout'); location.reload(); });
-    document.addEventListener('visibilitychange', () => { clearTimeout(timer); if (!document.hidden) refresh(); else flushVolume(); });
-    window.addEventListener('online', refresh);
+    document.addEventListener('visibilitychange', () => { clearTimeout(timer); if (!document.hidden){refresh();connectStatus()}else{stream?.close();stream=null;flushVolume()} });
+    window.addEventListener('online', ()=>{refresh();connectStatus()});
+    window.addEventListener('pagehide',()=>{stream?.close();stream=null;clearTimeout(timer)});
     await Promise.allSettled([refresh(), pairing().catch(error => notice(error.message, true))]);
+    connectStatus();
   }
   init().catch(error => notice(error.message, true));
 })();
