@@ -24,6 +24,8 @@
 - Herstellen verwijdert ook instellingen die ná een herstelpunt werden toegevoegd. Gelijktijdige instellingenwijzigingen blokkeren een verouderde herstelvoorvertoning.
 - Een archiefkaart zoekt alleen de incidentlocatie op en wacht niet op alle betrokken posten.
 
+- Broncontroles lezen UTF-8 expliciet, zodat de tests ook op Windows met een andere standaardtekencodering werken.
+
 ## Lokale verificatie
 
 - 44 echte backend-/HTTP-regressies en 16 DOM-/schermprotocoltests geslaagd.
