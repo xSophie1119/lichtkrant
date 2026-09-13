@@ -466,7 +466,7 @@ function vehicleDetails(m){
     if(mmt&&!seen.has(mmt[0])){const [digits,meta]=mmt;const callsign=digits;add(digits,`${callsign} - ${meta.label}`,meta.kind==='helicopter'?meta.label:`Mobiel Medisch Team auto ${meta.team}`,{type:meta.kind==='helicopter'?'MMT-HELI':'MMT-AUTO',mmt:meta})}
     else if(/\b(?:LIFELINER|MMT)[ -]?[123]\b/i.test(unit)&&!out.some(x=>x.header.toLowerCase().includes(unit.toLowerCase())))add(`unit:${unit.toLowerCase()}`,unit,unit.replace(/MMT/i,'Mobiel Medisch Team'),{type:'MMT'});
   }
-  for(const item of capcodeDetails(m)){if(!seen.has(item.key)){seen.add(item.key);out.push(item)}}
+  for(const item of (correctedUnits?[]:capcodeDetails(m))){if(!seen.has(item.key)){seen.add(item.key);out.push(item)}}
   return out.slice(0,30);
 }
 function compactVehicleHeader(m){return vehicleDetails(m).map(v=>v.header).join('  •  ')}

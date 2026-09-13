@@ -12,7 +12,7 @@ function inside(point,polygon){
   if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)hit=!hit;
  }return hit;
 }
-function resource(m,type){const raw=lower([m.title,m.summary,...(m.units||[])].join(' '));return type==='mmt'?m.service==='lifeliner'||/\b(?:mmt|lifeliner|(?:17|13|08)-?99[123])\b/.test(raw):/\b(?:ovd[ -]?g|officier van dienst geneeskundig|80[345])\b/.test(raw)}
+function resource(m,type){const raw=lower([m.title,m.summary,...(m.units||[])].join(' '));return type==='mmt'?m.service==='lifeliner'||/\b(?:mmt|lifeliner|13[- ]?(?:991|901)|17[- ]?(?:992|902|901)|08[- ]?(?:993|903))\b/.test(raw):/\b(?:ovd[ -]?g|officier van dienst geneeskundig|12[- ]?2080[345]|80[345])\b/.test(raw)}
 function match(rule,m,zones,geo,now){
  const w=rule.when||{},checks=[];let unknown=false;
  for(const [key,value] of Object.entries(w)){
