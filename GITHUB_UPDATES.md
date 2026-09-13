@@ -1,4 +1,4 @@
-# GitHub-updates — v4.4.16
+# GitHub-updates — v4.7.0
 
 De monitor kan zowel Releases als gewone pushes op de ingestelde branch volgen. Branchupdates worden op exacte commit-SHA herkend, ook wanneer `VERSION` gelijk blijft.
 
@@ -9,7 +9,7 @@ Een token is niet verplicht. Wie op een gedeeld netwerk toch ruimere GitHub API-
 Aanbevolen Release-asset:
 
 ```text
-P2000_Monitor_MultiPlatform_v4.4.16.zip
+P2000_Monitor_MultiPlatform_v4.7.0.zip
 ```
 
 De assetselectie geeft voorrang aan `multiplatform`/`multi-platform`. Als er meerdere OS-assets bestaan kiest Windows liever een Windows-ZIP en Linux liever een Linux-ZIP.
@@ -25,3 +25,9 @@ Symlinks, path traversal, te grote archives en ongeldige structuren worden gewei
 Bij installatie blijven `config/config.json` en `data/` behouden. Eerst wordt een programmabackup gemaakt onder `data/updates/backups/`; maximaal drie backups blijven staan.
 
 Linux-launchers krijgen na een update opnieuw execute-rechten wanneer de ZIP Unix-modebits bevat of wanneer het om een bekende `.sh` launcher gaat.
+
+## Releasecontrole vanaf v4.6.0
+
+De checkout bevat direct startbare broncode voor Windows en Linux. Genereer na wijzigingen `release-manifest.json` met `python tools/build_manifest.py`. Dit manifest controleert alle releasebestanden, inclusief de mobiele frontend en Python-coremodules. Laat `data` en `config` buiten het pakket.
+
+Een staged backend wordt met `--safe-mode --no-poll` gestart voor healthcontrole. Deze controle voert geen RSS-, voertuig- of GitHub-synchronisatie uit. Bijwerken behoudt de gebruikersmappen `data` en `config`.

@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.4.19';
+const CLIENT_VERSION='4.7.0';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -14,7 +14,7 @@ const SIGNATURE_MEMORY_MS=15*60*1000;
 const DEFAULTS={
   name:'P2000 Monitor',
   services:['brandweer','ambulance','politie','lifeliner','knrm'],
-  cities:[],keywords:[],
+  cities:[],keywords:[],activeProfile:'normal',urgentOnly:false,exerciseMode:false,
   nightMode:true,nightStart:'23:00',nightEnd:'07:00',
   idleStyle:'normal',idleLayout:'center',idleHeadline:'',idleSubline:'P2000 MELDINGEN HEBBEN DIRECT VOORRANG',idleShowName:true,idleShowDate:true,idleShowSeconds:true,idleShowStatus:true,idleClockScale:100,messageDisplayMode:'raw',idleDimEnabled:true,idleDimStart:'21:30',idleDimEnd:'07:00',idleDimMin:0.42,
   idleSunsetDim:false,idleDimEarliest:'20:30',smartSilenceEnabled:true,smartSilenceMinutes:30,postIncidentQuietEnabled:true,postIncidentQuietSeconds:20,
@@ -23,10 +23,10 @@ const DEFAULTS={
   burnInProtection:true,burnInPixels:12,
   autoTextSize:true,darkLedPercent:4,vehicleHeader:true,
   displaySleep:false,
-  speechEnabled:true,speechMode:'normal',masterVolume:100,speechCities:[],speechRate:0.96,speechPitch:1.0,speechEngine:'online',
+  speechEnabled:true,speechMode:'normal',masterVolume:100,speechCities:[],speechRate:0.96,speechPitch:1.0,speechEngine:'native',speechTemplates:{},displayTarget:'',
   speechDeviceVolumeDay:38,speechDeviceVolumeNight:20,speechDeviceVolumeUrgent:55,
   dispatchTuneEnabled:true,dispatchTuneDefault:'youtube',dispatchTuneBrandweer:'inherit',dispatchTuneAmbulance:'inherit',dispatchTunePolitie:'inherit',dispatchTuneLifeliner:'inherit',dispatchTuneKnrm:'inherit',dispatchTuneUrgent:'youtube',dispatchTuneYoutubeUrl:'https://www.youtube.com/watch?v=VleijwaD_-U',dispatchTuneYoutubeSeconds:5,dispatchTuneVolume:80,dispatchTuneCustomVersion:0,
-  mapEnabled:true,mapMode:'route',mapZoom:16,backgroundStyle:'black',backgroundColor:'#020506',backgroundPhotoVersion:0,backgroundPhotoDarkness:.60,backgroundPhotoFit:'cover',kioskMonitor:'primary',
+  mapEnabled:true,mapMode:'auto',mapZoom:16,backgroundStyle:'black',backgroundColor:'#020506',backgroundPhotoVersion:0,backgroundPhotoDarkness:.60,backgroundPhotoFit:'cover',kioskMonitor:'primary',
   locationAliases:{'Prof. Asserweg':'Professor Asserweg','Prof Asserweg':'Professor Asserweg'},
   ttsDictionary:{'Prof.':'Professor','OvD-G':'Officier van Dienst Geneeskundig','OvD-B':'Officier van Dienst Brandweer','MMT':'Mobiel Medisch Team','TS':'tankautospuit','HW':'hoogwerker'},
   capcodeMap:{'1220803':{label:'OvD-G 803 - Officier van Dienst Geneeskundig',speech:'Officier van Dienst Geneeskundig 803'},'1220804':{label:'OvD-G 804 - Officier van Dienst Geneeskundig',speech:'Officier van Dienst Geneeskundig 804'},'1220805':{label:'OvD-G 805 - Officier van Dienst Geneeskundig',speech:'Officier van Dienst Geneeskundig 805'}}
@@ -64,7 +64,7 @@ const FONT={
 '#':[10,31,10,10,31,10,0],'&':[12,18,20,8,21,18,13]
 };
 function cleanServiceSettings(v){const allowed=new Set(['brandweer','ambulance','politie','lifeliner','knrm','overig']);const rows=(Array.isArray(v)?v:DEFAULTS.services).filter(x=>allowed.has(String(x)));return rows.length?rows:[...DEFAULTS.services]}
-function loadSettings(){try{const merged={...DEFAULTS,...JSON.parse(localStorage.getItem('p2000MonitorSettingsV4')||'{}'),idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);merged.speechEngine='online';return merged}catch{return {...DEFAULTS,speechEngine:'online'}}}
+function loadSettings(){try{const merged={...DEFAULTS,...JSON.parse(localStorage.getItem('p2000MonitorSettingsV4')||'{}'),idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);if(!['native','piper','espeak','sapi','online'].includes(String(merged.speechEngine)))merged.speechEngine='native';return merged}catch{return {...DEFAULTS,speechEngine:'native'}}}
 function norm(v){return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[–—]/g,'-').replace(/[^A-Za-z0-9 :.,\-\/+()=?!'#&]/g,' ').replace(/\s+/g,' ').trim().toUpperCase()}
 function asciiFold(v){return String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[–—]/g,'-')}
 function normalizeLocationBase(v){
@@ -150,10 +150,10 @@ function currentMapQuery(){
   let location=locationWithoutCitySuffix(String(m.location||'').trim(),city);
   if(!location)location=locationWithoutCitySuffix(String(speechLocation(m)||'').trim(),city);
   if(!city&&!location)return null;
-  const mode=String(state.settings.mapMode||'route').toLowerCase()==='incident'?'incident':'route';
+  let mode=String(state.settings.mapMode||'auto').toLowerCase();if(!['auto','route','incident','posts'].includes(mode))mode='auto';if(mode==='auto')mode=routeHomeQuery()?'route':'incident';
   const configuredZoom=Math.max(12,Math.min(18,Number(state.settings.mapZoom)||16));
   // Incident-only intentionally shows more surroundings than the route view.
-  const zoom=mode==='incident'?Math.max(12,Math.min(15,configuredZoom-2)):configuredZoom;
+  const zoom=mode==='incident'?Math.max(12,Math.min(15,configuredZoom-2)):(mode==='posts'?Math.max(12,configuredZoom-1):configuredZoom);
   return {city,location,zoom,mode,key:`${normalizeLocationKey(city)}|${normalizeLocationKey(location)}|${mode}|z${zoom}`};
 }
 function showMapLoading(q,message='Kaart laden…'){
@@ -206,7 +206,7 @@ function applyMapData(q,map){
   els.title.textContent=q.location||map.display_name||q.city||'Locatie';
   if(els.city)els.city.textContent=q.city||'';
   const route=map.route||null;
-  els.meta.textContent=route?'Marker: incident • blauwe stip: standplaats':'Incidentlocatie • uitgezoomd omgevingsoverzicht';
+  els.meta.textContent=route?'Marker: incident • blauwe stip: standplaats':(q.mode==='posts'?'Incidentlocatie • gealarmeerde posten':'Incidentlocatie • uitgezoomd omgevingsoverzicht');
   if(els.route){els.route.hidden=!route;if(route){if(els.routeFrom)els.routeFrom.textContent=`Vanaf ${route.origin_label}`;if(els.routeDistance){const km=route.distance_km<10?route.distance_km.toFixed(1):Math.round(route.distance_km);els.routeDistance.textContent=route.real?`${km} km • ± ${route.estimated_minutes} min • snelste route`:`± ${km} km hemelsbreed • route wordt berekend…`;}if(els.routeLink){els.routeLink.href=route.navigation_url;els.routeLink.hidden=!route.navigation_url;}}}
   if(els.loading){els.loading.hidden=true;els.loading.classList.remove('error')}
   if(els.frame){els.frame.hidden=false;if(els.frame.dataset.src!==map.embed_url){els.frame.src=map.embed_url; els.frame.dataset.src=map.embed_url;}}
@@ -232,6 +232,7 @@ async function syncIncidentMap(){
     if(homeQ&&homeData?.map&&!homeCached)state.mapCache.set(homeQ.key,homeData.map);
     if(d?.map){
       const home=homeData?.map||homeCached,map=routeMapData(d.map,home);state.mapFailureCache.delete(q.key);state.mapCache.set(q.key,map);if(state.mapCache.size>250){const first=state.mapCache.keys().next().value;if(first)state.mapCache.delete(first)} if((currentMapQuery()||{}).key===q.key)applyMapData(q,map);
+      if(q.mode==='posts'&&state.activeMessage?.id&&!state.activeMessage?.__test){json(`/api/map-context?id=${encodeURIComponent(state.activeMessage.id)}&zoom=${encodeURIComponent(q.zoom)}`,{timeoutMs:12000}).then(c=>{const posts=c?.context?.posts||[];if(!posts.length)return;let enriched={...d.map};try{const u=new URL(enriched.embed_url,location.origin);u.searchParams.set('posts',JSON.stringify(posts.map(x=>({lat:x.lat,lon:x.lon,name:x.name}))));enriched.embed_url=`${u.pathname}${u.search}`}catch{};enriched.posts=posts;state.mapCache.set(q.key,enriched);if((currentMapQuery()||{}).key===q.key)applyMapData(q,enriched)}).catch(e=>console.warn('Postenkaart niet beschikbaar',e))}
       if(home&&Number.isFinite(Number(home.lat))&&Number.isFinite(Number(home.lon))){
         const routeUrl=`/api/route?origin_lat=${encodeURIComponent(home.lat)}&origin_lon=${encodeURIComponent(home.lon)}&dest_lat=${encodeURIComponent(d.map.lat)}&dest_lon=${encodeURIComponent(d.map.lon)}`;
         json(routeUrl).then(r=>{if(!r?.route)return;const routed=routeMapData(d.map,home,r.route);state.mapCache.set(q.key,routed);if((currentMapQuery()||{}).key===q.key)applyMapData(q,routed)}).catch(e=>console.warn('Snelste route niet beschikbaar; hemelsbrede fallback blijft actief',e));
@@ -270,7 +271,9 @@ function mmtResourceInfo(m){
 function isLL23(m){return !!mmtResourceInfo(m)}
 function llNumber(m){return mmtResourceInfo(m)?.team||null}
 function ovdgNumber(m){const h=`${m.title||''} ${m.summary||''}`;const x=/12[- ]?2080([345])/.exec(h);return x?`80${x[1]}`:null}
-function filterMessage(m){let svc=String(m?.service||'').toLowerCase();const resource=mmtResourceInfo(m);if(resource)svc=resource.kind==='helicopter'?'lifeliner':'ambulance';if(state.settings.services?.length&&!state.settings.services.includes(svc))return false;const cs=(state.settings.cities||[]).map(x=>x.toLowerCase()).filter(Boolean);if(cs.length&&!cs.some(c=>(m.city||'').toLowerCase().includes(c)))return false;const ks=(state.settings.keywords||[]).map(x=>x.toLowerCase()).filter(Boolean);if(ks.length){const hay=`${m.title||''} ${m.summary||''} ${m.city||''} ${m.location||''}`.toLowerCase();if(!ks.some(k=>hay.includes(k)))return false}return true}
+function remoteUrgent(m){return /^(P\s*1|A\s*[01])$/i.test(String(m?.priority||''))||Number(m?.scale_score)>0||/lifeliner/i.test(m?.service||'')}
+let remotePinUntil=0;
+function filterMessage(m){if(!m?.__test&&(state.settings.exerciseMode||(state.settings.urgentOnly&&!remoteUrgent(m))))return false;let svc=String(m?.service||'').toLowerCase();const resource=mmtResourceInfo(m);if(resource)svc=resource.kind==='helicopter'?'lifeliner':'ambulance';if(state.settings.services?.length&&!state.settings.services.includes(svc))return false;const cs=(state.settings.cities||[]).map(x=>x.toLowerCase()).filter(Boolean);if(cs.length&&!cs.some(c=>(m.city||'').toLowerCase().includes(c)))return false;const ks=(state.settings.keywords||[]).map(x=>x.toLowerCase()).filter(Boolean);if(ks.length){const hay=`${m.title||''} ${m.summary||''} ${m.city||''} ${m.location||''}`.toLowerCase();if(!ks.some(k=>hay.includes(k)))return false}return true}
 function filteredMessages(){return state.messages.filter(filterMessage).sort(compareMessageNewest)}
 function latestMessage(){return filteredMessages()[0]||null}
 function cleanCandidate(value,m){let s=norm(value||'');const ll=llNumber(m),ovd=ovdgNumber(m);s=s.replace(/\(\s*DIA\s*:\s*(?:JA|NEE)\s*\)/g,' ').replace(/\bDIA\s*:?\s*(?:JA|NEE)?\b/g,' ');s=s.replace(/\b(?:P\s*[123]|A[012]|B[12])\b/g,' ');s=s.replace(/\b(?:AMBU|AMBULANCE|BRW|BRANDWEER|POLITIE|P2000)\b/g,' ');s=s.replace(/\b(?:RIT|BON)\s*:?\s*\d+\b/g,' ').replace(/\bREGIO\s*\d+\b/g,' ');s=s.replace(/\b\d{4}\s*[A-Z]{2}\b/g,' ');s=s.replace(/\b(?:13991|13901|17992|17902|17901|08993|08903|1220803|1220804|1220805)\b/g,' ');s=s.replace(/\b12[- ]?2080[345]\b/g,' ');s=s.replace(/\b[A-Z]{2,5}-\d{2}\b/g,' ');s=s.replace(/\b\d{5,8}\b/g,' ');s=s.replace(/\b(?:INZET|MELDING)\b(?=\s*$)/g,' ');s=s.replace(/\s+/g,' ').trim();if(ovd){s=s.replace(/\bOVD-?G\b/g,' ').replace(/\s+/g,' ').trim();s=`OVD-G ${ovd} ${s}`}if(ll&&!s.includes(`LIFELINER ${ll}`))s=`LIFELINER ${ll} ${s.replace(/\bMMT\s*(?:2|3)?\b/g,' ')}`;for(let i=0;i<3;i++)s=s.replace(/\b([A-Z0-9-]{2,})\s+\1\b/g,'$1');return norm(s)}
@@ -750,7 +753,7 @@ function shouldSpeakMessage(m,now=new Date()){
   if(!state.settings.speechEnabled||Number(state.settings.masterVolume??100)<=0||!speechCity(m))return false;
   const mode=String(state.settings.speechMode||'normal').toLowerCase();
   if(mode==='mute')return false;
-  if(mode==='priority'&&!priorityModeEligible(m))return false;
+  if(mode==='priority'&&!(state.settings.urgentOnly?remoteUrgent(m):priorityModeEligible(m)))return false;
   return speechWindowOpen(now);
 }
 function sentenceCaseSpeech(v){
@@ -855,15 +858,18 @@ function incidentDeltaFor(m){
   const speech=applySpeechDictionary(parts.join(' '));
   return {scaleRaised,priorityRaised,typeChanged,newService,newVehicles:newVehicles.map(v=>v.header),speech};
 }
+function speechTemplate(key,fallback,vars={}){let t=String(state.settings?.speechTemplates?.[key]||fallback);for(const [k,v] of Object.entries(vars))t=t.replaceAll(`{${k}}`,String(v??''));return t.replace(/\s+/g,' ').replace(/ \./g,'.').trim()}
 function speechPhrase(m){
   if(m?.__incidentDelta?.speech)return m.__incidentDelta.speech;
   const city=speechCity(m),info=speechIncidentInfo(m),scale=speechScale(m);
   if(!city)return '';
-  const location=speechLocation(m,info,city);
-  const where=spokenIncidentWhere(city,location);
-  const incident=scale?`${info.type}${where} is opgeschaald naar ${scale.toLocaleLowerCase('nl-NL')}.`:`${info.type}${where}.`;
-  const vehicles=vehicleSpeechPhrase(m);
-  return applySpeechDictionary(vehicles?`${incident} ${vehicles}`:incident);
+  const location=speechLocation(m,info,city),where=spokenIncidentWhere(city,location);
+  const parts=[speechTemplate('incident','{incident}{where}.',{incident:info.type,where})];
+  if(scale)parts.push(speechTemplate('scale','Het incident is opgeschaald naar {scale}.',{scale:scale.toLocaleLowerCase('nl-NL')}));
+  const labels=vehicleDetails(m).map(v=>v.speech).filter(Boolean);
+  if(labels.length)parts.push(speechTemplate('units','Gealarmeerde voertuigen: {units}.',{units:joinSpeechParts(labels)}));
+  if(mmtResourceInfo(m)&&!parts.join(' ').includes('Mobiel Medisch Team'))parts.push(speechTemplate('mmt','Het Mobiel Medisch Team is gealarmeerd.'));
+  return applySpeechDictionary(parts.join(' '));
 }
 function voiceScore(v){
   const lang=String(v?.lang||''),name=String(v?.name||'');
@@ -1027,7 +1033,7 @@ async function browserAttentionCue(service='',urgent=false,volume=100){
     return true;
   }catch{return false}finally{try{await ctx?.close?.()}catch{}}
 }
-async function waitForDutchVoice(timeoutMs=900){
+async function waitForDutchVoice(timeoutMs=250){
   const synth=globalThis.speechSynthesis;if(!synth?.getVoices)return null;
   let voice=bestDutchVoice();if(voice)return voice;
   await new Promise(resolve=>{
@@ -1086,12 +1092,12 @@ async function tryPlayMediaElement(audio,url,entry,volume,rate){
     audio.onplaying=()=>{started=true;state.audioStats.unlocked=true;if(startTimer){clearTimeout(startTimer);startTimer=null}};
     audio.onended=()=>finish(true);audio.onerror=()=>finish(false,new Error('browser kon de TTS-audio niet decoderen/afspelen'));
     audio.onstalled=()=>{if(!started)finish(false,new Error('TTS-audio bleef hangen voor afspelen'))};
-    startTimer=setTimeout(()=>{if(!started)finish(false,new Error('TTS-audio startte niet binnen 4 seconden'))},4000);
+    startTimer=setTimeout(()=>{if(!started)finish(false,new Error('TTS-audio startte niet binnen 1,2 seconde'))},1200);
     hardTimer=setTimeout(()=>finish(false,new Error('TTS-audio afspeeltimeout')),estimateSpeechMs(entry.text||'')+12000);
     const attempt=async()=>{
       let last=null;
-      for(let i=0;i<3&&!settled;i++){
-        try{const p=audio.play();if(p&&typeof p.then==='function')await p;return}catch(e){last=e;if(!/AbortError|NotAllowedError|NotSupportedError/i.test(String(e?.name||e)))break;await waitMs(180+i*240)}
+      for(let i=0;i<2&&!settled;i++){
+        try{const p=audio.play();if(p&&typeof p.then==='function')await p;return}catch(e){last=e;if(!/AbortError|NotAllowedError|NotSupportedError/i.test(String(e?.name||e)))break;await waitMs(80+i*100)}
       }
       if(!settled){const err=last||new Error('audio.play mislukt');finish(false,isAudioLockedError(err)?audioLockedError(err):err)};
     };
@@ -1103,7 +1109,7 @@ async function playOnlineAudioInBrowser(text,requestSeq,volume=100,cueService=''
   state.audioStats.attempts++;
   await armAudioBus();
   if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
-  const rendered=await fetchTtsBlob(text,16000,cueService,cueUrgent);
+  const rendered=await fetchTtsBlob(text,8000,cueService,cueUrgent);
   if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
   // SAPI-WAV already contains the attention tone, so the browser performs only
   // ONE actual media play operation for the whole dispatch. The cloud fallback
@@ -1119,21 +1125,34 @@ async function playOnlineAudioInBrowser(text,requestSeq,volume=100,cueService=''
   }catch(error){if(isAudioLockedError(error)){state.audioBus.armed=false;setAudioUnlockVisible(true,'Browser blokkeert automatisch geluid. Klik één keer om de omroep in te schakelen.');throw audioLockedError(error)}throw error}
 }
 function localKioskHost(){const h=String(location.hostname||'').toLowerCase();return h==='127.0.0.1'||h==='localhost'||h==='::1'}
+function windowsKioskHost(){const p=String(navigator.userAgent||navigator.platform||'');return localKioskHost()&&/Windows/i.test(p)}
 async function windowsHostSpeakFallback(text,requestSeq,volume=100,cueService='',cueUrgent=false){
   if(!localKioskHost())throw new Error('host-audio alleen lokaal');
   const controller=typeof AbortController!=='undefined'?new AbortController():null,timer=controller?setTimeout(()=>controller.abort(),18000):null;
   try{
     const r=await fetch('/api/tts/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96)),volume,service:String(cueService||'brandweer'),urgent:!!cueUrgent}),cache:'no-store',signal:controller?.signal});
     const d=await r.json().catch(()=>({}));if(!r.ok||!d?.ok)throw new Error(d?.error||`Windows host-TTS HTTP ${r.status}`);
-    const wait=Math.max(800,Math.min(45000,Number(d.estimated_ms)||estimateSpeechMs(text)));
-    const end=Date.now()+wait;while(Date.now()<end){if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};await waitMs(Math.min(250,end-Date.now()))}
-    return {mode:`windows-host-${d.player||'audio'}`,completed:true};
+    if(!d.playback_token)throw new Error('Audiospeler gaf geen afspeelbevestiging terug');
+    const end=Date.now()+90000;
+    while(Date.now()<end){
+      if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
+      const status=await json('/api/tts/play-status?token='+encodeURIComponent(d.playback_token),{timeoutMs:5000});
+      if(!status.ok||status.status==='error')throw new Error(status.error||'Audiospeler meldde een fout');
+      if(status.status==='completed')return {mode:`windows-host-${d.player||'audio'}`,completed:true};
+      await waitMs(350);
+    }
+    throw new Error('Geen afspeelbevestiging ontvangen binnen 90 seconden');
   }finally{if(timer)clearTimeout(timer)}
 }
 async function onlineSpeakText(text,requestSeq=++state.speechRequestSeq,volume=100,cueService='',cueUrgent=false,deviceVolume=null){
   // Primair: gewone audio in het lichtkrant-tabblad. Op een lokale Windows-kiosk
   // is er nu een tweede, browser-onafhankelijke route via de backend/Windows
   // SoundPlayer. Daardoor levert autoplay/Chromium-stilte geen stille omroep meer op.
+  // Lokale Windows-kiosk: direct SAPI/SoundPlayer, browseraudio alleen fallback.
+  if(windowsKioskHost()){
+    try{const host=await windowsHostSpeakFallback(text,requestSeq,volume,cueService,cueUrgent);noteAudioSuccess(host.mode||'windows-host-audio');setAudioUnlockVisible(false);return host}
+    catch(hostError){noteAudioFailure(hostError,'windows-host');state.audioStats.fallbacks++;console.warn('Directe Windows host-TTS mislukt; browseraudio wordt fallback',hostError)}
+  }
   try{return await playOnlineAudioInBrowser(text,requestSeq,volume,cueService,cueUrgent)}
   catch(e){
     if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
@@ -1162,7 +1181,7 @@ function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',
   const numericDeviceVolume=Number(deviceVolume),safeDeviceVolume=deviceVolume===null?null:Math.max(5,Math.min(100,Number.isFinite(numericDeviceVolume)?numericDeviceVolume:38));
   const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:safeVolume,deviceVolume:safeDeviceVolume,kind,key,groupKey,cueService,cueUrgent:!!cueUrgent,forceAudio:!!forceAudio,skipTune:!!skipTune,onResult:typeof onResult==='function'?onResult:null,queuedAt:Date.now(),retries:0};
   if(key&&(state.speechCurrent?.key===key||state.speechQueue.some(x=>x.key===key)))return false;
-  if(groupKey){state.speechQueue=state.speechQueue.filter(x=>!(x.groupKey===groupKey&&job.priority>=x.priority));}
+  if(groupKey){state.speechQueue=state.speechQueue.filter(x=>{if(x.groupKey===groupKey&&job.priority>=x.priority){try{x.onResult?.({ok:false,detail:'Omroep vervangen door een nieuwere melding'})}catch{}return false}return true});}
   const cur=state.speechCurrent;
   if(cur&&job.priority>=80&&job.priority>cur.priority){
     stopSpeechPlayback({clearQueue:false}).finally(()=>{state.speechQueue.unshift(job);startNextSpeechJob()});return true;
@@ -1174,11 +1193,17 @@ function startNextSpeechJob(){
   const job=state.speechQueue.shift();state.speechCurrent=job;const done=(ok=true,detail='Omroep afgespeeld')=>finishSpeechJob(job.id,{ok,detail});
   const seq=++state.speechRequestSeq;
   (async()=>{
-    const tuned=job.skipTune?false:await playDispatchTuneForJob(job);
+    let tuned=false;
+    if(!job.skipTune){
+      const tunePromise=playDispatchTuneForJob(job).catch(()=>false);
+      const raced=await Promise.race([tunePromise.then(value=>({done:true,value})),waitMs(900).then(()=>({done:false,value:false}))]);
+      tuned=!!raced.value;
+      if(!raced.done)stopCurrentTune();
+    }
     if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return {mode:'cancelled',completed:true};
     return onlineSpeakText(job.text,seq,job.volume,tuned?'':job.cueService,tuned?false:job.cueUrgent,job.deviceVolume);
   })().then(result=>{
-    if(state.speechCurrent?.id!==job.id)return;done(true,result?.mode||'Omroep afgespeeld');
+    if(state.speechCurrent?.id!==job.id)return;done(result?.mode!=='cancelled',result?.mode==='cancelled'?'Omroep geannuleerd':'Omroep afgespeeld ('+(result?.mode||'audio')+')');
   }).catch(e=>{
     if(isAudioLockedError(e)){
       noteAudioFailure(e,'autoplay-locked');
@@ -1188,17 +1213,17 @@ function startNextSpeechJob(){
     }
     noteAudioFailure(e,'all');console.warn('TTS kon niet in het lichtkrant-tabblad afspelen',e);
     if(Number(job.retries||0)<1&&state.speechCurrent?.id===job.id){
-      clearSpeechTimer();state.speechCurrent=null;job.retries=Number(job.retries||0)+1;job.queuedAt=Date.now()+1500;
-      setTimeout(()=>{state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob()},1500);
+      clearSpeechTimer();state.speechCurrent=null;job.retries=Number(job.retries||0)+1;job.queuedAt=Date.now()+250;
+      setTimeout(()=>{state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob()},250);
       startNextSpeechJob();return;
     }
     done(false,String(e?.message||e||'Omroep afspelen mislukt'));
   });
 }
-function maybeSpeakMessage(m,{force=false}={}){
-  if(!m)return false;if(!force&&m?.__incidentDelta?.noChange)return false;if(force){if(!state.settings.speechEnabled||!speechCity(m))return false}else if(!shouldSpeakMessage(m))return false;
+function maybeSpeakMessage(m,{force=false,onResult=null}={}){
+  if(!m)return false;if(!force&&m?.__incidentDelta?.noChange)return false;if(force){if(!state.settings.speechEnabled||state.settings.speechMode==='mute'||Number(state.settings.masterVolume??100)<=0||!speechCity(m))return false}else if(!shouldSpeakMessage(m))return false;
   const key=String(m.id||`${m.published||''}|${originalMessage(m)}`);if(!force&&state.spokenIds.has(key))return false;state.spokenIds.add(key);if(state.spokenIds.size>150){const first=state.spokenIds.values().next().value;state.spokenIds.delete(first)}
-  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);return queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,groupKey:`incident:${m.incident_key||dedupeKey(m)}`,cueService:(/lifeliner/i.test(m?.service||'')?'lifeliner':String(m?.service||'overig')),cueUrgent:urg.rank>=5});
+  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);return queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,groupKey:`incident:${m.incident_key||dedupeKey(m)}`,cueService:(/lifeliner/i.test(m?.service||'')?'lifeliner':String(m?.service||'overig')),cueUrgent:urg.rank>=5,onResult});
 }
 
 function updateLastP2000ActivityFromMessages(){
@@ -1359,7 +1384,7 @@ function drawActiveSolid(w,h){
     ctx.fillStyle='rgba(137,163,175,.42)';ctx.fillText(prefix,left,rawY);ctx.fillStyle='rgba(190,207,214,.54)';ctx.fillText(shown+(shown.length<raw.length?'…':''),left+ctx.measureText(prefix).width,rawY);
   }
 
-  const footerY=h*.942;ctx.fillStyle='rgba(255,255,255,.10)';ctx.fillRect(left,h*.902,contentW,1);ctx.font=`750 ${Math.max(10,Math.min(14,w*.0072))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(179,198,206,.48)';ctx.textAlign='left';const liveCount=!m.__test?activeLiveMessages().length:0,busy=busyPeriodActive(),rotateSec=Math.round(carouselIntervalMs()/1000);ctx.fillText(m.__test?'TESTMELDING  •  LICHTKRANT AUDIO':liveCount>1?`LIVE  •  ${state.activeMessageIndex+1}/${liveCount} MELDINGEN  •  WISSEL ${rotateSec} SEC${busy?'  •  DRUKKE PERIODE':''}`:`LIVE P2000${busy?'  •  DRUKKE PERIODE':''}`,left,footerY);
+  const footerY=h*.942;ctx.fillStyle='rgba(255,255,255,.10)';ctx.fillRect(left,h*.902,contentW,1);ctx.font=`750 ${Math.max(10,Math.min(14,w*.0072))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(179,198,206,.48)';ctx.textAlign='left';const liveCount=!m.__test?activeLiveMessages().length:0,busy=busyPeriodActive(),rotateSec=Math.round(carouselIntervalMs()/1000);ctx.fillText(m.__archive?'ARCHIEF  •  HANDMATIG GETOOND':m.__test?'TESTMELDING  •  LICHTKRANT AUDIO':liveCount>1?`LIVE  •  ${state.activeMessageIndex+1}/${liveCount} MELDINGEN  •  WISSEL ${rotateSec} SEC${busy?'  •  DRUKKE PERIODE':''}`:`LIVE P2000${busy?'  •  DRUKKE PERIODE':''}`,left,footerY);
   const agency=multiAgencyLabel(m);if(agency){ctx.textAlign='right';ctx.fillStyle=theme.accentSoft;ctx.fillText(agency,right,footerY);}
   ctx.restore();
 }
@@ -1565,15 +1590,14 @@ function finishStartupBaseline(){
 }
 function replayLast(){const m=state.lastDisplayedMessage||latestMessage();if(m)activateMessage(m,{force:true,durationMs:REPLAY_MS,appendLive:false})}
 function shouldDisplayIncoming(m){return !!m&&filterMessage(m)&&isFresh(m)&&isLiveMessageActive(m)}
-function processNew(m){if(!m||state.knownIds.has(m.id))return;state.knownIds.add(m.id);pruneKnownIds();if(!isNewSinceMonitorStart(m)){rememberMessage(m);return}if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)}
+function processNew(m){if(!m||state.knownIds.has(m.id))return;if(remotePinUntil>Date.now()&&!remoteUrgent(m)){state.knownIds.add(m.id);pruneKnownIds();rememberMessage(m);return}if(remoteUrgent(m))remotePinUntil=0;state.knownIds.add(m.id);pruneKnownIds();if(!isNewSinceMonitorStart(m)){rememberMessage(m);return}if(shouldDisplayIncoming(m)){const stopped=prepareP2000Speech();activateMessage(m,{force:true});if(shouldSpeakMessage(m))stopped.finally(()=>maybeSpeakMessage(m))}else rememberMessage(m)}
 
 function runtimeIdentity(status){return status&&status.server_instance?`${status.version||''}:${status.server_instance}`:''}
 function runtimeReloadReason(status,currentIdentity=null){
-  const version=String(status?.version||'').trim();
-  if(version&&version!==CLIENT_VERSION)return'version';
-  const id=runtimeIdentity(status);if(!id)return'';
-  if(currentIdentity&&id!==currentIdentity)return'instance';
-  return'';
+  // v4.5.3: runtime changes are handled live through SSE/polling. Never force a
+  // browser reload here: a stale cached app.js used to create an endless loop
+  // on both Windows and Linux whenever backend/client versions differed.
+  return '';
 }
 
 const canvas=$('#ledCanvas'),ctx=canvas.getContext('2d');
@@ -1609,7 +1633,7 @@ function draw(){
 
 let renderPending=false;function render(){if(renderPending)return;renderPending=true;(globalThis.requestAnimationFrame||((fn)=>setTimeout(fn,0)))(()=>{renderPending=false;draw();syncIncidentMap()})}
 async function json(url,opts={}){const {timeoutMs=12000,...fetchOpts}=opts||{},controller=!fetchOpts.signal&&typeof AbortController!=='undefined'?new AbortController():null,timer=controller?setTimeout(()=>controller.abort(),Math.max(500,timeoutMs)):null;try{const r=await fetch(url,{cache:'no-store',...fetchOpts,signal:fetchOpts.signal||controller?.signal});if(!r.ok)throw new Error(`${r.status} ${r.statusText}`);return await r.json()}catch(e){if(e?.name==='AbortError')throw new Error(`Verzoek duurde langer dan ${Math.round(timeoutMs/1000)} seconden`);throw e}finally{if(timer)clearTimeout(timer)}}
-let monitorRuntimeIdentity=null,monitorReloading=false,monitorRuntimeFailures=0,monitorEventSource=null,monitorRuntimeRetryTimer=null,monitorRuntimePromise=null,refreshPromise=null,lastDisplayCommandSeq=null,displayCommandPollPromise=null;
+let monitorRuntimeIdentity=null,monitorReloading=false,monitorRuntimeFailures=0,monitorEventSource=null,monitorRuntimeRetryTimer=null,monitorRuntimePromise=null,refreshPromise=null,lastDisplayCommandSeq=null,displayCommandPollPromise=null,lastDisplayCommandPollAt=0;
 const DISPLAY_CLIENT_ID=(()=>{try{let id=sessionStorage.getItem('p2000DisplayClientId');if(!id){id=`display-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`;sessionStorage.setItem('p2000DisplayClientId',id)}return id}catch{return `display-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,10)}`}})();
 function hardReloadMonitor(reason='runtime'){
   if(monitorReloading)return false;monitorReloading=true;
@@ -1618,6 +1642,7 @@ function hardReloadMonitor(reason='runtime'){
   return true;
 }
 function observeMonitorRuntime(status){
+  if(status?.safe_mode){state.settings.speechEnabled=false;stopSpeechPlayback({clearQueue:true});}
   const reason=runtimeReloadReason(status,monitorRuntimeIdentity);if(reason){hardReloadMonitor(reason);return}
   const id=runtimeIdentity(status);if(!id)return;
   if(monitorRuntimeIdentity===null)monitorRuntimeIdentity=id;
@@ -1630,24 +1655,52 @@ function scheduleRuntimeWatch(delay=1000){
 async function reportClientHealth(){
   const rows=[...(state.renderPerf.samples||[])].filter(Number.isFinite).sort((a,b)=>a-b),sum=rows.reduce((a,b)=>a+b,0),p95=rows.length?rows[Math.min(rows.length-1,Math.floor((rows.length-1)*.95))]:0;
   const rect=canvas.getBoundingClientRect(),heap=Number(globalThis.performance?.memory?.usedJSHeapSize)||0;
-  const a=state.audioStats||{};const payload={client_id:DISPLAY_CLIENT_ID,viewport:`${Math.round(globalThis.innerWidth||rect.width)}x${Math.round(globalThis.innerHeight||rect.height)}`,canvas:`${canvas.width}x${canvas.height}`,dpr:Number(globalThis.devicePixelRatio)||1,render_avg_ms:rows.length?sum/rows.length:0,render_p95_ms:p95,render_max_ms:rows.length?rows.at(-1):0,render_samples:rows.length,js_heap_used:heap,active:activeVisible(),active_count:(state.activeMessages||[]).length,map_visible:!!state.mapVisible,busy:busyPeriodActive(),visibility:document.visibilityState||'unknown',speech_queue:(state.speechQueue||[]).length,speech_active:!!state.speechCurrent,speech_mode:String(state.settings.speechMode||'normal'),master_volume:Number(state.settings.masterVolume??100),audio_attempts:Number(a.attempts)||0,audio_successes:Number(a.successes)||0,audio_failures:Number(a.failures)||0,audio_fallbacks:Number(a.fallbacks)||0,audio_last_error:String(a.lastError||''),audio_last_mode:String(a.lastMode||''),audio_unlocked:!!a.unlocked,audio_last_success_at:Number(a.lastSuccessAt)||0};
-  try{await json('/api/client-health',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true,timeoutMs:8000})}catch{}
+  const a=state.audioStats||{};const payload={client_id:DISPLAY_CLIENT_ID,viewport:`${Math.round(globalThis.innerWidth||rect.width)}x${Math.round(globalThis.innerHeight||rect.height)}`,canvas:`${canvas.width}x${canvas.height}`,dpr:Number(globalThis.devicePixelRatio)||1,render_avg_ms:rows.length?sum/rows.length:0,render_p95_ms:p95,render_max_ms:rows.length?rows.at(-1):0,render_samples:rows.length,js_heap_used:heap,active:activeVisible(),active_count:(state.activeMessages||[]).length,map_visible:!!state.mapVisible,busy:busyPeriodActive(),visibility:document.visibilityState||'unknown',speech_queue:(state.speechQueue||[]).length,speech_active:!!state.speechCurrent,speech_mode:String(state.settings.speechMode||'normal'),master_volume:Number(state.settings.masterVolume??100),audio_attempts:Number(a.attempts)||0,audio_successes:Number(a.successes)||0,audio_failures:Number(a.failures)||0,audio_fallbacks:Number(a.fallbacks)||0,audio_last_error:String(a.lastError||''),audio_last_mode:String(a.lastMode||''),audio_unlocked:!!a.unlocked,audio_last_success_at:Number(a.lastSuccessAt)||0,display_name:String(state.settings.displayTarget||'').trim(),fullscreen:!!document.fullscreenElement,display_mode:(matchMedia?.('(display-mode: fullscreen)')?.matches?'fullscreen':(document.fullscreenElement?'fullscreen':'window')),user_agent:String(navigator.userAgent||'').slice(0,180),current_incident_id:String(state.activeMessage?.incident_key||'')};
+  try{const result=await json('/api/client-health',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),keepalive:true,timeoutMs:8000});if(result.preview_requested)await window.P2000ScreenRemote?.preview(json,DISPLAY_CLIENT_ID,canvas,{message:activeVisible()?String(state.activeMessage?.title||''):'',map_visible:!!state.mapVisible,mode:remotePinUntil>Date.now()?'Vastgezet':state.settings.exerciseMode?'Oefening':activeVisible()?'Melding':trueBlack()?'Donker':'Rustscherm'})}catch{}
 }
 function watchMonitorRuntime(){if(monitorRuntimePromise)return monitorRuntimePromise;monitorRuntimePromise=(async()=>{try{const d=await json(`/api/runtime?_=${Date.now()}`,{timeoutMs:5000});monitorRuntimeFailures=0;observeMonitorRuntime(d);return true}catch{monitorRuntimeFailures++;if(monitorRuntimeFailures<8)scheduleRuntimeWatch(Math.min(5000,750*monitorRuntimeFailures));return false}})().finally(()=>{monitorRuntimePromise=null});return monitorRuntimePromise}
 let sharedSettingsSignature='';
 function settingsSignature(settings){try{return JSON.stringify(settings||{})}catch{return''}}
 function syncLiveAudioVolume(previousMaster,nextMaster){const entry=state.currentSpeechAudio,audio=entry?.audio;if(!audio)return;const old=Math.max(0,Math.min(100,Number(previousMaster??100))),next=Math.max(0,Math.min(100,Number(nextMaster??100)));if(old>0&&Number.isFinite(Number(entry.outputVolume))){entry.outputVolume=Math.max(0,Math.min(100,Number(entry.outputVolume)*next/old));entry.masterAtStart=next;try{audio.volume=entry.outputVolume/100}catch{}}else if(next<=0){try{audio.volume=0}catch{}}}
-function renderMonitorAudioControls(){const value=Math.round(Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)))),mode=String(state.settings.speechMode||'normal');const label=$('#monitorVolumeLabel'),mute=$('#monitorMuteBtn');if(label)label.textContent=`${value}%`;if(mute){mute.textContent=mode==='mute'||value===0?'🔇':'🔊';mute.title=mode==='mute'?'Geluid inschakelen (M)':'Geluid dempen (M)';mute.classList.toggle('active',mode==='mute'||value===0)}}
-function applySharedSettings(settings){const previousMaster=Number(state.settings?.masterVolume??100),incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);merged.speechEngine='online';merged.speechMode=['normal','priority','mute'].includes(String(merged.speechMode))?String(merged.speechMode):'normal';merged.masterVolume=Math.max(0,Math.min(100,Number(merged.masterVolume??100)));sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;syncLiveAudioVolume(previousMaster,merged.masterVolume);renderMonitorAudioControls();syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&merged.speechMode!=='mute'&&merged.masterVolume>0&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false||merged.speechMode==='mute'||merged.masterVolume<=0){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
+function renderProfileBanner(){let banner=document.querySelector('#profileBanner');if(!banner){banner=document.createElement('div');banner.id='profileBanner';banner.style.cssText='position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:20;background:#402e08;color:#ffe39a;padding:7px 16px;border-radius:8px;font:700 14px system-ui;pointer-events:none';document.body.append(banner)}banner.hidden=!state.settings.exerciseMode;banner.textContent='OEFENMODUS · LIVE MELDINGEN ALLEEN IN ARCHIEF'}
+function renderMonitorAudioControls(){renderProfileBanner();const value=Math.round(Math.max(0,Math.min(100,Number(state.settings.masterVolume??100)))),mode=String(state.settings.speechMode||'normal');const label=$('#monitorVolumeLabel'),mute=$('#monitorMuteBtn');if(label)label.textContent=`${value}%`;if(mute){mute.textContent=mode==='mute'||value===0?'🔇':'🔊';mute.title=mode==='mute'?'Geluid inschakelen (M)':'Geluid dempen (M)';mute.classList.toggle('active',mode==='mute'||value===0)}}
+function applySharedSettings(settings){const wasExercise=!!state.settings.exerciseMode;const previousMaster=Number(state.settings?.masterVolume??100),incoming={...(settings||{})};const merged={...DEFAULTS,...incoming,idleSunsetDim:false};merged.services=cleanServiceSettings(merged.services);if(!['native','piper','espeak','sapi','online'].includes(String(merged.speechEngine)))merged.speechEngine='native';merged.speechMode=['normal','priority','mute'].includes(String(merged.speechMode))?String(merged.speechMode):'normal';merged.masterVolume=Math.max(0,Math.min(100,Number(merged.masterVolume??100)));sharedSettingsSignature=settingsSignature(incoming);state.settings=merged;if((merged.exerciseMode&&!wasExercise)||(merged.urgentOnly&&state.activeMessage&&!state.activeMessage.__test&&!remoteUrgent(state.activeMessage))){remotePinUntil=0;clearActiveMessages();stopSpeechPlayback({clearQueue:true})}syncLiveAudioVolume(previousMaster,merged.masterVolume);renderMonitorAudioControls();syncBackgroundPhoto();try{localStorage.setItem('p2000MonitorSettingsV4',JSON.stringify(state.settings))}catch{};if(merged.speechEnabled!==false&&merged.speechMode!=='mute'&&merged.masterVolume>0&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),120);if(merged.speechEnabled===false||merged.speechMode==='mute'||merged.masterVolume<=0){setAudioUnlockVisible(false);stopSpeechPlayback({clearQueue:true})}invalidateIdleStatic();syncDisplayPower();render()}
 async function loadSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};if(Object.keys(remote).length){applySharedSettings(remote);return}const local=loadSettings();applySharedSettings(local);const saved=await json('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(local)});applySharedSettings(saved.settings||local)}catch{state.settings=loadSettings()}}
 async function pollSharedSettings(){try{const d=await json('/api/settings'),remote=d.settings||{};const sig=settingsSignature(remote);if(Object.keys(remote).length&&sig!==sharedSettingsSignature)applySharedSettings(remote)}catch{}}
 async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.displaySleep)return;if(!force&&state.lastPowerWanted===wanted)return;state.lastPowerWanted=wanted;try{const r=await json('/api/display/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:wanted})});if(!r?.ok)state.lastPowerWanted=null;else if(r?.held){const retry=Math.max(1,Number(r.retry_after)||5)*1000;setTimeout(()=>{if(state.lastPowerWanted===wanted){state.lastPowerWanted=null;syncDisplayPower()}},retry+250)}}catch{state.lastPowerWanted=null}}
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
 function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];updateLastP2000ActivityFromMessages();if(!state.started){finishStartupBaseline()}else{const freshNew=filteredMessages().filter(m=>!state.knownIds.has(m.id)&&isFresh(m));freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(processNew);state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds()}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
 function incoming(m){if(!m||state.knownIds.has(m.id))return;state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
-function handleDisplayCommand(p){if(!p||typeof p!=='object')return;const seq=Number(p._command_seq)||0;if(seq&&lastDisplayCommandSeq!==null&&seq<=lastDisplayCommandSeq)return;if(seq)lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,seq);if(p.type==='test')handleTest(p.payload||{});else if(p.type==='replay'){const m={...(p.message||{}),__test:true};if(m&&m.raw){activateMessage(m,{force:true,durationMs:REPLAY_MS});if(p.speak!==false)maybeSpeakMessage(m,{force:true})}}}
-async function pollDisplayCommands(){if(displayCommandPollPromise||monitorReloading)return displayCommandPollPromise;displayCommandPollPromise=(async()=>{try{const initial=lastDisplayCommandSeq===null;const after=initial?0:Number(lastDisplayCommandSeq)||0;const d=await json(`/api/display-commands?after=${after}&initial=${initial?1:0}&_=${Date.now()}`,{timeoutMs:5000});for(const cmd of (d.commands||[]))handleDisplayCommand(cmd);if(Number.isFinite(Number(d.latest_seq)))lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,Number(d.latest_seq)||0);return true}catch{return false}})().finally(()=>{displayCommandPollPromise=null});return displayCommandPollPromise}
-function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'||p.type==='replay'){handleDisplayCommand(p)}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
+function commandReceipt(seq,status,detail){return window.P2000ScreenRemote?.receipt(json,DISPLAY_CLIENT_ID,seq,status,detail)}
+let remoteCommandChain=Promise.resolve();
+function handleDisplayCommand(p){remoteCommandChain=remoteCommandChain.then(()=>executeDisplayCommand(p)).catch(e=>commandReceipt(Number(p?._command_seq),"error",e?.message||"Opdracht mislukt"));return remoteCommandChain}
+async function executeDisplayCommand(p){
+  if(!p||typeof p!=='object')return;
+  const target=String(p.target_client_id||'').trim();if(target&&target!==DISPLAY_CLIENT_ID)return;
+  const seq=Number(p._command_seq)||0;
+  if(seq&&lastDisplayCommandSeq!==null&&seq<=lastDisplayCommandSeq)return;
+  if(seq)lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,seq);
+  await reportClientHealth();
+  await commandReceipt(seq,'received','Opdracht ontvangen door het scherm');
+  if(p.type==='test'){handleTest({...p.payload,_receiptSeq:seq});return}
+  if(p.type==='remote-message'&&p.action==='unpin'){
+    const wasPinned=remotePinUntil>Date.now();remotePinUntil=0;if(wasPinned&&state.activeMessage?.__archive){clearActiveMessages();render()}await commandReceipt(seq,'completed',wasPinned?'Melding losgemaakt':'Er was geen vastgezette melding');return;
+  }
+  if(p.type==='replay'||p.type==='remote-message'){
+    const m={...(p.message||{}),__test:true,__archive:true};
+    if(!m.id||!(m.title||m.summary||m.raw)){await commandReceipt(seq,'error','Melding bevat geen tekst');return}
+    const pin=p.action==='pin';remotePinUntil=pin?Date.now()+300000:0;
+    if(!activateMessage(m,{force:true,durationMs:pin?300000:REPLAY_MS})){await commandReceipt(seq,'error','Melding kon niet worden getoond');return}
+    await new Promise(resolve=>(globalThis.requestAnimationFrame||setTimeout)(resolve));
+    await commandReceipt(seq,'displayed',pin?'Vastgezet voor 5 minuten; urgente live meldingen gaan voor':'Melding op het scherm getoond');
+    if(p.speak!==false){
+      const accepted=maybeSpeakMessage(m,{force:true,onResult:r=>commandReceipt(seq,r?.ok?'completed':'error',r?.detail||'Omroep afgerond')});
+      if(!accepted)await commandReceipt(seq,'error','Wel getoond; omroep niet gestart door audio-instellingen');
+    }else await commandReceipt(seq,'completed',pin?'Melding vastgezet':'Melding getoond zonder omroep');
+  }
+}
+async function pollDisplayCommands(){if(displayCommandPollPromise||monitorReloading)return displayCommandPollPromise;if(monitorEventSource?.readyState===1&&Date.now()-lastDisplayCommandPollAt<10000)return;lastDisplayCommandPollAt=Date.now();displayCommandPollPromise=(async()=>{try{const initial=lastDisplayCommandSeq===null;const after=initial?0:Number(lastDisplayCommandSeq)||0;const d=await json(`/api/display-commands?after=${after}&initial=${initial?1:0}&_=${Date.now()}`,{timeoutMs:5000});for(const cmd of (d.commands||[]))await handleDisplayCommand(cmd);if(Number.isFinite(Number(d.latest_seq)))lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,Number(d.latest_seq)||0);return true}catch{return false}})().finally(()=>{displayCommandPollPromise=null});return displayCommandPollPromise}
+function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'||p.type==='replay'||p.type==='remote-message'){handleDisplayCommand(p)}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
 function tick(){
   const now=Date.now();
@@ -1671,12 +1724,12 @@ function tick(){
   syncDisplayPower();render()
 }
 function fullscreen(){if(!document.fullscreenElement)document.documentElement.requestFullscreen?.();else document.exitFullscreen?.()}
-async function reportTestResult(payload,ok,detail){const token=String(payload?.token||'').trim();if(!token)return;try{await json('/api/test-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,ok:!!ok,detail:String(detail||'').slice(0,240)}),timeoutMs:8000})}catch{}}
+async function reportTestResult(payload,ok,detail){await commandReceipt(payload?._receiptSeq,ok?'completed':'error',detail);const token=String(payload?.token||'').trim();if(!token)return;try{await json('/api/test-result',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,ok:!!ok,detail:String(detail||'').slice(0,240)}),timeoutMs:8000})}catch{}}
 function handleTest(payload){
   const token=payload?.token||payload?.at||null;if(token&&token===state.lastTestToken)return;if(token)state.lastTestToken=token;
   const mode=String(payload?.mode||'message');
   if(mode==='stop-speech'){
-    stopSpeechPlayback({clearQueue:true});return;
+    stopSpeechPlayback({clearQueue:true}).then(()=>commandReceipt(payload?._receiptSeq,'completed','Omroep gestopt'));return;
   }
   if(mode==='blackout'){
     clearActiveMessages();state.testIdleUntil=0;state.testBlackoutUntil=Date.now()+Math.max(1000,Number(payload?.duration_ms)||10000);render();return;
@@ -1699,13 +1752,15 @@ function handleTest(payload){
   const now=new Date(),fallbackCity=String(state.setupProfile?.standplaats_city||state.setupProfile?.standplaats||'Utrecht').trim()||'Utrecht',raw=payload?.title||`P 1 BR woning Hoofdstraat ${fallbackCity}`;
   const m={__test:true,id:`test-${Date.now()}`,published:now.toISOString(),updated:now.toISOString(),title:raw,summary:payload?.summary||raw,url:'',service:payload?.service||'brandweer',priority:payload?.priority||'P1',city:payload?.city||fallbackCity,location:payload?.location||'',units:Array.isArray(payload?.units)?payload.units:[],categories:[payload?.service||'brandweer'],scale:payload?.scale||'',scale_score:Number(payload?.scale_score)||0,incident_key:`test-${Date.now()}`};
   activateMessage(m,{force:true,durationMs:Math.max(5000,Number(payload?.duration_ms)||60000)});
+  commandReceipt(payload?._receiptSeq,'displayed','Testmelding op het scherm getoond');
   if(payload?.speak!==false){
     const explicit=String(payload?.speech_text||'').trim();
     if(explicit){
       const urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,new Date());
-      queueSpeech(explicit,{priority:100,volume,kind:'test',key:`test-speech:${token||Date.now()}`,cueService:String(m.service||'overig'),cueUrgent:urg.rank>=5});
-    }else maybeSpeakMessage(m,{force:true});
-  }
+      const accepted=queueSpeech(explicit,{priority:100,volume,kind:'test',key:`test-speech:${token||Date.now()}`,cueService:String(m.service||'overig'),cueUrgent:urg.rank>=5,onResult:r=>reportTestResult(payload,!!r?.ok,r?.detail||'Omroep afgerond')});
+      if(!accepted)reportTestResult(payload,false,'Omroep kon niet aan de wachtrij worden toegevoegd');
+    }else if(!maybeSpeakMessage(m,{force:true,onResult:r=>reportTestResult(payload,!!r?.ok,r?.detail||'Omroep afgerond')}))reportTestResult(payload,false,'Omroep niet gestart door audio-instellingen');
+  }else reportTestResult(payload,true,'Testmelding getoond zonder omroep');
 }
 let controlsTimer=null;function showControls(){const room=$('#room');room.classList.add('show-controls');clearTimeout(controlsTimer);controlsTimer=setTimeout(()=>room.classList.remove('show-controls'),2200)}
 $('#fullscreenBtn').addEventListener('click',fullscreen);$('#lastBtn').addEventListener('click',replayLast);
@@ -1725,4 +1780,4 @@ document.addEventListener('keydown',e=>{if(state.audioBus.locked||!state.audioBu
 window.addEventListener('resize',resizeCanvas);
 window.addEventListener('storage',e=>{if(e.key==='p2000MonitorSettingsV4'){state.settings=loadSettings();syncBackgroundPhoto();invalidateIdleStatic();syncDisplayPower();render()}if(e.key==='p2000TestMessage'&&e.newValue){try{handleTest(JSON.parse(e.newValue))}catch{handleTest({})}}});
 try{const bc=new BroadcastChannel('p2000-monitor');bc.onmessage=e=>{if(e.data?.type==='test')handleTest(e.data)}}catch{}
-setInterval(tick,1000);setInterval(pollDisplayCommands,1500);setInterval(watchMonitorRuntime,10000);setInterval(reportClientHealth,10000);setInterval(pollSharedSettings,30000);setInterval(refresh,300000);window.addEventListener('online',()=>scheduleRuntimeWatch(250));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){scheduleRuntimeWatch(250);if(state.settings.speechEnabled!==false&&!state.audioBus.armed)armAudioBus().catch(()=>{});if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()}});resizeCanvas();setTimeout(reportClientHealth,1200);setTimeout(pollDisplayCommands,800);Promise.all([loadVehicleDb(),loadSharedSettings(),loadSetupProfile()]).then(async()=>{if(state.settings.speechEnabled!==false&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),250);await refresh();if(!monitorReloading){connect()}});
+setInterval(tick,1000);setInterval(pollDisplayCommands,1500);setInterval(watchMonitorRuntime,10000);setInterval(reportClientHealth,10000);setInterval(pollSharedSettings,30000);setInterval(refresh,300000);window.addEventListener('online',()=>scheduleRuntimeWatch(250));document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){scheduleRuntimeWatch(250);if(state.settings.speechEnabled!==false&&!state.audioBus.armed)armAudioBus().catch(()=>{});if(state.started&&Date.now()-state.lastRefreshAt>5000)refresh()}});resizeCanvas();setTimeout(reportClientHealth,1200);setTimeout(pollDisplayCommands,800);window.P2000Auth.ready.then(()=>Promise.all([loadVehicleDb(),loadSharedSettings(),loadSetupProfile()])).then(async()=>{if(state.settings.speechEnabled!==false&&!state.audioBus.armed)setTimeout(()=>armAudioBus().catch(()=>{}),250);await refresh();if(!monitorReloading){connect()}});
