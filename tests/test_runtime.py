@@ -19,7 +19,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,6 +40,9 @@ class RuntimeTests(unittest.TestCase):
         shutil.copytree(ROOT, cls.root, ignore=shutil.ignore_patterns('.git', 'data', 'config', '__pycache__', 'node_modules'))
         cls.module = m = load('p2000_test_runtime', cls.root / 'backend/server.py')
         m.SAFE_MODE = True
+        # HTTP handlers may finish after their response is read. Never allow a
+        # late callback to exec the entire test runner when an inner mock exits.
+        m.schedule_self_restart = Mock(name="isolated_restart")
         config = m.load_config(); config.update(bind='0.0.0.0', startup_selftest=False)
         cls.state = m.AppState(config); cls.state.init_db()
         cls.state.feed_status = 'disabled'
@@ -113,13 +116,14 @@ class RuntimeTests(unittest.TestCase):
         finally: self.state.config['bind'] = original
 
     def test_remote_enable_persists_and_restarts(self):
-        with patch.object(self.module, 'schedule_self_restart') as restart:
-            status, data, _ = self.request('/api/remote/config', {'enabled': True})
-            self.assertEqual(status, 200); self.assertTrue(data['restarting']); restart.assert_called_once()
-            self.assertEqual(json.loads(self.module.CONFIG_PATH.read_text())['bind'], '0.0.0.0')
-        with patch.object(self.module, 'schedule_self_restart'):
-            self.assertEqual(self.request('/api/remote/config', {'enabled': False})[0], 200)
-            self.assertEqual(json.loads(self.module.CONFIG_PATH.read_text())['bind'], '127.0.0.1')
+        for enabled, bind in [(True, '0.0.0.0'), (False, '127.0.0.1')]:
+            called = threading.Event()
+            with patch.object(self.module, 'schedule_self_restart', side_effect=lambda: called.set()) as restart:
+                status, data, _ = self.request('/api/remote/config', {'enabled': enabled})
+                self.assertEqual(status, 200); self.assertTrue(data['restarting'])
+                self.assertTrue(called.wait(2), 'HTTP-handler heeft de herstart niet ingepland')
+                restart.assert_called_once()
+                self.assertEqual(json.loads(self.module.CONFIG_PATH.read_text(encoding='utf-8'))['bind'], bind)
         self.assertEqual(self.request('/api/remote/config', {'enabled': 'yes'})[0], 400)
 
     def test_settings_partial_saves_are_durable_and_independent(self):
@@ -162,7 +166,7 @@ class RuntimeTests(unittest.TestCase):
     def test_actual_http_health_and_dashboard(self):
         self.assertTrue(self.request('/api/health')[1]['ok'])
         code, data, _ = self.request('/api/remote/status', phone=True, token=True)
-        self.assertEqual(code, 200); self.assertEqual(data['version'], '4.7.0'); self.assertIsInstance(data['displays'], list)
+        self.assertEqual(code, 200); self.assertEqual(data['version'], (self.root/'VERSION').read_text(encoding='utf-8').strip()); self.assertIsInstance(data['displays'], list)
         for path in ['/remote', '/remote.js', '/auth.js', '/control', '/setup.html']:
             self.assertEqual(self.request(path)[0], 200)
 
@@ -247,7 +251,7 @@ class RuntimeTests(unittest.TestCase):
                 bundle.write(self.root/name, 'lichtkrant-release/'+name)
         package, version = self.module._validate_and_extract_update(archive)
         try:
-            self.assertEqual(version, '4.7.0')
+            self.assertEqual(version, (self.root/'VERSION').read_text(encoding='utf-8').strip())
             self.assertTrue(self.module._preflight_staged_update(package, version)['ok'])
         finally:
             stage = package.parent if (package.parent/'.p2000-update-stage').exists() else package

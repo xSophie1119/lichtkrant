@@ -34,6 +34,9 @@ def evaluate_installation_health(root: Path, *, expected_version: str | None=Non
     try: dashboard=tuple(int(x) for x in version.split(".")[:3]) >= (4,7,0)
     except ValueError: dashboard=True
     if dashboard: required=(*required,"frontend/remote-plus.js","frontend/remote-monitor.js")
+    try: studio=tuple(int(x) for x in version.split('.')[:3]) >= (4,8,0)
+    except ValueError: studio=True
+    if studio: required=(*required,"frontend/studio.html","frontend/studio.js","frontend/studio.css","frontend/studio-engine.js","frontend/studio-live.js","frontend/studio-preview.html")
     for rel in required:
         p=root/rel
         if not p.is_file() or p.stat().st_size < 10: critical.append(f'vereist frontendbestand ontbreekt/leeg: {rel}')

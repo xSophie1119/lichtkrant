@@ -51,19 +51,4 @@
       <button id="fullscreenBtn" title="Volledig scherm (F)">⛶</button>
     </div>
   </main>
-  <script src="/studio-engine.js?v=480"></script>
-  <script src="/studio-live.js?v=480"></script>
-  <script src="/remote-monitor.js?v=470"></script>
-  <script src="/auth.js?v=460"></script>
-  <script>
-  (async()=>{
-    await window.P2000Auth.ready;
-    try{
-      const r=await fetch('/api/setup',{cache:'no-store'}),d=await r.json();
-      if(!d?.setup?.setup_complete){location.replace('/setup.html');return;}
-    }catch(e){console.warn('Setupcontrole mislukt; monitor probeert normaal te starten.',e)}
-    const assetKey=Date.now().toString(36);const css=document.querySelector('link[rel="stylesheet"]');if(css)css.href=`/lightkrant.css?v=${assetKey}`;const script=document.createElement('script');script.src=`/app.js?v=${assetKey}`;script.defer=true;document.body.appendChild(script);
-  })();
-</script>
-</body>
-</html>
+<script>window.P2000_STUDIO_PREVIEW=true;</script><script src="/studio-engine.js?v=480"></script><script src="/studio-live.js?v=480"></script><script src="/app.js?v=480"></script></body></html>

@@ -1,4 +1,4 @@
-# P2000 Monitor — Windows + Linux v4.7.0
+# P2000 Monitor — Windows + Linux v4.8.0
 
 Configureerbare P2000-lichtkrant met een lokaal mobiel bedienpaneel.
 
@@ -9,9 +9,9 @@ Configureerbare P2000-lichtkrant met een lokaal mobiel bedienpaneel.
 - Volume, omroep, scherm, tests en meldingen staan in het mobiele paneel. Alle overige opties zijn bereikbaar via **Alle instellingen** en de configuratiewizard.
 - Zie [Telefoonbediening](TELEFOONBEDIENING.md) voor de volledige uitleg, verbindingstips en herstel van een niet-startende v4.5.7-installatie.
 
-## Nieuw in v4.7.0
+## Nieuw in v4.8.0
 
-Schermvoorvertoning, opdrachtbevestigingen, bedieningsprofielen, afzonderlijke apparaatsessies met kijkrechten, storingsdiagnose, herstelpunten, een mobiel archief en live prestatiemeting. Windows-hostaudio meldt nu de echte processtatus en respecteert WAV-volume. CI controleert wijzigingen op Windows en Linux. Lees [wijzigingen en testresultaten](CHANGELOG_v4.7.0.md).
+Schermvoorvertoning, opdrachtbevestigingen, bedieningsprofielen, afzonderlijke apparaatsessies met kijkrechten, storingsdiagnose, herstelpunten, een mobiel archief en live prestatiemeting. Windows-hostaudio meldt nu de echte processtatus en respecteert WAV-volume. CI controleert wijzigingen op Windows en Linux. Lees [wijzigingen en testresultaten](CHANGELOG_v4.8.0.md).
 
 ## Nieuw in v4.6.0
 
@@ -347,3 +347,7 @@ ${XDG_STATE_HOME:-~/.local/state}/p2000-monitor/logs
 ```
 
 De backenddatabase en instellingen blijven bewust naast de applicatie staan zodat bestaande installaties en de ingebouwde updater hun data kunnen behouden.
+
+## Lichtkrantstudio
+
+Open `/studio.html` vanuit het telefoonpaneel voor werkgebieden, regels, beslislog, omroepopbouw, parsercorrecties, schermontwerp en opnamen. Zie [LICHTKRANTSTUDIO.md](LICHTKRANTSTUDIO.md).

@@ -13,6 +13,8 @@ def get(handler, parsed, runtime):
     qs = parse_qs(parsed.query)
     value = lambda name, default='': qs.get(name, [default])[0]
     path = parsed.path
+    if path.startswith('/api/remote/studio/'):
+        return runtime.studio_api.handle(handler, path, query=qs)
     if path == '/api/remote/events':
         return events(handler, runtime)
     try:
@@ -62,6 +64,8 @@ def get(handler, parsed, runtime):
 def post(handler, path, payload, runtime):
     state, access = handler.state, runtime._REMOTE_ACCESS
     dash = state.dashboard
+    if path.startswith('/api/remote/studio/'):
+        return runtime.studio_api.handle(handler, path, payload)
     try:
         if path in {'/api/remote/invite', '/api/remote/revoke'}:
             if not access.is_loopback(handler.client_address[0]):
