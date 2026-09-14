@@ -1189,7 +1189,8 @@ function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',
   if(groupKey){state.speechQueue=state.speechQueue.filter(x=>{if(x.groupKey===groupKey&&job.priority>=x.priority){try{x.onResult?.({ok:false,detail:'Omroep vervangen door een nieuwere melding'})}catch{}return false}return true});}
   const cur=state.speechCurrent;
   if(cur&&job.priority>=80&&job.priority>cur.priority){
-    stopSpeechPlayback({clearQueue:false}).finally(()=>{state.speechQueue.unshift(job);startNextSpeechJob()});return true;
+    state.speechQueue.unshift(job);
+    stopSpeechPlayback({clearQueue:false}).finally(()=>startNextSpeechJob());return true;
   }
   state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob();return true;
 }

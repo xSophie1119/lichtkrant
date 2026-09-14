@@ -325,3 +325,18 @@ test('Settings navigation retains unsaved fields and supports existing deep link
     assert.equal(window.document.querySelector('#nameInput').value,'Niet opgeslagen');
   }finally{window.close();}
 });
+
+test('Stop also removes an urgent job while Windows is stopping the previous audio',async()=>{
+  const {window}=monitor();let releaseStop;const results=[];
+  try{
+    Object.defineProperty(window.navigator,'userAgent',{value:'Windows NT 10.0'});
+    window.setQueueRunner(()=>{});
+    window.setJson(()=>new Promise(resolve=>{releaseStop=resolve}));
+    window.screenState.speechCurrent={id:'old',priority:10};
+    window.queueSpeech('Urgent',{priority:100,onResult:r=>results.push(r)});
+    await window.stopSpeechPlayback({clearQueue:true});
+    releaseStop({ok:true});await settle();
+    assert.equal(window.screenState.speechQueue.length,0);
+    assert.equal(results.length,1);assert.equal(results[0].ok,false);
+  }finally{window.close();}
+});

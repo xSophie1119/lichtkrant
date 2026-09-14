@@ -49,3 +49,7 @@
  .studio-page nav button{white-space:normal;font-size:13px;padding:9px}.studio-page .tab{padding:20px 16px}.studio-page .map{height:300px}
  .studio-page #notice{top:116px}.studio-page header strong{flex:1}.studio-page .row>*{min-width:0}.studio-page header button{flex:1}
 }
+
+/* Speech chips keep their natural width instead of overflowing tiny flex items. */
+.studio-page #speechChips>button{flex:0 0 auto;min-width:0;max-width:100%}
+@media(max-width:760px){.studio-page .row>button{flex:1 1 140px;white-space:normal;overflow-wrap:anywhere}.studio-page #speechChips>button{flex:0 0 auto}}
