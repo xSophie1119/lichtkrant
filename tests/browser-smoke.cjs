@@ -3,6 +3,11 @@
   const {chromium}=require('playwright'),fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
   const root=path.resolve(__dirname,'..'),output=path.join(root,'browser-artifacts');fs.mkdirSync(output,{recursive:true});
   const browser=await chromium.launch({headless:true});
+  const layoutFailures=[];
+  async function checkWidth(page,label){
+    const result=await page.evaluate(()=>({width:innerWidth,documentWidth:document.documentElement.scrollWidth,overflow:[...document.querySelectorAll('body *')].filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&(r.right>innerWidth+1||r.left<-1)}).slice(0,12).map(el=>({tag:el.tagName,id:el.id,class:el.className,width:el.getBoundingClientRect().width,right:el.getBoundingClientRect().right}))}));
+    if(result.documentWidth>result.width+1)layoutFailures.push({label,...result});
+  }
   const settings={name:'Tilburg112',masterVolume:70,speechEnabled:false,speechMode:'normal',speechCities:[],mapEnabled:false,nightMode:false,activeProfile:'normal',services:['brandweer','politie','ambulance'],messageDisplayMode:'parsed'};
   const config={enabled:false,default_action:'show',unknown_location:'show',rules:[],zones:[],speech:{enabled:false,template:'{incident}{where}. {units}',cue:true},layout:{enabled:false,aspect:'16:9',min_font:24,scenes:{idle:[],single:[],multiple:[]}},corrections:[],examples:[]};
   const message={id:'example',__test:true,published:new Date().toISOString(),title:'P 1 BR Woning Hoofdstraat Tilburg 20-9432',summary:'P 1 BR Woning Hoofdstraat Tilburg 20-9432',service:'brandweer',priority:'P1',city:'Tilburg',location:'Hoofdstraat',units:['209432']};
@@ -37,16 +42,17 @@
       for(const name of ['overview','sound','messages','management']){
         await page.locator(nav+' [data-page="'+name+'"]').click();
         await page.waitForFunction(name=>[...document.querySelectorAll('[data-panel]')].every(x=>x.hasAttribute('data-page-hidden')===(x.dataset.panel!==name)),name);
-        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'remote overflow '+width+' '+name);
+        await checkWidth(page,'remote '+width+' '+name);
         await page.screenshot({path:path.join(output,'remote-'+width+'-'+name+'.png'),fullPage:true});
       }
       await page.goto('http://127.0.0.1/control');
       await page.locator('[data-category][aria-current]').waitFor();
+      await page.waitForFunction(()=>document.querySelector('#nameInput').value==='Tilburg112');
       await page.locator('#nameInput').fill('Eigen titel');
       for(const name of ['audio','filters','vehicles','system','appearance']){
         await page.locator('[data-category="'+name+'"]').click();
         await page.waitForFunction(name=>document.querySelector('[data-category="'+name+'"]').hasAttribute('aria-current'),name);
-        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'control overflow '+width+' '+name);
+        await checkWidth(page,'control '+width+' '+name);
       }
       assert.equal(await page.locator('#nameInput').inputValue(),'Eigen titel');
       await page.screenshot({path:path.join(output,'settings-'+width+'.png'),fullPage:true});
@@ -54,7 +60,7 @@
       await page.locator('#saveState').filter({hasText:/Opgeslagen|Toegepast/}).waitFor();
       for(const name of ['areas','rules','log','speech','corrections','layout','replay']){
         await page.locator('[data-tab="'+name+'"]').click();
-        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),true,'studio overflow '+width+' '+name);
+        await checkWidth(page,'studio '+width+' '+name);
       }
       await page.locator('[data-tab="speech"]').click();
       await page.screenshot({path:path.join(output,'studio-'+width+'.png'),fullPage:true});
@@ -80,6 +86,7 @@
     const phrase=await page.evaluate(({message,config,settings})=>window.P2000SpeechPreview.format(message,{revision:1,config},settings),{message,config,settings});
     assert.match(phrase,/Tilburg/);assert.deepEqual(errors,[]);
     await context.close();
+    assert.deepEqual(layoutFailures,[],JSON.stringify(layoutFailures,null,2));
     console.log('Browser checks passed: 390/768/1440 px navigation, no page overflow, no uncaught errors, real TV canvas and speech formatter.');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1});
