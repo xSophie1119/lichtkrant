@@ -129,7 +129,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.8.0"
+APP_VERSION = "4.8.1"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -6845,6 +6845,7 @@ def generate_online_tts(text: str) -> bytes:
 
 _TTS_PLAYER_LOCK = threading.Lock()
 _TTS_PLAYER_PROCESS = None
+_TTS_PLAY_GENERATION = 0
 _TTS_LAST_ERROR = ""
 _TTS_LAST_PLAYER = ""
 _TTS_LAST_PLAYED = ""
@@ -6855,21 +6856,12 @@ def detect_local_audio_player(volume: int = 100, media_path: str | Path | None =
     if os.name=="nt":
         ps=shutil.which("powershell.exe") or shutil.which("powershell")
         if not ps:return None,None
-        suffix=Path(media_path).suffix.lower() if media_path else ""
-        if suffix==".wav":
-            # SoundPlayer is much more reliable than Chromium/WPF for local PCM
-            # dispatch WAV files and does not depend on browser autoplay state.
-            script=("$ErrorActionPreference='Stop'; "
-                    "$p=New-Object System.Media.SoundPlayer $args[0]; "
-                    "$p.Load(); $p.PlaySync(); $p.Dispose()")
-            return "windows-soundplayer",[ps,"-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",script]
-        gain=volume/100.0
-        script=("$ErrorActionPreference='Stop'; Add-Type -AssemblyName PresentationCore; "
-                "$p=New-Object System.Windows.Media.MediaPlayer; $p.Open([Uri]$args[0]); $p.Volume="+f"{gain:.3f}"+"; "
-                "for($i=0;$i -lt 100 -and -not $p.NaturalDuration.HasTimeSpan;$i++){Start-Sleep -Milliseconds 50}; "
-                "if(-not $p.NaturalDuration.HasTimeSpan){throw 'Windows MediaPlayer kon audiolengte niet bepalen'}; "
-                "$p.Play(); Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds+350); $p.Close()")
-        return "windows-media",[ps,"-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-Command",script]
+        suffix=os.path.splitext(str(media_path or ""))[1].lower()
+        # -File binds the media path literally, including spaces. With -Command,
+        # trailing arguments become PowerShell code instead of script parameters.
+        script=os.path.join(os.path.dirname(os.path.abspath(__file__)), "windows_audio.ps1")
+        player="windows-soundplayer" if suffix==".wav" else "windows-media"
+        return player,[ps,"-NoProfile","-NonInteractive","-ExecutionPolicy","Bypass","-File",script,"-Volume",str(volume/100.0),"-AudioPath"]
     if sys.platform.startswith("linux"):
         if shutil.which("mpv"): return "mpv",[shutil.which("mpv"),"--no-video","--really-quiet",f"--volume={volume}"]
         if shutil.which("ffplay"): return "ffplay",[shutil.which("ffplay"),"-nodisp","-autoexit","-loglevel","quiet","-volume",str(volume)]
@@ -6952,24 +6944,27 @@ def _estimate_dispatch_ms(text: str, rate: float = 0.96) -> int:
     return max(3000, min(40000, int((words / (2.2 * safe_rate)) * 1000 + 2600)))
 
 
-def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, cue_service: str = "brandweer", cue_urgent: bool = False) -> dict:
+def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, cue_service: str = "brandweer", cue_urgent: bool = False, attention: bool = True) -> dict:
     """Windows-only last-resort playback on the kiosk machine itself.
 
     The normal route still plays inside the lightkrant browser. This fallback is
     intentionally used only for localhost Windows requests so a remote beheer-PC
     never starts speaking instead of the actual display.
     """
-    global _TTS_PLAYER_PROCESS, _TTS_LAST_ERROR, _TTS_LAST_PLAYER, _TTS_LAST_PLAYED
+    global _TTS_PLAY_GENERATION, _TTS_PLAYER_PROCESS, _TTS_LAST_ERROR, _TTS_LAST_PLAYER, _TTS_LAST_PLAYED
     if os.name != "nt":
         raise RuntimeError("Windows host-TTS is alleen beschikbaar op Windows")
     text = normalize_space(str(text or ""))[:1200]
     if not text:
         raise ValueError("empty tts text")
-    audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=cue_service or "brandweer", urgent=bool(cue_urgent), attention=True)
+    with _TTS_PLAYER_LOCK:
+        _TTS_PLAY_GENERATION += 1
+        generation = _TTS_PLAY_GENERATION
+    audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=cue_service or "brandweer", urgent=bool(cue_urgent), attention=bool(attention))
     volume = max(0, min(100, int(volume)))
     if mime == "audio/wav": audio = attenuate_wav(audio, volume)
     ext = ".wav" if mime == "audio/wav" else ".mp3"
-    key = hashlib.sha256((f"host-dispatch-v2-volume|{rate}|{volume}|{cue_service}|{int(bool(cue_urgent))}|" + text).encode("utf-8")).hexdigest()
+    key = hashlib.sha256((f"host-dispatch-v3|{rate}|{volume}|{cue_service}|{int(bool(cue_urgent))}|{int(bool(attention))}|" + text).encode("utf-8")).hexdigest()
     TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = TTS_CACHE_DIR / f"host-{key}{ext}"
     if not cache_file.exists() or cache_file.stat().st_size < 100:
@@ -6980,6 +6975,8 @@ def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, 
     if not player or not argv:
         raise RuntimeError("Geen Windows-audiospeler beschikbaar")
     with _TTS_PLAYER_LOCK:
+        if generation != _TTS_PLAY_GENERATION:
+            return {"ok": True, "cancelled": True}
         if _TTS_PLAYER_PROCESS is not None and _TTS_PLAYER_PROCESS.poll() is None:
             try:
                 HOST_PLAYBACK.cancel(_TTS_PLAYER_PROCESS)
@@ -7057,8 +7054,9 @@ def play_online_tts_on_host(text: str, volume: int = 100, cue_service: str = "",
 
 
 def stop_host_tts() -> bool:
-    global _TTS_PLAYER_PROCESS
+    global _TTS_PLAYER_PROCESS, _TTS_PLAY_GENERATION
     with _TTS_PLAYER_LOCK:
+        _TTS_PLAY_GENERATION += 1
         if _TTS_PLAYER_PROCESS is not None and _TTS_PLAYER_PROCESS.poll() is None:
             try:
                 HOST_PLAYBACK.cancel(_TTS_PLAYER_PROCESS)
@@ -8657,6 +8655,7 @@ class Handler(BaseHTTPRequestHandler):
                     text, rate=rate, volume=bounded_int(payload.get("volume", 100), 100, 0, 100),
                     cue_service=normalize_space(str(payload.get("service") or "brandweer"))[:40].lower(),
                     cue_urgent=bool(payload.get("urgent", False)),
+                    attention=bool(payload.get("attention", True)),
                 )
                 return self.send_json(result)
             except Exception as exc:

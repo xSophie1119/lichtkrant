@@ -27,7 +27,7 @@ class PlaybackTracker:
             job = self.jobs.get(token)
             if not job: return {'ok': False, 'status': 'error', 'error': 'Afspeelopdracht niet gevonden'}
             code = job['process'].poll()
-            if job['cancelled']: return {'ok': False, 'status': 'error', 'error': 'Omroep gestopt'}
+            if job['cancelled']: return {'ok': True, 'status': 'cancelled', 'detail': 'Omroep gestopt'}
             if code is None: return {'ok': True, 'status': 'playing'}
             if code != 0: return {'ok': False, 'status': 'error', 'error': f'Audiospeler gestopt met foutcode {code}'}
             return {'ok': True, 'status': 'completed', 'detail': 'Audiospeler heeft de omroep afgerond'}

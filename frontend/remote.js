@@ -16,6 +16,24 @@
     commandQueue = result.catch(() => {});
     return result;
   }
+  function navigate() {
+    const hash=location.hash.slice(1),panel=document.getElementById(hash);
+    const page=['overview','sound','messages','management'].includes(hash)?hash:panel?.dataset.panel||'overview';
+    for(const el of document.querySelectorAll('[data-panel]'))el.toggleAttribute('data-page-hidden',el.dataset.panel!==page);
+    for(const link of document.querySelectorAll('[data-page]')){if(link.dataset.page===page)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current');}
+  }
+  window.addEventListener('hashchange',navigate);navigate();
+  async function restoreStandard(kind){
+    const design=await api('/api/remote/studio/config');
+    if(!design?.config)throw new Error('Studio-instellingen konden niet worden opgehaald.');
+    const config=JSON.parse(JSON.stringify(design.config));config[kind].enabled=false;
+    await post('/api/remote/studio/config',{config,revision:design.revision});
+    try{
+      const patch=kind==='layout'?{messageDisplayMode:'parsed'}:{speechEnabled:true,speechMode:'normal'};
+      const result=await post('/api/settings',patch);renderSettings(result.settings);
+      notice(kind==='layout'?'Rustige standaardweergave toegepast.':'Standaardomroep ingeschakeld. Controleer het geluid met Test omroep.');
+    }catch(error){throw new Error('Eigen '+(kind==='layout'?'indeling':'omroepopbouw')+' staat uit. Overige instellingen niet opgeslagen: '+error.message);}
+  }
   function renderSettings(settings) {
     current = settings || {};
     $('#monitorName').textContent = current.name || 'Je lichtkrant, binnen handbereik.';
@@ -23,6 +41,8 @@
       $('#volume').value = current.masterVolume ?? 100;
       $('#volumeValue').textContent = `${$('#volume').value}%`;
     }
+    const places=(current.speechCities||[]).filter(Boolean);
+    $('#audioExplanation').textContent=places.length?'Omroep beperkt tot: '+places.join(', ')+'.':'Geen extra plaatsfilter voor de omroep.';
     const mode = current.speechEnabled === false ? 'mute' : current.speechMode || 'normal';
     document.querySelectorAll('[data-mode]').forEach(button => { button.classList.toggle('active', button.dataset.mode === mode); button.setAttribute('aria-pressed', String(button.dataset.mode === mode)); });
     $('#modeHint').textContent = {normal: 'Alle ingestelde meldingen worden omgeroepen.', priority: 'Alleen prioriteitsmeldingen worden omgeroepen.', mute: 'Meldingen blijven zichtbaar; de omroep staat stil.'}[mode] || '';
@@ -46,6 +66,7 @@
     window.P2000RemotePlus?.update(data);
     $('#feedState').textContent = labels[data.feed_status] || data.feed_status || 'Onbekend';
     $('#feedState').title = data.last_error || '';
+    document.querySelector('.status-strip').dataset.feed=data.feed_status||'unknown';
     const displays = (data.displays || []).filter(row => row.online);
     $('#screenState').textContent = displays.length ? `${displays.length} verbonden` : 'Geen scherm';
     $('#version').textContent = `v${data.version}`;
@@ -171,6 +192,8 @@
     });
     $('#volume').addEventListener('input', event => { pendingVolume = Number(event.target.value); $('#volumeValue').textContent = `${pendingVolume}%`; clearTimeout(volumeTimer); volumeTimer = setTimeout(flushVolume, 180); });
     $('#volume').addEventListener('change', flushVolume);
+    bindButton($('#calmDisplay'),()=>serialize(()=>restoreStandard('layout')));
+    bindButton($('#restoreSpeech'),()=>serialize(()=>restoreStandard('speech')));
     bindButton($('#sendTest'), () => { const text = $('#testText').value.trim(); if (!text) throw new Error('Vul eerst een testmelding in.'); return test('message', text); });
     bindButton($('#reconnect'), async () => { await post('/api/feeds/reconnect'); notice('Bronnen worden opnieuw verbonden.'); });
     bindButton($('#enableRemote'), () => setRemote(true)); bindButton($('#disableRemote'), () => setRemote(false));
