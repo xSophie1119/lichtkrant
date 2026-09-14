@@ -190,7 +190,7 @@ function monitor(){
   window.HTMLCanvasElement.prototype.getContext=()=>new Proxy({measureText:text=>({width:String(text).length*8}),createLinearGradient:()=>({addColorStop(){}})}, {get:(obj,key)=>obj[key]||(()=>{})});
   window.matchMedia=()=>({matches:false});window.requestAnimationFrame=fn=>{fn();return 1;};
   const source=read('app.js').split("let controlsTimer=null;")[0];
-  window.eval(source+`\nObject.assign(window,{screenState:state,filterMessage,remoteUrgent,pollDisplayCommands,handleDisplayCommand,handleTest,queueSpeech,finishSpeechJob,HOST_TEST:{},configureScreenTest:hooks=>{if(hooks.activate)activateMessage=hooks.activate;if(hooks.speak)maybeSpeakMessage=hooks.speak;reportClientHealth=async()=>{};commandReceipt=async(seq,status,detail)=>{hooks.receipts.push({seq,status,detail})};render=()=>{};clearActiveMessages=()=>{};},setJson:fn=>{json=fn},setQueueRunner:fn=>{startNextSpeechJob=fn},setTestReporter:fn=>{reportTestResult=fn}});`);
+  window.eval(source+`\nObject.assign(window,{screenState:state,filterMessage,remoteUrgent,shouldSpeakMessage,speechPhrase,maybeSpeakMessage,stopSpeechPlayback,windowsHostSpeakFallback,setAudioRunner:fn=>{onlineSpeakText=fn},pollDisplayCommands,handleDisplayCommand,handleTest,queueSpeech,finishSpeechJob,HOST_TEST:{},configureScreenTest:hooks=>{if(hooks.activate)activateMessage=hooks.activate;if(hooks.speak)maybeSpeakMessage=hooks.speak;reportClientHealth=async()=>{};commandReceipt=async(seq,status,detail)=>{hooks.receipts.push({seq,status,detail})};render=()=>{};clearActiveMessages=()=>{};},setJson:fn=>{json=fn},setQueueRunner:fn=>{startNextSpeechJob=fn},setTestReporter:fn=>{reportTestResult=fn}});`);
   return{window,instance};
 }
 
@@ -232,5 +232,111 @@ test('Polling executes queued commands before advancing its cursor',async()=>{
     await window.pollDisplayCommands();assert.deepEqual(shown,['one','two']);
     await window.handleDisplayCommand({_command_seq:2,type:'replay',message:{id:'duplicate',title:'Duplicate'},speak:false});
     assert.equal(shown.length,2);
+  }finally{window.close();}
+});
+
+test('Unknown city does not silence an otherwise eligible call without an extra place filter',()=>{
+  const {window}=monitor();try{
+    const state=window.screenState;Object.assign(state.settings,{speechEnabled:true,speechMode:'normal',masterVolume:80,speechCities:[]});
+    const message={id:'unknown-place',service:'brandweer',priority:'P1',city:'',location:'A58',title:'P 1 Ongeval Wegvervoer A58'};
+    assert.equal(window.shouldSpeakMessage(message),true);
+    assert.ok(window.speechPhrase(message).trim());
+    state.settings.speechCities=['Tilburg'];assert.equal(window.shouldSpeakMessage(message),false);
+  }finally{window.close();}
+});
+test('An empty studio phrase falls back and rejected audio can be tried again',()=>{
+  const {window}=monitor();try{
+    window.P2000StudioLive={speech:()=>'',cue:(_m,c)=>c,result:()=>({speak:true})};
+    const state=window.screenState;Object.assign(state.settings,{speechEnabled:true,speechMode:'normal',masterVolume:80,speechCities:[]});
+    window.setQueueRunner(()=>{});
+    const message={id:'retry-call',service:'brandweer',priority:'P1',city:'Tilburg',location:'Hoofdstraat',title:'P 1 BR Woning Hoofdstraat Tilburg'};
+    assert.match(window.speechPhrase(message),/Tilburg/);
+    assert.equal(window.maybeSpeakMessage(message),true);
+    assert.equal(window.maybeSpeakMessage(message),false);
+    state.speechQueue.shift().onResult({ok:false,detail:'Playback failed'});
+    assert.equal(state.spokenIds.has(message.id),false);
+    assert.equal(window.maybeSpeakMessage(message),true);
+  }finally{window.close();}
+});
+test('Stopping during the retry delay cannot resurrect a failed announcement',async()=>{
+  const {window}=monitor();let attempts=0;const results=[];
+  try{
+    window.setAudioRunner(async()=>{attempts++;throw new Error('Test playback failure')});
+    window.queueSpeech('Omroeptest',{skipTune:true,onResult:r=>results.push(r)});
+    await settle();assert.equal(attempts,1);
+    await window.stopSpeechPlayback({clearQueue:true});
+    await new Promise(resolve=>setTimeout(resolve,300));
+    assert.equal(attempts,1);assert.equal(window.screenState.speechQueue.length,0);
+    assert.equal(results.length,1);assert.equal(results[0].ok,false);
+  }finally{window.close();}
+});
+test('A stale audio rejection cannot replace the queue after stop',async()=>{
+  const {window}=monitor();let rejectAudio;
+  try{
+    window.setAudioRunner(()=>new Promise((_resolve,reject)=>{rejectAudio=reject}));
+    window.queueSpeech('Old',{skipTune:true});await settle();
+    await window.stopSpeechPlayback({clearQueue:true});
+    rejectAudio(Object.assign(new Error('autoplay blocked'),{name:'NotAllowedError'}));await settle();
+    assert.equal(window.screenState.speechQueue.length,0);assert.equal(window.screenState.speechCurrent,null);
+  }finally{window.close();}
+});
+test('Windows cancellation finishes without waiting or adding a fallback attention tone',async()=>{
+  const {window}=monitor();const posts=[];
+  try{
+    Object.defineProperty(window.navigator,'userAgent',{value:'Windows NT 10.0'});
+    window.fetch=async(_url,options)=>{posts.push(JSON.parse(options.body));return{ok:true,json:async()=>({ok:true,playback_token:'token'})}};
+    window.setJson(async()=>({ok:true,status:'cancelled'}));
+    const result=await window.windowsHostSpeakFallback('Test',window.screenState.speechRequestSeq,60,'',false);
+    assert.equal(result.mode,'cancelled');assert.equal(posts[0].attention,false);
+  }finally{window.close();}
+});
+test('Dashboard categories preserve role hiding and unsent test text',async()=>{
+  const {window}=mobile('viewer');
+  try{
+    await settle();window.document.querySelector('#testText').value='Mijn concept';
+    for(const hash of ['#sound','#messages','#management','#overview']){
+      window.location.hash=hash;window.dispatchEvent(new window.HashChangeEvent('hashchange'));
+    }
+    assert.equal(window.document.querySelector('#testText').value,'Mijn concept');
+    assert.equal(window.document.querySelector('#devices').hidden,true);
+    assert.equal(window.document.querySelector('#liveScreen').hasAttribute('data-page-hidden'),false);
+    assert.equal(window.document.querySelector('#test').hasAttribute('data-page-hidden'),true);
+  }finally{window.close();}
+});
+test('Standard display keeps studio rules and design blocks intact',async()=>{
+  const {window,calls,setResponse}=mobile();const config={enabled:true,rules:[{id:'keep'}],layout:{enabled:true,scenes:{single:[{type:'message'}]}},speech:{enabled:true,template:'Eigen tekst'}};
+  try{
+    await settle();setResponse((url,opts)=>url==='/api/remote/studio/config'?(opts.method==='POST'?{ok:true}:{revision:12,config}):url==='/api/settings'?{settings:{messageDisplayMode:'parsed'}}:null);
+    window.document.querySelector('#calmDisplay').click();await settle();
+    const saved=JSON.parse(calls.find(x=>x.url==='/api/remote/studio/config'&&x.options.method==='POST').options.body);
+    assert.equal(saved.revision,12);assert.equal(saved.config.layout.enabled,false);
+    assert.deepEqual(saved.config.rules,config.rules);assert.deepEqual(saved.config.layout.scenes,config.layout.scenes);
+    assert.deepEqual(saved.config.speech,config.speech);
+  }finally{window.close();}
+});
+test('Settings navigation retains unsaved fields and supports existing deep links',()=>{
+  const instance=dom('control.html'),{window}=instance;try{
+    window.eval(read('control-nav.js'));
+    window.document.querySelector('#nameInput').value='Niet opgeslagen';
+    window.location.hash='#speechSettings';window.dispatchEvent(new window.HashChangeEvent('hashchange'));
+    assert.equal(window.document.querySelector('#speechSettings').closest('section').hasAttribute('data-page-hidden'),false);
+    window.location.hash='#displayCard';window.dispatchEvent(new window.HashChangeEvent('hashchange'));
+    assert.equal(window.document.querySelector('#displayCard').closest('section').hasAttribute('data-page-hidden'),false);
+    assert.equal(window.document.querySelector('#nameInput').value,'Niet opgeslagen');
+  }finally{window.close();}
+});
+
+test('Stop also removes an urgent job while Windows is stopping the previous audio',async()=>{
+  const {window}=monitor();let releaseStop;const results=[];
+  try{
+    Object.defineProperty(window.navigator,'userAgent',{value:'Windows NT 10.0'});
+    window.setQueueRunner(()=>{});
+    window.setJson(()=>new Promise(resolve=>{releaseStop=resolve}));
+    window.screenState.speechCurrent={id:'old',priority:10};
+    window.queueSpeech('Urgent',{priority:100,onResult:r=>results.push(r)});
+    await window.stopSpeechPlayback({clearQueue:true});
+    releaseStop({ok:true});await settle();
+    assert.equal(window.screenState.speechQueue.length,0);
+    assert.equal(results.length,1);assert.equal(results[0].ok,false);
   }finally{window.close();}
 });

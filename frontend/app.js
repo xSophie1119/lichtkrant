@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.8.0';
+const CLIENT_VERSION='4.8.1';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -513,6 +513,7 @@ function speechCity(m){
   const raw=`${m?.title||''} ${m?.summary||''}`;
   return allowed.find(c=>new RegExp(`\\b${escapeRegex(c)}\\b`,'i').test(raw))||'';
 }
+function speechPlaceAllowed(m){return !(state.settings.speechCities||[]).some(x=>String(x).trim())||!!speechCity(m)}
 function parentheticalValues(m){
   const raw=originalMessage(m),out=[];
   for(const hit of raw.matchAll(/\(([^)]{1,80})\)/g)){
@@ -754,7 +755,7 @@ function priorityModeEligible(m){
 }
 function shouldSpeakMessage(m,now=new Date()){
   if(!m?.__test&&window.P2000StudioLive?.result(m)?.speak===false)return false;
-  if(!state.settings.speechEnabled||Number(state.settings.masterVolume??100)<=0||!speechCity(m))return false;
+  if(!state.settings.speechEnabled||Number(state.settings.masterVolume??100)<=0||!speechPlaceAllowed(m))return false;
   const mode=String(state.settings.speechMode||'normal').toLowerCase();
   if(mode==='mute')return false;
   if(mode==='priority'&&!(state.settings.urgentOnly?remoteUrgent(m):priorityModeEligible(m)))return false;
@@ -864,10 +865,9 @@ function incidentDeltaFor(m){
 }
 function speechTemplate(key,fallback,vars={}){let t=String(state.settings?.speechTemplates?.[key]||fallback);for(const [k,v] of Object.entries(vars))t=t.replaceAll(`{${k}}`,String(v??''));return t.replace(/\s+/g,' ').replace(/ \./g,'.').trim()}
 function speechPhrase(m){
-  const custom=window.P2000StudioLive?.speech(m);if(custom!==null&&custom!==undefined)return custom;
+  const custom=window.P2000StudioLive?.speech(m);if(typeof custom==='string'&&custom.trim())return custom;
   if(m?.__incidentDelta?.speech)return m.__incidentDelta.speech;
   const city=speechCity(m),info=speechIncidentInfo(m),scale=speechScale(m);
-  if(!city)return '';
   const location=speechLocation(m,info,city),where=spokenIncidentWhere(city,location);
   const parts=[speechTemplate('incident','{incident}{where}.',{incident:info.type,where})];
   if(scale)parts.push(speechTemplate('scale','Het incident is opgeschaald naar {scale}.',{scale:scale.toLocaleLowerCase('nl-NL')}));
@@ -1132,17 +1132,19 @@ async function playOnlineAudioInBrowser(text,requestSeq,volume=100,cueService=''
 function localKioskHost(){const h=String(location.hostname||'').toLowerCase();return h==='127.0.0.1'||h==='localhost'||h==='::1'}
 function windowsKioskHost(){const p=String(navigator.userAgent||navigator.platform||'');return localKioskHost()&&/Windows/i.test(p)}
 async function windowsHostSpeakFallback(text,requestSeq,volume=100,cueService='',cueUrgent=false){
-  if(!localKioskHost())throw new Error('host-audio alleen lokaal');
+  if(!windowsKioskHost())throw new Error('host-audio alleen op de lokale Windows-lichtkrant');
   const controller=typeof AbortController!=='undefined'?new AbortController():null,timer=controller?setTimeout(()=>controller.abort(),18000):null;
   try{
-    const r=await fetch('/api/tts/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96)),volume,service:String(cueService||'brandweer'),urgent:!!cueUrgent}),cache:'no-store',signal:controller?.signal});
+    const r=await fetch('/api/tts/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96)),volume,service:String(cueService||'brandweer'),urgent:!!cueUrgent,attention:!!(cueService||cueUrgent)}),cache:'no-store',signal:controller?.signal});
     const d=await r.json().catch(()=>({}));if(!r.ok||!d?.ok)throw new Error(d?.error||`Windows host-TTS HTTP ${r.status}`);
+    if(d.cancelled||requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
     if(!d.playback_token)throw new Error('Audiospeler gaf geen afspeelbevestiging terug');
     const end=Date.now()+90000;
     while(Date.now()<end){
       if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
       const status=await json('/api/tts/play-status?token='+encodeURIComponent(d.playback_token),{timeoutMs:5000});
       if(!status.ok||status.status==='error')throw new Error(status.error||'Audiospeler meldde een fout');
+      if(status.status==='cancelled')return {mode:'cancelled',completed:true};
       if(status.status==='completed')return {mode:`windows-host-${d.player||'audio'}`,completed:true};
       await waitMs(350);
     }
@@ -1156,16 +1158,12 @@ async function onlineSpeakText(text,requestSeq=++state.speechRequestSeq,volume=1
   // Lokale Windows-kiosk: direct SAPI/SoundPlayer, browseraudio alleen fallback.
   if(windowsKioskHost()){
     try{const host=await windowsHostSpeakFallback(text,requestSeq,volume,cueService,cueUrgent);noteAudioSuccess(host.mode||'windows-host-audio');setAudioUnlockVisible(false);return host}
-    catch(hostError){noteAudioFailure(hostError,'windows-host');state.audioStats.fallbacks++;console.warn('Directe Windows host-TTS mislukt; browseraudio wordt fallback',hostError)}
+    catch(hostError){if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};noteAudioFailure(hostError,'windows-host');state.audioStats.fallbacks++;console.warn('Directe Windows host-TTS mislukt; browseraudio wordt fallback',hostError)}
   }
   try{return await playOnlineAudioInBrowser(text,requestSeq,volume,cueService,cueUrgent)}
   catch(e){
     if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
     noteAudioFailure(e,isAudioLockedError(e)?'autoplay-locked':'audio-file');state.audioStats.fallbacks++;
-    if(localKioskHost()){
-      try{const host=await windowsHostSpeakFallback(text,requestSeq,volume,cueService,cueUrgent);noteAudioSuccess(host.mode||'windows-host-audio');setAudioUnlockVisible(false);return host}
-      catch(hostError){console.warn('Windows host-TTS fallback niet beschikbaar',hostError);state.audioStats.fallbacks++}
-    }
     if(isAudioLockedError(e))throw e;
     console.warn('Audiobestand-route mislukt; browserstem wordt laatste fallback',e);
     const result=await browserSpeakPromise(text,volume);noteAudioSuccess('browser-voice-last-resort');return result;
@@ -1178,7 +1176,9 @@ function stopSpeechPlayback({clearQueue=false}={}){
   state.speechRequestSeq++;clearSpeechTimer();stopCurrentTune();globalThis.speechSynthesis?.cancel?.();
   const current=state.currentSpeechAudio;
   if(current){try{current.finish?.(false)}catch{};cleanupSpeechAudio(current)}
-  const job=state.speechCurrent;state.speechCurrent=null;try{job?.onResult?.({ok:false,detail:'Omroep gestopt'})}catch{};if(clearQueue){for(const queued of state.speechQueue){try{queued.onResult?.({ok:false,detail:'Omroep geannuleerd'})}catch{}}state.speechQueue=[]}return Promise.resolve(true);
+  const hostStop=windowsKioskHost()&&state.speechCurrent?json('/api/tts/stop',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',timeoutMs:5000}).catch(e=>{noteAudioFailure(e,'host-stop')}):Promise.resolve();
+  state.hostStop=hostStop;
+  const job=state.speechCurrent;state.speechCurrent=null;try{job?.onResult?.({ok:false,detail:'Omroep gestopt'})}catch{};if(clearQueue){for(const queued of state.speechQueue){try{queued.onResult?.({ok:false,detail:'Omroep geannuleerd'})}catch{}}state.speechQueue=[]}return hostStop.then(()=>true);
 }
 function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',key='',groupKey='',cueService='',cueUrgent=false,forceAudio=false,skipTune=false,onResult=null}={}){
   text=String(text||'').trim();if(!text)return false;
@@ -1189,7 +1189,8 @@ function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',
   if(groupKey){state.speechQueue=state.speechQueue.filter(x=>{if(x.groupKey===groupKey&&job.priority>=x.priority){try{x.onResult?.({ok:false,detail:'Omroep vervangen door een nieuwere melding'})}catch{}return false}return true});}
   const cur=state.speechCurrent;
   if(cur&&job.priority>=80&&job.priority>cur.priority){
-    stopSpeechPlayback({clearQueue:false}).finally(()=>{state.speechQueue.unshift(job);startNextSpeechJob()});return true;
+    state.speechQueue.unshift(job);
+    stopSpeechPlayback({clearQueue:false}).finally(()=>startNextSpeechJob());return true;
   }
   state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob();return true;
 }
@@ -1198,6 +1199,8 @@ function startNextSpeechJob(){
   const job=state.speechQueue.shift();state.speechCurrent=job;const done=(ok=true,detail='Omroep afgespeeld')=>finishSpeechJob(job.id,{ok,detail});
   const seq=++state.speechRequestSeq;
   (async()=>{
+    await state.hostStop;
+    if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return {mode:'cancelled',completed:true};
     let tuned=false;
     if(!job.skipTune){
       const tunePromise=playDispatchTuneForJob(job).catch(()=>false);
@@ -1206,10 +1209,11 @@ function startNextSpeechJob(){
       if(!raced.done)stopCurrentTune();
     }
     if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return {mode:'cancelled',completed:true};
-    return onlineSpeakText(job.text,seq,job.volume,tuned?'':job.cueService,tuned?false:job.cueUrgent,job.deviceVolume);
+    return onlineSpeakText(job.text,seq,job.volume,tuned||job.skipTune?'':job.cueService,tuned||job.skipTune?false:job.cueUrgent,job.deviceVolume);
   })().then(result=>{
     if(state.speechCurrent?.id!==job.id)return;done(result?.mode!=='cancelled',result?.mode==='cancelled'?'Omroep geannuleerd':'Omroep afgespeeld ('+(result?.mode||'audio')+')');
   }).catch(e=>{
+    if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return;
     if(isAudioLockedError(e)){
       noteAudioFailure(e,'autoplay-locked');
       if(state.speechCurrent?.id===job.id){state.speechCurrent=null;state.speechQueue.unshift(job);state.audioBus.blockedJobs++}
@@ -1218,17 +1222,19 @@ function startNextSpeechJob(){
     }
     noteAudioFailure(e,'all');console.warn('TTS kon niet in het lichtkrant-tabblad afspelen',e);
     if(Number(job.retries||0)<1&&state.speechCurrent?.id===job.id){
-      clearSpeechTimer();state.speechCurrent=null;job.retries=Number(job.retries||0)+1;job.queuedAt=Date.now()+250;
-      setTimeout(()=>{state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob()},250);
-      startNextSpeechJob();return;
+      clearSpeechTimer();job.retries=Number(job.retries||0)+1;
+      state.speechJobTimer=setTimeout(()=>{state.speechJobTimer=null;if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return;state.speechCurrent=null;state.speechQueue.unshift(job);startNextSpeechJob()},250);
+      return;
     }
     done(false,String(e?.message||e||'Omroep afspelen mislukt'));
   });
 }
 function maybeSpeakMessage(m,{force=false,onResult=null}={}){
-  if(!m)return false;if(!force&&m?.__incidentDelta?.noChange)return false;if(force){if(!state.settings.speechEnabled||state.settings.speechMode==='mute'||Number(state.settings.masterVolume??100)<=0||!speechCity(m))return false}else if(!shouldSpeakMessage(m))return false;
-  const key=String(m.id||`${m.published||''}|${originalMessage(m)}`);if(!force&&state.spokenIds.has(key))return false;state.spokenIds.add(key);if(state.spokenIds.size>150){const first=state.spokenIds.values().next().value;state.spokenIds.delete(first)}
-  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);return queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,groupKey:`incident:${m.incident_key||dedupeKey(m)}`,cueService:window.P2000StudioLive?.cue(m,(/lifeliner/i.test(m?.service||'')?'lifeliner':String(m?.service||'overig')))??String(m?.service||'overig'),cueUrgent:urg.rank>=5&&window.P2000StudioLive?.cue(m,'auto')!=='',onResult});
+  if(!m)return false;if(!force&&m?.__incidentDelta?.noChange)return false;if(force){if(!state.settings.speechEnabled||state.settings.speechMode==='mute'||Number(state.settings.masterVolume??100)<=0||!speechPlaceAllowed(m))return false}else if(!shouldSpeakMessage(m))return false;
+  const key=String(m.id||`${m.published||''}|${originalMessage(m)}`);if(!force&&state.spokenIds.has(key))return false;
+  const now=new Date(),phrase=speechPhrase(m),urg=urgencyInfo(m),volume=speechVolumeForTime(m,urg.volume,now),deviceVolume=speechDeviceVolumeForTime(m,now);
+  const accepted=queueSpeech(phrase,{priority:urg.speechPriority,volume,deviceVolume,kind:'p2000',key:`p2000:${key}`,groupKey:`incident:${m.incident_key||dedupeKey(m)}`,cueService:window.P2000StudioLive?.cue(m,String(m?.service||'overig'))??String(m?.service||'overig'),cueUrgent:urg.rank>=5&&window.P2000StudioLive?.cue(m,'auto')!=='',onResult:r=>{if(!r.ok)state.spokenIds.delete(key);onResult?.(r)}});
+  if(accepted){state.spokenIds.add(key);if(state.spokenIds.size>150)state.spokenIds.delete(state.spokenIds.values().next().value)}return accepted;
 }
 
 function updateLastP2000ActivityFromMessages(){
@@ -1327,71 +1333,48 @@ function drawPill(text,x,y,{fontSize=14,padX=14,height=34,fill='rgba(255,255,255
 }
 function canvasWrappedLines(text,maxWidth,maxLines,font){ctx.font=font;const words=rawDisplayText(text).split(' ').filter(Boolean),lines=[];let line='';for(const word of words){const next=line?`${line} ${word}`:word;if(!line||ctx.measureText(next).width<=maxWidth){line=next;continue}lines.push(line);line=word;if(lines.length>=maxLines-1)break}if(line&&lines.length<maxLines)lines.push(line);const consumed=lines.join(' ').split(' ').length;if(consumed<words.length&&lines.length){let last=lines[lines.length-1];while(last.length>8&&ctx.measureText(last+'…').width>maxWidth)last=last.slice(0,-1);lines[lines.length-1]=last+'…'}return lines}
 function drawActiveSolid(w,h){
-  const m=state.activeMessage;
-  const mapReserve=state.mapVisible&&mapCanRender()?Math.min(w*.34,620):0;
-  const left=w*.047,right=w*.958-mapReserve,contentW=Math.max(280,right-left),theme=serviceTheme(m.service),urg=urgencyInfo(m),info=speechIncidentInfo(m),loc=displayLocationParts(m);
-  ctx.save();
-  // Deep neutral base; discipline colour is reserved for accents instead of tinting the whole screen.
-  drawMonitorBackground(ctx,w,h);
-  const ambient=ctx.createRadialGradient(left,h*.34,0,left,h*.34,Math.max(w*.48,h*.8));ambient.addColorStop(0,theme.glow);ambient.addColorStop(.55,'rgba(8,16,20,.24)');ambient.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=ambient;ctx.fillRect(0,0,w,h);
-  const topWash=ctx.createLinearGradient(0,0,0,h*.27);topWash.addColorStop(0,'rgba(255,255,255,.035)');topWash.addColorStop(1,'rgba(255,255,255,0)');ctx.fillStyle=topWash;ctx.fillRect(0,0,w,h*.32);
-  ctx.fillStyle=theme.accentStrong;ctx.fillRect(0,0,Math.max(6,w*.005),h);drawUrgencyFrame(m,w,h,theme);
-
-  // Header / live identity.
-  const headerY=h*.065;ctx.textAlign='left';ctx.textBaseline='middle';ctx.font=`900 ${Math.max(19,Math.min(32,w*.016))}px system-ui,Arial,sans-serif`;ctx.fillStyle='#f2f7f9';ctx.fillText(state.settings.name||'P2000 Monitor',left,headerY);
-  let pillX=left,pillY=h*.105;const pillFont=Math.max(10,Math.min(14,w*.0072)),pillH=Math.max(28,Math.min(36,h*.038));
-  pillX+=drawPill(serviceDisplayName(m.service,m),pillX,pillY,{fontSize:pillFont,height:pillH,fill:theme.badgeBg,stroke:theme.badgeStroke,color:theme.accent})+8;
-  const pri=String(m.priority||'').toUpperCase();if(pri)pillX+=drawPill(pri,pillX,pillY,{fontSize:pillFont,height:pillH,fill:'rgba(255,255,255,.055)',stroke:'rgba(255,255,255,.14)',color:'#f7fbfc'})+8;
-  const region=messageRegion(m);if(region&&pillX<right-150)pillX+=drawPill(region.toUpperCase(),pillX,pillY,{fontSize:Math.max(9,pillFont-1),height:pillH,fill:'rgba(255,255,255,.035)',stroke:'rgba(255,255,255,.10)',color:'rgba(218,232,238,.78)',weight:750})+8;
-  ctx.textAlign='right';ctx.font=`800 ${Math.max(24,Math.min(42,w*.022))}px ui-monospace,SFMono-Regular,Menlo,monospace`;ctx.fillStyle=theme.accent;ctx.fillText(hhmm(m.published),right,headerY);
-
-  // By default the lightkrant shows the actual pager row prominently. Parsed
-  // fields remain underneath for readability, but the source message is not
-  // rewritten into a synthetic headline.
-  const rawDisplayMode=String(state.settings.messageDisplayMode||'raw')!=='parsed',rawOriginal=displayMessageText(m);
-  if(rawDisplayMode){
-    const labelY=h*.205;ctx.textAlign='left';ctx.font=`900 ${Math.max(16,Math.min(25,w*.013))}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentStrong;ctx.fillText('P2000-MELDING',left,labelY);
-    let rawSize=Math.max(28,Math.min(47,w*.0245)),lines=[];for(;rawSize>=27;rawSize-=2){const font=`780 ${rawSize}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;lines=canvasWrappedLines(rawOriginal,contentW,3,font);if(lines.length<=2||rawSize<=31){ctx.font=font;break}}
-    const startY=h*.285,lh=rawSize*1.28;ctx.fillStyle='#f7fbfc';ctx.shadowColor='rgba(0,0,0,.72)';ctx.shadowBlur=8;lines.forEach((line,i)=>ctx.fillText(line,left,startY+i*lh));ctx.shadowBlur=0;
-    const parsed=[String(info?.type||'P2000-melding'),loc.location,loc.city].filter(Boolean).join('  •  ');ctx.font=`750 ${Math.max(16,Math.min(25,w*.013))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(207,225,232,.68)';ctx.fillText(parsed,left,h*.505);
+  const m=state.activeMessage,theme=serviceTheme(m.service),info=speechIncidentInfo(m),loc=displayLocationParts(m);
+  const reserve=state.mapVisible&&mapCanRender()?Math.min(w*.34,620):0;
+  const left=w*.05,right=w*.95-reserve,cw=Math.max(220,right-left),scale=Math.min(w/1920,h/1080);
+  const font=(n,min=12)=>Math.max(min,n*scale),rawMode=String(state.settings.messageDisplayMode||'raw')!=='parsed';
+  ctx.save();drawMonitorBackground(ctx,w,h);
+  const glow=ctx.createRadialGradient(w*.15,h*.25,0,w*.15,h*.25,w*.8);
+  glow.addColorStop(0,theme.glow);glow.addColorStop(1,'rgba(0,0,0,0)');ctx.globalAlpha=.28;ctx.fillStyle=glow;ctx.fillRect(0,0,w,h);ctx.globalAlpha=1;
+  ctx.fillStyle=theme.accent;ctx.fillRect(left,h*.06,font(5,3),font(32));
+  ctx.textAlign='left';ctx.textBaseline='middle';ctx.font=`650 ${font(24)}px system-ui,sans-serif`;ctx.fillStyle='#e1e8f0';ctx.fillText(state.settings.name||'Lichtkrant',left+font(20),h*.06+font(16),Math.max(100,cw-font(160)));
+  ctx.textAlign='right';ctx.fillStyle='#b2bfcd';ctx.font=`500 ${font(28)}px system-ui,sans-serif`;ctx.fillText(hhmm(m.published),right,h*.06+font(16));
+  let x=left;const pillY=h*.145,pillHeight=font(38,26),pillSize=font(17,11);
+  x+=drawPill(serviceDisplayName(m.service,m),x,pillY,{fontSize:pillSize,height:pillHeight,fill:theme.badgeBg,stroke:theme.badgeStroke,color:theme.accent,weight:650})+font(10);
+  if(m.priority)x+=drawPill(String(m.priority).toUpperCase(),x,pillY,{fontSize:pillSize,height:pillHeight,color:'#e8edf5',weight:650})+font(10);
+  const region=messageRegion(m);if(region&&x<right-font(250))drawPill(region,x,pillY,{fontSize:font(15,10),height:pillHeight,color:'#a8b6c7',weight:500});
+  const cardTop=h*.225,cardH=h*.40,pad=font(34,16),textX=left+pad,textW=cw-pad*2;
+  canvasRoundRect(left,cardTop,cw,cardH,font(22,12));ctx.fillStyle='rgba(20,29,41,.90)';ctx.fill();ctx.strokeStyle='rgba(176,197,219,.14)';ctx.lineWidth=1;ctx.stroke();
+  ctx.save();canvasRoundRect(left,cardTop,cw,cardH,font(22,12));ctx.clip();ctx.textAlign='left';ctx.textBaseline='top';
+  ctx.fillStyle=theme.accent;ctx.font=`650 ${font(17,11)}px system-ui,sans-serif`;ctx.fillText(rawMode?'OORSPRONKELIJKE MELDING':String(info?.type||'P2000-melding').toLocaleUpperCase('nl-NL'),textX,cardTop+pad,textW);
+  if(rawMode){
+    const size=font(reserve?43:54,22),lineH=size*1.28;
+    const lines=canvasWrappedLines(displayMessageText(m),textW,3,`600 ${size}px system-ui,sans-serif`);
+    ctx.fillStyle='#f3f6fc';lines.forEach((line,i)=>ctx.fillText(line,textX,cardTop+pad+font(47)+i*lineH,textW));
+    ctx.font=`500 ${font(23,14)}px system-ui,sans-serif`;ctx.fillStyle='#aab9cb';
+    ctx.fillText([info?.type,loc.location,loc.city].filter(Boolean).join(' · '),textX,cardTop+cardH-pad-font(24),textW);
   }else{
-    const incidentTitle=String(info?.type||'P2000-melding').toUpperCase();
-    const titleY=h*.225;const titleSize=fitOneLineFont(incidentTitle,contentW,Math.min(54,w*.030),24,900);ctx.textAlign='left';ctx.font=`900 ${titleSize}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentStrong;ctx.fillText(incidentTitle,left,titleY);
-    const locationY=h*.355;const locationSize=fitOneLineFont(loc.location,contentW,Math.min(88,w*.046),34,850);ctx.font=`850 ${locationSize}px system-ui,Arial,sans-serif`;ctx.fillStyle='#f6f8f9';ctx.shadowColor='rgba(0,0,0,.7)';ctx.shadowBlur=8;ctx.fillText(loc.location,left,locationY);ctx.shadowBlur=0;
-    if(loc.city){ctx.font=`800 ${Math.max(22,Math.min(38,w*.020))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(211,225,231,.68)';ctx.fillText(loc.city.toUpperCase(),left,h*.425);}
+    const size=fitOneLineFont(loc.location,textW,font(reserve?65:82,28),font(32,18),650);
+    ctx.font=`650 ${size}px system-ui,sans-serif`;ctx.fillStyle='#f3f6fc';ctx.fillText(loc.location,textX,cardTop+pad+font(68),textW);
+    if(loc.city){ctx.font=`500 ${font(38,20)}px system-ui,sans-serif`;ctx.fillStyle='#aab9cb';ctx.fillText(loc.city,textX,cardTop+pad+font(176),textW);}
   }
-
-  // Units get their own quiet card so they remain legible without competing with the incident.
-  let afterUnits=rawDisplayMode?h*.61:h*.49;
-  if(state.settings.vehicleHeader!==false){
-    const boxTop=rawDisplayMode?h*.585:h*.475,lh=Math.max(21,Math.min(29,h*.029));
-    let size=Math.max(12,Math.min(18,w*.0094));
-    let vehicleLines=vehicleHeaderLines(m,Math.max(120,contentW-32),size,4);
-    while(size>11&&vehicleLines.some(x=>{ctx.font=`720 ${size}px system-ui,Arial,sans-serif`;return ctx.measureText(x).width>contentW-32})){size--;vehicleLines=vehicleHeaderLines(m,Math.max(120,contentW-32),size,4)}
-    if(vehicleLines.length){
-      const boxH=Math.min(h*.19,28+vehicleLines.length*lh);canvasRoundRect(left,boxTop,contentW,boxH,14);ctx.fillStyle='rgba(255,255,255,.035)';ctx.fill();ctx.strokeStyle='rgba(255,255,255,.09)';ctx.stroke();
-      ctx.save();canvasRoundRect(left,boxTop,contentW,boxH,14);ctx.clip();
-      ctx.textAlign='left';ctx.textBaseline='middle';ctx.font=`800 ${Math.max(11,Math.min(16,w*.0082))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(170,191,200,.62)';ctx.fillText('GEALARMEERDE EENHEDEN',left+16,boxTop+17);
-      ctx.font=`720 ${size}px system-ui,Arial,sans-serif`;ctx.fillStyle=theme.accentSoft;vehicleLines.forEach((line,i)=>ctx.fillText(line,left+16,boxTop+40+i*lh));ctx.restore();
-      afterUnits=boxTop+boxH+h*.035;
-    }
-  }
-
-  // De bronregel is alleen nog een compacte referentie. De incidentsoort en
-  // locatie staan hierboven al groot; dezelfde tekst nogmaals pagineren was
-  // vooral visuele ruis en kon op 1080p tegen de footer aanlopen.
-  const raw=String(displayMessageText(m)||'').trim();
-  if(raw&&!rawDisplayMode){
-    const rawY=Math.min(h*.855,Math.max(afterUnits+h*.025,h*.72));
-    ctx.font=`650 ${Math.max(13,Math.min(18,w*.0092))}px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace`;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='rgba(183,201,209,.46)';
-    const prefix='P2000  •  ';let shown=raw;const maxW=Math.max(120,contentW-ctx.measureText(prefix).width);
-    while(shown.length>18&&ctx.measureText(shown+'…').width>maxW)shown=shown.slice(0,-1);
-    ctx.fillStyle='rgba(137,163,175,.42)';ctx.fillText(prefix,left,rawY);ctx.fillStyle='rgba(190,207,214,.54)';ctx.fillText(shown+(shown.length<raw.length?'…':''),left+ctx.measureText(prefix).width,rawY);
-  }
-
-  const footerY=h*.942;ctx.fillStyle='rgba(255,255,255,.10)';ctx.fillRect(left,h*.902,contentW,1);ctx.font=`750 ${Math.max(10,Math.min(14,w*.0072))}px system-ui,Arial,sans-serif`;ctx.fillStyle='rgba(179,198,206,.48)';ctx.textAlign='left';const liveCount=!m.__test?activeLiveMessages().length:0,busy=busyPeriodActive(),rotateSec=Math.round(carouselIntervalMs()/1000);ctx.fillText(m.__archive?'ARCHIEF  •  HANDMATIG GETOOND':m.__test?'TESTMELDING  •  LICHTKRANT AUDIO':liveCount>1?`LIVE  •  ${state.activeMessageIndex+1}/${liveCount} MELDINGEN  •  WISSEL ${rotateSec} SEC${busy?'  •  DRUKKE PERIODE':''}`:`LIVE P2000${busy?'  •  DRUKKE PERIODE':''}`,left,footerY);
-  const agency=multiAgencyLabel(m);if(agency){ctx.textAlign='right';ctx.fillStyle=theme.accentSoft;ctx.fillText(agency,right,footerY);}
   ctx.restore();
+  const unitTop=h*.68;
+  if(state.settings.vehicleHeader!==false){
+    const size=font(24,14),lines=vehicleHeaderLines(m,cw,size,3);
+    if(lines.length){ctx.textAlign='left';ctx.textBaseline='top';ctx.font=`600 ${font(16,11)}px system-ui,sans-serif`;ctx.fillStyle='#8ea0b5';ctx.fillText('GEALARMEERDE EENHEDEN',left,unitTop);ctx.font=`500 ${size}px system-ui,sans-serif`;ctx.fillStyle='#d8e3ef';lines.forEach((line,i)=>ctx.fillText(line,left,unitTop+font(34)+i*size*1.4,cw));}
+  }
+  ctx.fillStyle='rgba(176,197,219,.15)';ctx.fillRect(left,h*.885,cw,1);
+  ctx.textAlign='left';ctx.textBaseline='middle';ctx.font=`500 ${font(17,11)}px system-ui,sans-serif`;ctx.fillStyle='#9aaabd';
+  const count=!m.__test?activeLiveMessages().length:0;
+  const label=m.__archive?'Archief · handmatig getoond':m.__test?'Testmelding':count>1?`Live · melding ${state.activeMessageIndex+1} van ${count}`:'Live P2000';
+  ctx.fillText(label,left,h*.93,cw*.25);
+  if(!rawMode){const raw=canvasWrappedLines(displayMessageText(m),Math.max(100,cw*.70),1,`400 ${font(15,10)}px system-ui,sans-serif`)[0]||'';ctx.textAlign='right';ctx.fillStyle='#8192a5';ctx.fillText(raw,right,h*.93,cw*.70);}
+  drawUrgencyFrame(m,w,h,theme);ctx.restore();
 }
 function idleDesignRect(w,h){
   const target=16/9,aspect=w/Math.max(1,h);let dw=w,dh=h,x=0,y=0;
@@ -1790,7 +1773,7 @@ async function toggleMonitorMute(){const mode=String(state.settings.speechMode||
 $('#volumeDownBtn')?.addEventListener('click',()=>adjustMonitorVolume(-10));$('#monitorMuteBtn')?.addEventListener('click',toggleMonitorMute);$('#volumeUpBtn')?.addEventListener('click',()=>adjustMonitorVolume(10));renderMonitorAudioControls();
 async function unlockTabAudio(){
   try{globalThis.speechSynthesis?.resume?.()}catch{}
-  if(state.audioBus.armed){state.audioStats.unlocked=true;return true}
+  if(state.audioBus.armed){state.audioStats.unlocked=true;setAudioUnlockVisible(false);startNextSpeechJob();return true}
   try{await armAudioBus({gesture:true});state.audioStats.unlocked=true;startNextSpeechJob();return true}catch(e){console.warn('Audio unlock mislukt',e);return false}
 }
 const audioUnlockBtn=$('#audioUnlockBtn');if(audioUnlockBtn)audioUnlockBtn.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();unlockTabAudio()});

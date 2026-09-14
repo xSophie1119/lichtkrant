@@ -189,7 +189,7 @@ class RemoteTests(unittest.TestCase):
         process.poll=lambda:0
         self.assertEqual(self.request('/api/tts/play-status?token='+token)[1]['status'],'completed')
         tracker.cancel(process)
-        self.assertFalse(self.request('/api/tts/play-status?token='+token)[1]['ok'])
+        self.assertEqual(self.request('/api/tts/play-status?token='+token)[1]['status'],'cancelled')
 
     def test_windows_pcm_volume_preserves_zero_and_half_gain(self):
         import io, struct, wave
@@ -210,5 +210,28 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(result[0],200);self.assertEqual(result[1]['map']['lat'],51.5)
         geocode.assert_called_once()
 
+
+    def test_windows_player_passes_paths_as_literal_file_parameters(self):
+        m=self.module
+        fake_os=runtime.SimpleNamespace(name='nt',path=runtime.os.path)
+        with patch.object(m,'os',fake_os),patch.object(m.shutil,'which',return_value='powershell.exe'):
+            player,argv=m.detect_local_audio_player(50, 'C:/My folder/dispatch.wav')
+        self.assertEqual(player,'windows-soundplayer')
+        self.assertIn('-File',argv)
+        self.assertNotIn('-Command',argv)
+        self.assertEqual(argv[-1],'-AudioPath')
+        self.assertTrue(runtime.Path(argv[argv.index('-File')+1]).is_file())
+
+    def test_stop_during_host_render_cancels_before_process_launch(self):
+        m=self.module
+        def render(*args,**kwargs):
+            self.assertFalse(kwargs['attention'])
+            m.stop_host_tts()
+            return b'a'*200,'audio/mpeg','test'
+        fake_os=runtime.SimpleNamespace(name='nt',path=runtime.os.path,replace=runtime.os.replace)
+        with patch.object(m,'os',fake_os),patch.object(m,'_TTS_PLAYER_PROCESS',None),patch.object(m,'generate_dispatch_audio',side_effect=render),patch.object(m,'detect_local_audio_player',return_value=('test',['test-player'])),patch.object(m.subprocess,'Popen') as launch:
+            result=m.play_dispatch_tts_on_host('Stop while rendering',attention=False)
+            self.assertTrue(result['cancelled'])
+            launch.assert_not_called()
 
 if __name__=='__main__':unittest.main(verbosity=2)

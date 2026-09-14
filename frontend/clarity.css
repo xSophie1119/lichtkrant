@@ -1,0 +1,55 @@
+/* Readable settings and studio surfaces, scoped away from the TV. */
+[hidden],[data-page-hidden]{display:none!important}
+.control-page,.studio-page{background:#0b111a;color:#e9eef6;font:15px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;--mint:#a3c2ff;--muted:#a8b3c4;--line:#2a3445;--cyan:#a3c2ff}
+.control-shell{max-width:1200px!important;padding:32px 28px 80px!important}
+.control-header.command-hero{background:transparent!important;border:0!important;box-shadow:none!important;padding:16px 0 32px!important;border-radius:0!important}
+.command-hero h1{font-size:clamp(28px,4vw,44px)!important;letter-spacing:-1.5px!important;font-weight:650!important;color:#f0f4fa!important;text-shadow:none!important}
+.command-hero p{font-size:14px!important;color:#a8b3c4!important;max-width:460px}
+.command-hero .eyebrow{color:#a3c2ff!important;font-size:11px!important;letter-spacing:1.5px!important}
+.header-actions{gap:8px!important;min-width:240px!important}
+.settings-nav{display:flex;gap:8px;overflow-x:auto;margin:0 0 24px;padding:10px 0;border-top:1px solid #2a3445;border-bottom:1px solid #2a3445}
+.settings-nav a{padding:10px 18px;border-radius:10px;white-space:nowrap;color:#a8b3c4;font-size:14px;font-weight:650}
+.settings-nav a[aria-current]{color:#0b1a35;background:#a3c2ff}
+.control-grid{gap:20px!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.control-card{background:#141d29!important;border:1px solid #2a3445!important;border-radius:18px!important;padding:26px!important;box-shadow:none!important;min-width:0}
+.control-card h3{font-size:21px!important;font-weight:650!important;letter-spacing:-.5px!important;color:#edf2f9!important}
+.control-card .eyebrow{font-size:10px!important;color:#a3c2ff!important;letter-spacing:1.3px!important}
+.control-card .field>span,.control-card .switch-row b{font-size:14px!important;color:#dce5f1!important}
+.control-card input,.control-card textarea,.control-card select{font-size:16px!important;background:#0d1520!important;color:#e9eef6!important;border-color:#344256!important;min-height:44px;border-radius:9px!important}
+.control-card .hint,.control-card small,.control-card .field small{font-size:12px!important;line-height:1.6!important;color:#a8b3c4!important}
+.control-page .primary-btn,.control-page .secondary-btn{font-size:13px!important;min-height:44px!important;text-transform:none!important;letter-spacing:0!important;border-radius:10px!important;box-shadow:none!important}
+.control-page .primary-btn{background:#a3c2ff!important;color:#101d34!important}
+.control-page .secondary-btn{background:#1c293c!important;color:#dce5f1!important;border:1px solid #344256!important}
+.control-page .status-pill{font-size:11px!important;letter-spacing:0!important;max-width:100%;white-space:normal}
+.control-page .status-list dt,.control-page .status-list dd{font-size:13px!important}
+.control-page :focus-visible{outline:3px solid #a3c2ff;outline-offset:3px}
+.studio-page header{background:#0b111af5;border-color:#2a3445;padding:16px max(24px,calc((100vw - 1240px)/2));gap:14px}
+.studio-page main{display:grid;grid-template-columns:200px minmax(0,1fr);column-gap:36px;max-width:1240px;padding-top:14px}
+.studio-page .intro{grid-column:1/-1;margin:28px 0 26px;max-width:650px}
+.studio-page .intro h1{font-weight:650;font-size:44px}
+.studio-page #notice{grid-column:1/-1;top:82px;margin:0 0 16px}
+.studio-page main>nav{flex-direction:column;align-self:start;position:sticky;top:100px;gap:6px;overflow:visible}
+.studio-page nav button{text-align:left;border-color:transparent;font-size:14px;padding:12px}
+.studio-page nav button[aria-selected=true]{color:#a3c2ff;background:#202f47;border-color:#354c6c}
+.studio-page .tab{min-width:0;background:#141d29;border:1px solid #2a3445;border-radius:18px;padding:28px}
+.studio-page h2{font-size:28px;font-weight:650}
+.studio-page button,.studio-page input,.studio-page textarea,.studio-page select{background:#0d1520;border-color:#344256}
+.studio-page button.primary{background:#a3c2ff;color:#101d34}
+.studio-page .card,.studio-page .rule,.studio-page .record,.studio-page .block-row{background:#192433;border-color:#344256}
+.studio-page .split{grid-template-columns:1fr}
+.studio-page .tab>p{font-size:14px;max-width:75ch}
+.studio-page .map{height:380px}
+.studio-page blockquote{background:#202f47}
+@media(max-width:760px){
+ .control-shell{padding:18px 16px 50px!important}.control-grid{grid-template-columns:1fr!important}.control-card{padding:20px!important}
+ .control-header.command-hero{gap:12px!important}.header-actions{display:grid!important;grid-template-columns:1fr 1fr!important;width:100%}.header-actions>*{min-width:0!important}
+ .settings-nav a{padding:9px 12px}.quick-actions{grid-template-columns:1fr 1fr!important}.quick-status{grid-template-columns:1fr 1fr!important}
+ .studio-page header{padding:12px 16px}.studio-page main{display:block;padding:16px}.studio-page .intro{margin:18px 0}.studio-page .intro h1{font-size:34px}
+ .studio-page main>nav{position:static;display:grid;grid-template-columns:1fr 1fr;gap:5px;overflow:visible;margin-bottom:12px;padding:0}
+ .studio-page nav button{white-space:normal;font-size:13px;padding:9px}.studio-page .tab{padding:20px 16px}.studio-page .map{height:300px}
+ .studio-page #notice{top:116px}.studio-page header strong{flex:1}.studio-page .row>*{min-width:0}.studio-page header button{flex:1}
+}
+
+/* Speech chips keep their natural width instead of overflowing tiny flex items. */
+.studio-page #speechChips>button{flex:0 0 auto;min-width:0;max-width:100%}
+@media(max-width:760px){.studio-page .row>button{flex:1 1 140px;white-space:normal;overflow-wrap:anywhere}.studio-page #speechChips>button{flex:0 0 auto}}

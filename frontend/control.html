@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#071018">
   <title>P2000 Monitor • Instellingen</title>
-  <link rel="stylesheet" href="/styles.css?v=45000">
+  <link rel="stylesheet" href="/styles.css?v=481">
   <style>
     .profile-note{padding:14px 16px;border:1px solid rgba(91,216,255,.22);border-radius:14px;background:rgba(91,216,255,.06);line-height:1.55}
     .feed-list,.unknown-list{display:grid;gap:8px;margin-top:12px}
@@ -24,16 +24,18 @@
     .idle-builder-preview{min-height:245px;border-radius:18px;background:radial-gradient(circle at 50% 40%,rgba(26,102,136,.22),#020506 66%);border:1px solid rgba(255,255,255,.10);padding:22px;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;overflow:hidden}.idle-builder-preview[data-layout="left"]{align-items:flex-start;text-align:left}.idle-builder-preview[data-layout="split"]{display:grid;grid-template-columns:1.25fr .75fr;align-content:center;text-align:left}.idle-builder-preview[data-layout="minimal"] .idle-preview-name,.idle-builder-preview[data-layout="minimal"] .idle-preview-date,.idle-builder-preview[data-layout="minimal"] .idle-preview-status{display:none}.idle-preview-name{font-weight:900;letter-spacing:.06em;color:#5bd8ff;margin-bottom:16px}.idle-preview-time{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-weight:800;line-height:1;color:#f4f9fb}.idle-preview-time small{font-size:.32em;color:#5bd8ff;margin-left:8px}.idle-preview-date{margin-top:14px;font-weight:700;opacity:.78;letter-spacing:.05em}.idle-preview-status{margin-top:22px;font-size:.75rem;opacity:.46;letter-spacing:.06em}
     @media(max-width:760px){.control-shell{padding:10px}.control-header{gap:14px}.header-actions{display:grid;grid-template-columns:1fr 1fr;width:100%}.header-actions #saveBtn{grid-column:1/-1}.quick-card{position:relative;z-index:2}.quick-actions{grid-template-columns:1fr 1fr}.quick-actions button{min-height:52px;font-size:.95rem}.quick-status{grid-template-columns:1fr 1fr}.preview-grid{grid-template-columns:1fr 1fr}.button-row{display:grid!important;grid-template-columns:1fr 1fr}.button-row button{min-height:46px}.field input,.field select,.field textarea{font-size:16px}.status-grid.compact-grid{grid-template-columns:1fr 1fr}}
   </style>
+  <link rel="stylesheet" href="/clarity.css?v=481">
+  <script src="/control-nav.js?v=481" defer></script>
 </head>
 <body class="control-page">
 <a href="/studio.html" style="display:block;padding:12px 24px;background:#153d32;color:#91efce;font:700 15px system-ui">Lichtkrantstudio: werkgebieden, regels, omroep en schermontwerp →</a>
 <main class="control-shell">
   <header class="control-header command-hero">
     <div class="hero-copy">
-      <span class="eyebrow">WINDOWS + LINUX • P2000 ONLY</span>
-      <h1>P2000 <span>Monitor</span></h1>
-      <p>P2000-monitor voor Windows én Linux met configureerbare standplaats, regio’s en disciplines.</p>
-      <div class="hero-badges"><span class="hero-badge"><i class="live-dot"></i> LIVE</span><span class="hero-badge" id="profileBadge">CONFIGUREERBAAR</span><span class="hero-badge">MULTIPLATFORM KIOSK</span></div>
+      <span class="eyebrow">LICHTKRANT / INSTELLINGEN</span>
+      <h1>Precies zoals jij wilt.</h1>
+      <p>Kies een onderdeel, pas het aan en sla je wijzigingen op.</p>
+      <div class="hero-badges" hidden><span class="hero-badge"><i class="live-dot"></i> LIVE</span><span class="hero-badge" id="profileBadge">CONFIGUREERBAAR</span><span class="hero-badge">MULTIPLATFORM KIOSK</span></div>
     </div>
     <div class="header-actions">
       <a class="secondary-btn" href="/remote">📱 Telefoonbediening & QR-code</a>
@@ -43,14 +45,15 @@
     </div>
   </header>
 
+  <nav class="settings-nav" aria-label="Instellingen"><a href="#appearance" data-category="appearance">Weergave</a><a href="#audio" data-category="audio">Omroep</a><a href="#filters" data-category="filters">Meldingen</a><a href="#vehicles" data-category="vehicles">Voertuigen</a><a href="#system" data-category="system">Systeem</a></nav>
   <div class="control-grid">
-    <section class="control-card wide">
+    <section data-category-panel="filters" class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">INSTALLATIEPROFIEL</span><h3 id="profileTitle">Regio’s en standplaats</h3></div><span id="controlStatus" class="status-pill">verbinden…</span></div>
       <div class="profile-note" id="profileSummary">Configuratie laden…</div>
       <div class="scope-tags" id="scopeTags"></div>
     </section>
 
-    <section class="control-card wide quick-card" id="quickControlCard">
+    <section data-category-panel="audio" class="control-card wide quick-card" id="quickControlCard">
       <div class="panel-head compact"><div><span class="eyebrow">SNELBEDIENING</span><h3>Direct vanaf telefoon of pc</h3></div><span id="quickSupervisorPill" class="status-pill">watchdog…</span></div>
       <div class="quick-actions">
         <button id="quickNormalBtn" class="secondary-btn mode-btn" type="button">🔊 Normaal</button>
@@ -69,7 +72,7 @@
       <div class="quick-status"><div><small>Feed</small><b id="quickFeedStatus">—</b></div><div><small>Omroep</small><b id="quickSpeechMode">—</b></div><div><small>Watchdog</small><b id="quickSupervisorStatus">—</b></div><div><small>Laatste melding</small><b id="quickLastMessage">—</b></div></div>
     </section>
 
-    <section class="control-card">
+    <section data-category-panel="appearance" class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">WEERGAVE</span><h3>Monitor</h3></div></div>
       <label class="field"><span>Titel</span><input id="nameInput" type="text" maxlength="30" placeholder="P2000 Monitor"></label>
       <label class="field"><span>Meldingweergave</span><select id="messageDisplayModeInput"><option value="raw">Originele P2000-regel groot</option><option value="parsed">Samengevatte incidentweergave</option></select><small>“Origineel” toont de echte P2000-regel prominent; parserdata en voertuigen blijven eronder beschikbaar.</small></label>
@@ -96,7 +99,7 @@
       <p class="hint">Kies een donkere kleur of een lokale JPG/PNG/WebP. Foto's worden lokaal op deze computer opgeslagen; de donkere laag houdt de P2000-tekst leesbaar.</p>
     </section>
 
-    <section class="control-card wide">
+    <section data-category-panel="appearance" class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">RUSTSCHERM</span><h3>Eigen indeling wanneer er geen melding is</h3></div><span class="status-pill">LIVE PREVIEW</span></div>
       <div class="two-col">
         <div>
@@ -118,7 +121,7 @@
       </div>
     </section>
 
-    <section class="control-card">
+    <section data-category-panel="filters" class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">FILTER</span><h3>Hulpdiensten</h3></div></div>
       <p class="hint">De configuratiewizard bepaalt welke regio/discipline-combinaties werkelijk worden opgehaald. Met deze schakelaars kun je een discipline daarnaast tijdelijk op de lichtkrant verbergen.</p>
       <div class="service-grid">
@@ -131,8 +134,8 @@
       </div>
     </section>
 
-    <section class="control-card">
-      <div class="panel-head compact"><div><span class="eyebrow">OMROEP</span><h3>Kazerne-omroep</h3></div><span id="ttsStatus" class="status-pill">controleren…</span></div>
+    <section data-category-panel="audio" class="control-card">
+      <div class="panel-head compact"><div><span class="eyebrow">OMROEP</span><h3 id="speechSettings">Kazerne-omroep</h3></div><span id="ttsStatus" class="status-pill">controleren…</span></div>
       <label class="switch-row"><span><b>P2000 voorlezen</b><small>Bij nieuwe lokale meldingen.</small></span><input id="speechEnabledInput" type="checkbox"></label>
       <div class="two-col"><label class="field"><span>Omroepmodus</span><select id="speechModeInput"><option value="normal">Normaal</option><option value="priority">Alleen prioriteit</option><option value="mute">STIL</option></select></label><label class="field"><span>Mastervolume <b id="masterVolumeValue">100</b>%</span><input id="masterVolumeInput" type="range" min="0" max="100" step="5" value="100"></label></div>
       <label class="field"><span>Alleen deze steden uitspreken</span><textarea id="speechCitiesInput" rows="3" placeholder="Bijv. Tilburg, Goirle, Oisterwijk"></textarea></label>
@@ -146,7 +149,7 @@
       <p class="hint">De backend maakt één audiobestand voor het lichtkrant-tabblad. Windows gebruikt lokaal SAPI; Linux gebruikt lokaal eSpeak wanneer aanwezig en valt anders terug op de vaste Nederlandse online route. Als een handmatig geopende browser autoplay blokkeert, verschijnt op de lichtkrant éénmalig een knop om geluid te ontgrendelen.</p>
     </section>
 
-    <section class="control-card wide">
+    <section data-category-panel="audio" class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">DEUNTJES</span><h3>Alarmering vóór de omroep</h3></div><span id="tuneStatus" class="status-pill">klaar</span></div>
       <label class="switch-row"><span><b>Deuntje afspelen</b><small>Speelt vóór de gesproken P2000-omroep. Per discipline kun je een andere keuze maken.</small></span><input id="dispatchTuneEnabledInput" type="checkbox"></label>
       <div class="two-col">
@@ -168,7 +171,7 @@
       <p class="hint">Wijzigingen aan de toontjes worden automatisch opgeslagen (en kunnen ook met “Toontjes nu opslaan” direct worden vastgezet). Keuzes: geen geluid, drie ingebouwde kazerne-tonen, urgent-signaal, YouTube of je eigen MP3/WAV/OGG. “Overnemen” gebruikt de standaardkeuze. Bij urgente meldingen heeft de urgente keuze voorrang.</p>
     </section>
 
-    <section class="control-card">
+    <section data-category-panel="appearance" class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">SCHERM</span><h3 id="displayCard">Scherm & slaapstand</h3></div><span id="displayStatus" class="status-pill">controleren…</span></div>
       <label class="field"><span>Lichtkrant openen op</span><select id="kioskMonitorInput"><option value="primary">Primair scherm</option></select></label>
       <p class="hint" id="kioskMonitorHint">Aangesloten schermen worden automatisch gedetecteerd. Een nieuwe keuze wordt direct opgeslagen en de kiosk wordt meteen opnieuw op het gekozen scherm geplaatst.</p>
@@ -181,14 +184,14 @@
       <div class="button-row"><button id="applyDisplayBtn" class="secondary-btn">Nu toepassen</button><button id="displayOffBtn" class="secondary-btn">Scherm uit</button><button id="displayOnBtn" class="secondary-btn">Scherm aan</button><button id="detectDisplayBtn" class="secondary-btn">Controleer scherm</button></div>
     </section>
 
-    <section class="control-card wide">
+    <section data-category-panel="system" class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">HOOFDBRONNEN</span><h3>P2000-bronnen & snelheid</h3></div><button id="reconnectBtn" class="secondary-btn">Feeds opnieuw verbinden</button></div>
       <label class="switch-row"><span><b>112-nu.nl is de hoofdbron</b><small>Brandweer, ambulance, politie, traumahelikopter en KNRM worden ieder via hun eigen landelijke 112-nu RSS-feed opgehaald. Alarmeringen blijft alleen race/fallback.</small></span><input id="feed112nuInput" type="checkbox" checked disabled aria-label="112-nu hoofdfeeds altijd actief"></label>
       <div id="feedList" class="feed-list"><div class="feed-row">laden…</div></div>
       <p class="hint">De vijf 112-nu disciplinefeeds zijn altijd primair. Alarmeringen wordt alleen als tweede bron/racefallback gebruikt. Exact dezelfde P2000-regel wordt bron-onafhankelijk gededupliceerd. Latency en bron-wins worden live gemeten.</p>
     </section>
 
-    <section class="control-card wide">
+    <section data-category-panel="filters" class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">TEST</span><h3>Eigen P2000-regel</h3></div></div>
       <div class="two-col"><label class="field"><span>Testpreset</span><select id="testPresetInput"><option value="">Kies testpreset…</option></select></label><label class="field"><span>Test op scherm</span><select id="testDisplayTarget"><option value="">Alle lichtkranten</option></select></label></div><label class="field"><span>Originele melding</span><textarea id="testInput" rows="4">P 1 BR woning Hoofdstraat Utrecht</textarea></label>
       <div class="button-row"><button id="testDisplayBtn" class="primary-btn">Toon testmelding</button><button id="testSpeakBtn" class="secondary-btn">Toon + spreek</button></div>
@@ -203,13 +206,13 @@
       <p id="testStatus" class="hint">Live preview gebruikt exact dezelfde parser als de lichtkrant. Tests worden niet als echte P2000-melding opgeslagen.</p>
     </section>
 
-    <section class="control-card wide" id="incidentIntelligenceCard">
+    <section data-category-panel="filters" class="control-card wide" id="incidentIntelligenceCard">
       <div class="panel-head compact"><div><span class="eyebrow">INCIDENTEN</span><h3>Slimme prioriteit & tijdlijn</h3></div><button id="refreshIncidentsBtn" class="secondary-btn" type="button">Vernieuwen</button></div>
       <p class="hint">Vervolgmeldingen en opschalingen met dezelfde locatie worden automatisch samengevoegd. Relevantie weegt onder andere opschaling, schiet-/steekincidenten, grote brand, MMT, bijzondere voertuigen en meerdere gekoppelde meldingen mee.</p>
       <div id="incidentList" class="incident-list control-incident-list"><div class="incident-item">Incidenten laden…</div></div>
     </section>
 
-    <section class="control-card wide" id="roepnummerApiCard">
+    <section data-category-panel="vehicles" class="control-card wide" id="roepnummerApiCard">
       <div class="panel-head compact"><div><span class="eyebrow">VOERTUIGEN</span><h3>SW Mediaproducties Roepnummer API</h3></div><button id="syncVehiclesBtn" class="secondary-btn">Nu synchroniseren</button></div>
       <div class="status-grid compact-grid">
         <div><dt>API</dt><dd id="swApiOnline">—</dd></div>
@@ -230,7 +233,7 @@
       <details><summary>Laatste wijzigingen in voertuigdatabase</summary><div id="vehicleHistoryList" class="vehicle-history"><div class="history-row">laden…</div></div></details>
     </section>
 
-    <section class="control-card wide" id="vehicleOverridesCard">
+    <section data-category-panel="vehicles" class="control-card wide" id="vehicleOverridesCard">
       <div class="panel-head compact"><div><span class="eyebrow">HANDMATIGE CORRECTIES</span><h3 id="vehicleOverrideFormTitle">Nieuw of fout roepnummer corrigeren</h3></div><span id="vehicleOverrideCount" class="status-pill">laden…</span></div>
       <div class="three-col">
         <label class="field"><span>Roepnummer</span><input id="vehicleOverrideCallsign" type="text" maxlength="12" placeholder="20-3161"><small>Normaal of uitgebreid formaat, bijvoorbeeld 01-18-849.</small></label>
@@ -246,12 +249,12 @@
       <div id="vehicleOverrideList" class="vehicle-override-list"><div class="unknown-row">Correcties laden…</div></div>
     </section>
 
-    <section class="control-card">
+    <section data-category-panel="vehicles" class="control-card">
       <div class="panel-head compact"><div><span class="eyebrow">DIAGNOSE</span><h3>Nog onbekende roepnummers</h3></div><button id="refreshUnknownBtn" class="secondary-btn">Vernieuwen</button></div>
       <div id="unknownList" class="unknown-list"><div class="unknown-row">laden…</div></div>
     </section>
 
-    <section class="control-card wide" id="updatesCard">
+    <section data-category-panel="system" class="control-card wide" id="updatesCard">
       <div class="panel-head compact"><div><span class="eyebrow">UPDATES</span><h3>Automatisch via GitHub</h3></div><span id="updateStatusPill" class="status-pill">controleren…</span></div>
       <div class="three-col">
         <label class="field"><span>GitHub repository</span><input id="githubRepoInput" type="text" value="xSophie1119/lichtkrant" placeholder="owner/repository of https://github.com/owner/repository"></label>
@@ -272,7 +275,7 @@
       <p class="hint">Config, database, achtergrondfoto en regionale caches worden niet overschreven. Er worden maximaal drie programmabackups bewaard in <code>data/updates/backups</code>. Publieke GitHub Releases hebben geen account/token nodig.</p>
     </section>
 
-    <section class="control-card wide" id="githubSettingsCard">
+    <section data-category-panel="system" class="control-card wide" id="githubSettingsCard">
       <div class="panel-head compact"><div><span class="eyebrow">CENTRALE INSTELLINGEN</span><h3>Instellingen automatisch vanuit GitHub</h3></div><span id="githubSettingsStatusPill" class="status-pill">controleren…</span></div>
       <p class="hint">Zet <code>p2000-settings.json</code> in je repository. Na iedere push halen alle aangesloten monitoren de gewijzigde weergave-, filter-, omroep-, deuntje- en scherminstellingen automatisch op.</p>
       <div class="three-col">
@@ -288,24 +291,24 @@
       <div class="button-row"><button id="saveGithubSettingsBtn" class="secondary-btn">Synchronisatie opslaan</button><button id="pullGithubSettingsBtn" class="primary-btn">Nu ophalen en toepassen</button></div>
     </section>
 
-    <section class="control-card wide" id="healthCard">
+    <section data-category-panel="system" class="control-card wide" id="healthCard">
       <div class="panel-head compact"><div><span class="eyebrow">HEALTH</span><h3>Systeemgezondheid</h3></div></div>
       <div id="healthDashboard" class="feed-list"><div class="feed-row">Health laden…</div></div>
       <p class="hint">Backend, feeds, SW Mediaproducties roepnummer-API, TTS, schermen, supervisor, updater en opstart-selftest in één overzicht.</p>
     </section>
 
-    <section class="control-card wide" id="displayClientsCard">
+    <section data-category-panel="system" class="control-card wide" id="displayClientsCard">
       <div class="panel-head compact"><div><span class="eyebrow">LICHTKRANTEN</span><h3>Verbonden schermen</h3></div></div>
       <div id="displayClients" class="incident-list"><div class="incident-item">Schermen laden…</div></div>
       <p class="hint">Iedere lichtkrant heeft een eigen client-ID en heartbeat met fullscreen-, audio-, volume- en incidentstatus. Testmeldingen kunnen hierboven naar één scherm worden gestuurd.</p>
     </section>
 
-    <section class="control-card wide" id="messageDebugCard">
+    <section data-category-panel="filters" class="control-card wide" id="messageDebugCard">
       <div class="panel-head compact"><div><span class="eyebrow">LIVE DEBUG</span><h3>Parser → incident → voertuig → kaart → omroep</h3></div></div>
       <pre id="messageDebugOutput" class="mono">Open een melding via de incident-debug om hier de volledige beslisketen te zien.</pre>
     </section>
 
-    <section class="control-card wide">
+    <section data-category-panel="system" class="control-card wide">
       <div class="panel-head compact"><div><span class="eyebrow">BACKEND</span><h3>Status</h3></div></div>
       <div class="status-grid compact-grid">
         <div><dt>Versie</dt><dd id="versionStatus">—</dd></div>

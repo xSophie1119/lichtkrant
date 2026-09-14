@@ -38,11 +38,12 @@
     const screen=options.find(x=>x.client_id===selectedScreen());
     let audioState='Niet vastgesteld',audioDetail='Verbind eerst een lichtkrantscherm.',audioLevel='unknown';
     if(screen){
-      if(screen.speech_mode==='mute'||screen.master_volume===0){audioState='Omroep gedempt';audioDetail='Verhoog het volume of kies Normaal.';}
+      if(data.settings?.speechEnabled===false||screen.speech_mode==='mute'||screen.master_volume===0){audioState='Omroep gedempt';audioDetail='Verhoog het volume of kies Normaal.';}
       else if(screen.audio_last_error){audioState='Audiofout';audioDetail=screen.audio_last_error;audioLevel='error';}
       else if(screen.audio_last_success_at){audioState='Afspelen bevestigd';audioDetail=`Laatst: ${new Date(screen.audio_last_success_at).toLocaleString('nl-NL')}. De software kan niet controleren of de luidspreker fysiek hoorbaar is.`;audioLevel='ok';}
       else {audioState=screen.audio_unlocked?'Audio gereed':'Audio nog niet bevestigd';audioDetail=screen.audio_unlocked?'Voer een omroeptest uit.':'Bij browseraudio kan één tik op het lichtkrantscherm nodig zijn.';}
     }
+    if($('#audioSummaryTitle')){$('#audioSummaryTitle').textContent=audioState;$('#audioSummaryDetail').textContent=audioDetail;$('#audioSummary').dataset.state=audioLevel;}
     const diagnostics=[['Bronnen',sourceState,sourceDetail,online?'ok':data.feed_status==='disabled'?'unknown':'error'],['Scherm',screen?'Verbonden':'Geen scherm verbonden',screen?`Hartslag ${screen.heartbeat_age_seconds||0} seconden geleden. ${screen.map_visible?'Kaart zichtbaar.':''}`:'Heropen de lichtkrant; dit telefoonpaneel telt niet als scherm.',screen?'ok':'error'],['Audio',audioState,audioDetail,audioLevel]];
     $('#diagnosticRows').innerHTML=diagnostics.map(([title,state,detail,level])=>`<div class="diagnostic-item" data-state="${level}"><span class="muted">${title}</span><strong>${esc(state)}</strong><p class="muted">${esc(detail)}</p></div>`).join('');
     const commands=data.commands||[];

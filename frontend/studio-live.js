@@ -5,7 +5,7 @@ const E=()=>window.P2000StudioEngine;
 async function load(){if(pending)return pending;pending=(async()=>{try{apply(await json('/api/remote/studio/config'));loaded=true}catch(e){console.warn('Studio laden mislukt',e)}finally{pending=null}})();return pending}
 function apply(d){if(!d?.config)return;const previous=design;design=d;loaded=true;if(!window.P2000_STUDIO_PREVIEW){try{localStorage.setItem('p2000StudioDesign',JSON.stringify(d))}catch{};if(hooks?.state&&previous.revision!==d.revision&&hooks.state.activeMessage&&!hooks.state.activeMessage.__test&&!hooks.filterMessage(hooks.state.activeMessage)){hooks.clearPin();hooks.clearActiveMessages();hooks.stopSpeechPlayback({clearQueue:true})}hooks?.render()}}
 try{const saved=JSON.parse(localStorage.getItem('p2000StudioDesign')||'null');if(saved?.config)design=saved}catch{}
-function result(m){return E()?.evaluate(design.config,m,m.__studioGeo)||{enabled:false,show:true,speak:true}}
+function result(m){return E()?.evaluate(design.config,m,m?.__studioGeo)||{enabled:false,show:true,speak:true}}
 async function prepare(m){
  if(!m||!E()||!design.config.enabled)return m;
  const d=result(m);if(!d.unknown||!m.city||!m.location)return m;
