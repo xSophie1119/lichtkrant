@@ -1,1 +1,1 @@
-{"name":"Lichtkrant Bedienpaneel","short_name":"Lichtkrant","start_url":"/remote","scope":"/","display":"standalone","background_color":"#0c151d","theme_color":"#0c151d","icons":[]}
+{"name":"Lichtkrant Bedienpaneel","short_name":"Lichtkrant","start_url":"/remote","scope":"/","display":"standalone","background_color":"#0c151d","theme_color":"#0c151d","icons":[{"src":"/remote-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}

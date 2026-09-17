@@ -24,15 +24,11 @@
   }
   window.addEventListener('hashchange',navigate);navigate();
   async function restoreStandard(kind){
-    const design=await api('/api/remote/studio/config');
-    if(!design?.config)throw new Error('Studio-instellingen konden niet worden opgehaald.');
-    const config=JSON.parse(JSON.stringify(design.config));config[kind].enabled=false;
-    await post('/api/remote/studio/config',{config,revision:design.revision});
-    try{
-      const patch=kind==='layout'?{messageDisplayMode:'parsed'}:{speechEnabled:true,speechMode:'normal'};
-      const result=await post('/api/settings',patch);renderSettings(result.settings);
-      notice(kind==='layout'?'Rustige standaardweergave toegepast.':'Standaardomroep ingeschakeld. Controleer het geluid met Test omroep.');
-    }catch(error){throw new Error('Eigen '+(kind==='layout'?'indeling':'omroepopbouw')+' staat uit. Overige instellingen niet opgeslagen: '+error.message);}
+    // One backend action keeps Studio and shared settings together. A failed
+    // write is compensated server-side, so the phone never reports a half-save.
+    const result=await post('/api/remote/apply-standard',{kind});
+    renderSettings(result.settings);
+    notice(kind==='layout'?'Rustige standaardweergave toegepast.':'Standaardomroep ingeschakeld. Controleer het geluid met Test omroep.');
   }
   function renderSettings(settings) {
     current = settings || {};

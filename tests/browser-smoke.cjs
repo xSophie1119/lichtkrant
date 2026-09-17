@@ -22,7 +22,7 @@
         if(p==='/auth.js')return route.fulfill({contentType:'text/javascript',body:"window.P2000Auth={ready:Promise.resolve({local:false,role:'controller'}),request:async(u,o)=>{const r=await fetch(u,o);if(!r.ok)throw Error('HTTP '+r.status);return r.json()}};"});
         if(p.startsWith('/api/')){
           let data={ok:true,settings,messages:[],exists:false};
-          if(p==='/api/remote/status')data={ok:true,version:'4.8.1',settings,feed_status:'online',messages:[message],displays:[{online:true,client_id:'tv',display_name:'Woonkamer',master_volume:70,speech_mode:'normal'}],profiles:[{id:'normal',label:'Normaal'},{id:'night',label:'Nacht'},{id:'exercise',label:'Oefening'},{id:'urgent',label:'Urgent'}],diagnostics:{sources:[]},metrics:{stages:{},process:[]}};
+          if(p==='/api/remote/status')data={ok:true,version:'4.9.0',settings,feed_status:'online',messages:[message],displays:[{online:true,client_id:'tv',display_name:'Woonkamer',master_volume:70,speech_mode:'normal'}],profiles:[{id:'normal',label:'Normaal'},{id:'night',label:'Nacht'},{id:'exercise',label:'Oefening'},{id:'urgent',label:'Urgent'}],diagnostics:{sources:[]},metrics:{stages:{},process:[]}};
           if(p==='/api/remote/info')data={ok:true,local:false};
           if(p==='/api/remote/studio/config')data={ok:true,revision:1,config};
           if(p==='/api/remote/studio/records')data={ok:true,records:[]};

@@ -43,8 +43,11 @@
       else if(screen.audio_last_success_at){audioState='Afspelen bevestigd';audioDetail=`Laatst: ${new Date(screen.audio_last_success_at).toLocaleString('nl-NL')}. De software kan niet controleren of de luidspreker fysiek hoorbaar is.`;audioLevel='ok';}
       else {audioState=screen.audio_unlocked?'Audio gereed':'Audio nog niet bevestigd';audioDetail=screen.audio_unlocked?'Voer een omroeptest uit.':'Bij browseraudio kan één tik op het lichtkrantscherm nodig zijn.';}
     }
-    if($('#audioSummaryTitle')){$('#audioSummaryTitle').textContent=audioState;$('#audioSummaryDetail').textContent=audioDetail;$('#audioSummary').dataset.state=audioLevel;}
-    const diagnostics=[['Bronnen',sourceState,sourceDetail,online?'ok':data.feed_status==='disabled'?'unknown':'error'],['Scherm',screen?'Verbonden':'Geen scherm verbonden',screen?`Hartslag ${screen.heartbeat_age_seconds||0} seconden geleden. ${screen.map_visible?'Kaart zichtbaar.':''}`:'Heropen de lichtkrant; dit telefoonpaneel telt niet als scherm.',screen?'ok':'error'],['Audio',audioState,audioDetail,audioLevel]];
+    const tts=data.audio_runtime||{},renderedEngine=String(tts.render_last_engine||''),requestedEngine=String(tts.render_requested_engine||data.settings?.speechEngine||'native'),voice=String(tts.render_last_voice||''),fallback=String(tts.render_fallback_reason||'');
+    const voiceDetail=renderedEngine?` Gekozen stemroute: ${requestedEngine}; laatst gebruikt: ${renderedEngine}${voice?` (${voice})`:''}${fallback?`; terugval: ${fallback}`:''}.`:'';
+    if($('#audioSummaryTitle')){$('#audioSummaryTitle').textContent=audioState;$('#audioSummaryDetail').textContent=audioDetail+voiceDetail;$('#audioSummary').dataset.state=audioLevel;}
+    const diagnostics=[['Bronnen',sourceState,sourceDetail,online?'ok':data.feed_status==='disabled'?'unknown':'error'],['Scherm',screen?'Verbonden':'Geen scherm verbonden',screen?`Hartslag ${screen.heartbeat_age_seconds||0} seconden geleden. ${screen.map_visible?'Kaart zichtbaar.':''}`:'Heropen de lichtkrant; dit telefoonpaneel telt niet als scherm.',screen?'ok':'error'],['Audio',audioState,audioDetail+voiceDetail,audioLevel]];
+    if(data.restore_warning)diagnostics.push(['Herstelpunten','Aandacht nodig',data.restore_warning,'error']);
     $('#diagnosticRows').innerHTML=diagnostics.map(([title,state,detail,level])=>`<div class="diagnostic-item" data-state="${level}"><span class="muted">${title}</span><strong>${esc(state)}</strong><p class="muted">${esc(detail)}</p></div>`).join('');
     const commands=data.commands||[];
     $('#commandResults').innerHTML=commands.slice(0,4).map(command=>{
@@ -83,12 +86,14 @@
   }
   async function loadHistory(){
     const result=await api('/api/remote/history');
-    $('#historyList').innerHTML=(result.points||[]).map(x=>`<article><strong>${esc(x.description)}</strong><p>${esc(date(x.created_at))}</p><button class="secondary" data-restore="${esc(x.id)}">Wijzigingen bekijken</button></article>`).join('')||'<p class="muted">Nog geen herstelpunten.</p>';
+    $('#historyList').innerHTML=(result.points||[]).map(x=>`<article><strong>${esc(x.description)}</strong><p>${esc(date(x.created_at))}${x.includes_studio?' · inclusief Studio':''}</p><button class="secondary" data-restore="${esc(x.id)}">Wijzigingen bekijken</button></article>`).join('')||'<p class="muted">Nog geen herstelpunten.</p>';
     for(const button of document.querySelectorAll('[data-restore]'))bind(button,async()=>{
       const result=await api(`/api/remote/restore-preview?id=${encodeURIComponent(button.dataset.restore)}`);restore=result.preview;
       $('#restorePreview').hidden=false;
-      $('#restoreChanges').innerHTML=restore.changes.map(x=>`<p><strong>${esc(settingLabels[x.key]||x.key)}</strong><br>${esc(JSON.stringify(x.before))} → ${esc(JSON.stringify(x.after))}</p>`).join('')||'<p>Deze instellingen zijn al actief.</p>';
-      $('#confirmRestore').disabled=!restore.changes.length;
+      const settingsHtml=restore.changes.map(x=>`<p><strong>${esc(settingLabels[x.key]||x.key)}</strong><br>${esc(JSON.stringify(x.before))} → ${esc(JSON.stringify(x.after))}</p>`).join('');
+      const studioHtml=(restore.studio_changes||[]).map(x=>`<p><strong>${esc(x)}</strong><br>Wordt teruggezet vanuit dit herstelpunt.</p>`).join('');
+      $('#restoreChanges').innerHTML=settingsHtml+studioHtml||'<p>Deze instellingen zijn al actief.</p>';
+      $('#confirmRestore').disabled=!(restore.changes.length||(restore.studio_changes||[]).length);
     });
   }
   async function archive(more=false){
