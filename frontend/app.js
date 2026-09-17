@@ -1,6 +1,6 @@
 'use strict';
 
-const CLIENT_VERSION='4.8.1';
+const CLIENT_VERSION='4.9.0';
 const DISPLAY_ROWS=3;
 const BODY_ROWS=2;
 const PAGE_MS=6500;
@@ -1076,11 +1076,18 @@ async function fetchTtsBlob(text,timeoutMs=16000,cueService='',cueUrgent=false){
   const controller=typeof AbortController!=='undefined'?new AbortController():null;
   const timer=controller?setTimeout(()=>controller.abort(),timeoutMs):null;
   try{
-    const body={text,service:String(cueService||'brandweer'),urgent:!!cueUrgent,attention:!!(cueService||cueUrgent),rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96))};
+    const body={text,service:String(cueService||'brandweer'),urgent:!!cueUrgent,attention:!!(cueService||cueUrgent),rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96)),engine:String(state.settings.speechEngine||'native')};
     const r=await fetch('/api/tts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store',signal:controller?.signal});
     if(!r.ok){let d={};try{d=await r.json()}catch{}throw new Error(d.error||`TTS HTTP ${r.status}`)}
     const blob=await r.blob();if(blob.size<100)throw new Error('lege TTS-audio');
-    return {blob,engine:String(r.headers.get('X-P2000-TTS-Engine')||'audio-file')};
+    return {
+      blob,engine:String(r.headers.get('X-P2000-TTS-Engine')||'audio-file'),
+      requestedEngine:String(r.headers.get('X-P2000-TTS-Requested-Engine')||state.settings.speechEngine||'native'),
+      attentionEmbedded:r.headers.get('X-P2000-TTS-Attention')==='embedded',
+      rateApplied:r.headers.get('X-P2000-TTS-Rate-Applied')==='true',
+      chunks:Math.max(1,Number(r.headers.get('X-P2000-TTS-Chunk-Count'))||1),
+      fallback:String(r.headers.get('X-P2000-TTS-Fallback')||'')
+    };
   }catch(e){if(e?.name==='AbortError')throw new Error('TTS render duurde te lang');throw e}
   finally{if(timer)clearTimeout(timer)}
 }
@@ -1097,7 +1104,7 @@ async function tryPlayMediaElement(audio,url,entry,volume,rate){
     audio.onplaying=()=>{started=true;state.audioStats.unlocked=true;if(startTimer){clearTimeout(startTimer);startTimer=null}};
     audio.onended=()=>finish(true);audio.onerror=()=>finish(false,new Error('browser kon de TTS-audio niet decoderen/afspelen'));
     audio.onstalled=()=>{if(!started)finish(false,new Error('TTS-audio bleef hangen voor afspelen'))};
-    startTimer=setTimeout(()=>{if(!started)finish(false,new Error('TTS-audio startte niet binnen 1,2 seconde'))},1200);
+    startTimer=setTimeout(()=>{if(!started)finish(false,new Error('TTS-audio startte niet binnen 4 seconden'))},4000);
     hardTimer=setTimeout(()=>finish(false,new Error('TTS-audio afspeeltimeout')),estimateSpeechMs(entry.text||'')+12000);
     const attempt=async()=>{
       let last=null;
@@ -1114,19 +1121,18 @@ async function playOnlineAudioInBrowser(text,requestSeq,volume=100,cueService=''
   state.audioStats.attempts++;
   await armAudioBus();
   if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
-  const rendered=await fetchTtsBlob(text,8000,cueService,cueUrgent);
+  const rendered=await fetchTtsBlob(text,Math.max(12000,Math.min(30000,estimateSpeechMs(text)+6000)),cueService,cueUrgent);
   if(requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
-  // SAPI-WAV already contains the attention tone, so the browser performs only
-  // ONE actual media play operation for the whole dispatch. The cloud fallback
-  // has no embedded cue; add one only in that exceptional path.
-  if(!/^(?:windows-sapi|linux-espeak)-wav/i.test(rendered.engine)&&(cueService||cueUrgent))await browserAttentionCue(cueService,cueUrgent,volume);
+  // The backend tells us what is already in the media asset. This prevents
+  // Piper from receiving a second cue and avoids applying speech speed twice.
+  if(!rendered.attentionEmbedded&&(cueService||cueUrgent))await browserAttentionCue(cueService,cueUrgent,volume);
   const url=URL.createObjectURL(rendered.blob),audio=$('#lightkrantSpeechAudio');
   if(!audio){URL.revokeObjectURL(url);throw new Error('lichtkrant-audiospeler ontbreekt')}
   try{audio.pause()}catch{}
   const entry={audio,url,finish:null,text};state.currentSpeechAudio=entry;
-  const rate=/^(?:windows-sapi|linux-espeak)-wav/i.test(rendered.engine)?1:Math.max(.72,Math.min(1.22,Number(state.settings.speechRate)||.96));
+  const rate=rendered.rateApplied?1:Math.max(.72,Math.min(1.22,Number(state.settings.speechRate)||.96));
   try{
-    const result=await tryPlayMediaElement(audio,url,entry,volume,rate);noteAudioSuccess(rendered.engine||'audio-file');return result;
+    const result=await tryPlayMediaElement(audio,url,entry,volume,rate);noteAudioSuccess(rendered.fallback?`${rendered.engine} (fallback: ${rendered.fallback})`:rendered.engine||'audio-file');return result;
   }catch(error){if(isAudioLockedError(error)){state.audioBus.armed=false;setAudioUnlockVisible(true,'Browser blokkeert automatisch geluid. Klik één keer om de omroep in te schakelen.');throw audioLockedError(error)}throw error}
 }
 function localKioskHost(){const h=String(location.hostname||'').toLowerCase();return h==='127.0.0.1'||h==='localhost'||h==='::1'}
@@ -1135,7 +1141,7 @@ async function windowsHostSpeakFallback(text,requestSeq,volume=100,cueService=''
   if(!windowsKioskHost())throw new Error('host-audio alleen op de lokale Windows-lichtkrant');
   const controller=typeof AbortController!=='undefined'?new AbortController():null,timer=controller?setTimeout(()=>controller.abort(),18000):null;
   try{
-    const r=await fetch('/api/tts/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96)),volume,service:String(cueService||'brandweer'),urgent:!!cueUrgent,attention:!!(cueService||cueUrgent)}),cache:'no-store',signal:controller?.signal});
+    const r=await fetch('/api/tts/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,rate:Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96)),volume,service:String(cueService||'brandweer'),urgent:!!cueUrgent,attention:!!(cueService||cueUrgent),engine:String(state.settings.speechEngine||'native')}),cache:'no-store',signal:controller?.signal});
     const d=await r.json().catch(()=>({}));if(!r.ok||!d?.ok)throw new Error(d?.error||`Windows host-TTS HTTP ${r.status}`);
     if(d.cancelled||requestSeq!==state.speechRequestSeq)return {mode:'cancelled',completed:true};
     if(!d.playback_token)throw new Error('Audiospeler gaf geen afspeelbevestiging terug');
@@ -1169,7 +1175,7 @@ async function onlineSpeakText(text,requestSeq=++state.speechRequestSeq,volume=1
     const result=await browserSpeakPromise(text,volume);noteAudioSuccess('browser-voice-last-resort');return result;
   }
 }
-function estimateSpeechMs(text){const words=String(text||'').trim().split(/\s+/).filter(Boolean).length,rate=Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96));return Math.max(3500,Math.min(35000,Math.round((words/(2.2*rate))*1000+2200)))}
+function estimateSpeechMs(text){const words=String(text||'').trim().split(/\s+/).filter(Boolean).length,rate=Math.max(.65,Math.min(1.25,Number(state.settings.speechRate)||.96));return Math.max(3500,Math.min(120000,Math.round((words/(2.2*rate))*1000+2200)))}
 function clearSpeechTimer(){if(state.speechJobTimer!==null)clearTimeout(state.speechJobTimer);state.speechJobTimer=null}
 function finishSpeechJob(id,result={ok:true,detail:'Omroep afgespeeld'}){if(!state.speechCurrent||state.speechCurrent.id!==id)return;const job=state.speechCurrent;clearSpeechTimer();state.speechCurrent=null;try{job.onResult?.(result)}catch{};startNextSpeechJob()}
 function stopSpeechPlayback({clearQueue=false}={}){
@@ -1180,11 +1186,19 @@ function stopSpeechPlayback({clearQueue=false}={}){
   state.hostStop=hostStop;
   const job=state.speechCurrent;state.speechCurrent=null;try{job?.onResult?.({ok:false,detail:'Omroep gestopt'})}catch{};if(clearQueue){for(const queued of state.speechQueue){try{queued.onResult?.({ok:false,detail:'Omroep geannuleerd'})}catch{}}state.speechQueue=[]}return hostStop.then(()=>true);
 }
+const MAX_SPEECH_QUEUE=12;
+function speechJobLifetimeMs(job){return Number(job?.priority)>=80||job?.kind!=='p2000'?5*60*1000:90*1000}
+function speechJobExpired(job,now=Date.now()){return now-Number(job?.queuedAt||now)>speechJobLifetimeMs(job)}
+function rejectQueuedSpeech(job,detail){try{job?.onResult?.({ok:false,detail})}catch{}}
+function pruneSpeechQueue(now=Date.now()){
+  state.speechQueue=state.speechQueue.filter(job=>{if(!speechJobExpired(job,now))return true;rejectQueuedSpeech(job,'Omroep verlopen voordat deze kon starten');return false});
+}
 function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',key='',groupKey='',cueService='',cueUrgent=false,forceAudio=false,skipTune=false,onResult=null}={}){
   text=String(text||'').trim();if(!text)return false;
   const numericVolume=Number(volume),safeVolume=Math.max(0,Math.min(100,Number.isFinite(numericVolume)?numericVolume:72));
   const numericDeviceVolume=Number(deviceVolume),safeDeviceVolume=deviceVolume===null?null:Math.max(5,Math.min(100,Number.isFinite(numericDeviceVolume)?numericDeviceVolume:38));
   const id=`speech-${++state.speechJobSeq}`,job={id,text,priority:Number(priority)||0,volume:safeVolume,deviceVolume:safeDeviceVolume,kind,key,groupKey,cueService,cueUrgent:!!cueUrgent,forceAudio:!!forceAudio,skipTune:!!skipTune,onResult:typeof onResult==='function'?onResult:null,queuedAt:Date.now(),retries:0};
+  pruneSpeechQueue();
   if(key&&(state.speechCurrent?.key===key||state.speechQueue.some(x=>x.key===key)))return false;
   if(groupKey){state.speechQueue=state.speechQueue.filter(x=>{if(x.groupKey===groupKey&&job.priority>=x.priority){try{x.onResult?.({ok:false,detail:'Omroep vervangen door een nieuwere melding'})}catch{}return false}return true});}
   const cur=state.speechCurrent;
@@ -1192,10 +1206,14 @@ function queueSpeech(text,{priority=50,volume=72,deviceVolume=null,kind='p2000',
     state.speechQueue.unshift(job);
     stopSpeechPlayback({clearQueue:false}).finally(()=>startNextSpeechJob());return true;
   }
-  state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);startNextSpeechJob();return true;
+  state.speechQueue.push(job);state.speechQueue.sort((a,b)=>b.priority-a.priority||a.queuedAt-b.queuedAt);
+  while(state.speechQueue.length>MAX_SPEECH_QUEUE){const dropped=state.speechQueue.pop();rejectQueuedSpeech(dropped,'Omroep niet gestart: wachtrij is vol');}
+  startNextSpeechJob();return true;
 }
 function startNextSpeechJob(){
-  if(state.speechCurrent||!state.speechQueue.length)return;
+  if(state.speechCurrent)return;
+  pruneSpeechQueue();
+  if(!state.speechQueue.length)return;
   const job=state.speechQueue.shift();state.speechCurrent=job;const done=(ok=true,detail='Omroep afgespeeld')=>finishSpeechJob(job.id,{ok,detail});
   const seq=++state.speechRequestSeq;
   (async()=>{
@@ -1203,10 +1221,9 @@ function startNextSpeechJob(){
     if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return {mode:'cancelled',completed:true};
     let tuned=false;
     if(!job.skipTune){
-      const tunePromise=playDispatchTuneForJob(job).catch(()=>false);
-      const raced=await Promise.race([tunePromise.then(value=>({done:true,value})),waitMs(900).then(()=>({done:false,value:false}))]);
-      tuned=!!raced.value;
-      if(!raced.done)stopCurrentTune();
+      // Each tune implementation has a bounded completion path. Waiting for it
+      // keeps a real dispatch identical to the separate tune test.
+      tuned=!!await playDispatchTuneForJob(job).catch(()=>false);
     }
     if(seq!==state.speechRequestSeq||state.speechCurrent?.id!==job.id)return {mode:'cancelled',completed:true};
     return onlineSpeakText(job.text,seq,job.volume,tuned||job.skipTune?'':job.cueService,tuned||job.skipTune?false:job.cueUrgent,job.deviceVolume);
@@ -1669,7 +1686,20 @@ async function pollSharedSettings(){await window.P2000StudioLive?.load();try{con
 async function setDisplayPower(wanted,force=false){if(!force&&!state.settings.displaySleep)return;if(!force&&state.lastPowerWanted===wanted)return;state.lastPowerWanted=wanted;try{const r=await json('/api/display/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:wanted})});if(!r?.ok)state.lastPowerWanted=null;else if(r?.held){const retry=Math.max(1,Number(r.retry_after)||5)*1000;setTimeout(()=>{if(state.lastPowerWanted===wanted){state.lastPowerWanted=null;syncDisplayPower()}},retry+250)}}catch{state.lastPowerWanted=null}}
 function syncDisplayPower(){if(!state.settings.displaySleep){if(state.lastPowerWanted==='off')setDisplayPower('on',true);state.lastPowerWanted=null;return}setDisplayPower(trueBlack()?'off':'on')}
 function refresh(){if(refreshPromise)return refreshPromise;refreshPromise=(async()=>{try{const [status,msgs]=await Promise.all([json('/api/status'),json('/api/messages?limit=100')]);state.lastRefreshAt=Date.now();observeMonitorRuntime(status);state.status=status;state.messages=msgs.messages||[];if(state.started)await window.P2000StudioLive?.prepareAll(state.messages.filter(m=>!state.knownIds.has(m.id)));updateLastP2000ActivityFromMessages();if(!state.started){finishStartupBaseline()}else{const freshNew=state.messages.filter(m=>!state.knownIds.has(m.id));freshNew.sort((a,b)=>-compareMessageNewest(a,b)).forEach(processNew);state.messages.forEach(m=>state.knownIds.add(m.id));pruneKnownIds()}syncDisplayPower();render()}catch(e){state.status={feed_status:'error',last_error:String(e)};render()}})().finally(()=>{refreshPromise=null});return refreshPromise}
-async function incoming(m){if(!m||state.knownIds.has(m.id))return;await window.P2000StudioLive?.prepare(m);state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);processNew(m)}
+async function incoming(m){
+  if(!m||state.knownIds.has(m.id))return;
+  state.messages=[m,...state.messages.filter(x=>x.id!==m.id)].sort(compareMessageNewest).slice(0,100);
+  const studioDecision=window.P2000StudioLive?.result(m),waitForRequiredLocation=!!(studioDecision?.unknown&&studioDecision.show===false);
+  if(!waitForRequiredLocation)processNew(m);
+  // Optional geofencing enrichment may take a network round-trip. An explicit
+  // "hide until location is known" rule is the sole case that waits; all other
+  // messages appear immediately and are withdrawn if the final rule rejects it.
+  Promise.resolve(window.P2000StudioLive?.prepare(m)).then(()=>{
+    if(waitForRequiredLocation&&!state.knownIds.has(m.id)){processNew(m);return;}
+    if(state.knownIds.has(m.id)&&!filterMessage(m)&&state.activeMessage?.id===m.id){clearActiveMessages();stopSpeechPlayback({clearQueue:false});}
+    render();
+  }).catch(error=>{console.warn('Studio-verrijking mislukt',error);if(waitForRequiredLocation&&!state.knownIds.has(m.id))processNew(m);});
+}
 function commandReceipt(seq,status,detail){return window.P2000ScreenRemote?.receipt(json,DISPLAY_CLIENT_ID,seq,status,detail)}
 let remoteCommandChain=Promise.resolve();
 function handleDisplayCommand(p){remoteCommandChain=remoteCommandChain.then(()=>executeDisplayCommand(p)).catch(e=>commandReceipt(Number(p?._command_seq),"error",e?.message||"Opdracht mislukt"));return remoteCommandChain}
@@ -1699,7 +1729,7 @@ async function executeDisplayCommand(p){
   }
 }
 async function pollDisplayCommands(){if(displayCommandPollPromise||monitorReloading)return displayCommandPollPromise;if(monitorEventSource?.readyState===1&&Date.now()-lastDisplayCommandPollAt<10000)return;lastDisplayCommandPollAt=Date.now();displayCommandPollPromise=(async()=>{try{const initial=lastDisplayCommandSeq===null;const after=initial?0:Number(lastDisplayCommandSeq)||0;const d=await json(`/api/display-commands?after=${after}&initial=${initial?1:0}&_=${Date.now()}`,{timeoutMs:5000});for(const cmd of (d.commands||[]))await handleDisplayCommand(cmd);if(Number.isFinite(Number(d.latest_seq)))lastDisplayCommandSeq=Math.max(Number(lastDisplayCommandSeq)||0,Number(d.latest_seq)||0);return true}catch{return false}})().finally(()=>{displayCommandPollPromise=null});return displayCommandPollPromise}
-function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message);else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='studio'){window.P2000StudioLive?.apply(p.design)}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'||p.type==='replay'||p.type==='remote-message'){handleDisplayCommand(p)}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
+function connect(){try{monitorEventSource?.close?.()}catch{}const es=new EventSource(`/api/stream?_=${Date.now()}`);monitorEventSource=es;es.onopen=()=>{watchMonitorRuntime();if(state.started)refresh()};es.onmessage=e=>{try{const p=JSON.parse(e.data);if(p.type==='message')incoming(p.message).catch(error=>console.warn('Nieuwe melding kon niet worden verwerkt',error));else if(p.type==='runtime'){monitorRuntimeFailures=0;observeMonitorRuntime(p)}else if(p.type==='status'){state.status={...(state.status||{}),feed_status:p.status,last_error:p.error};}else if(p.type==='studio'){window.P2000StudioLive?.apply(p.design)}else if(p.type==='settings'){applySharedSettings(p.settings||{})}else if(p.type==='vehicle-db'){loadVehicleDb().then(()=>render()).catch(()=>{})}else if(p.type==='test'||p.type==='replay'||p.type==='remote-message'){handleDisplayCommand(p)}}catch{}};es.onerror=()=>{state.status={...(state.status||{}),feed_status:'error'};scheduleRuntimeWatch(900)}}
 function stepPage(){if(!activeVisible())return;const pages=solidMessagePages(state.activeMessage);if(pages.length>1)state.page=(state.page+1)%pages.length;state.lastStep=Date.now();render()}
 function tick(){
   if(window.P2000StudioLive?.design.config.layout?.enabled)render();

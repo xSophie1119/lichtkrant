@@ -190,7 +190,7 @@ function monitor(){
   window.HTMLCanvasElement.prototype.getContext=()=>new Proxy({measureText:text=>({width:String(text).length*8}),createLinearGradient:()=>({addColorStop(){}})}, {get:(obj,key)=>obj[key]||(()=>{})});
   window.matchMedia=()=>({matches:false});window.requestAnimationFrame=fn=>{fn();return 1;};
   const source=read('app.js').split("let controlsTimer=null;")[0];
-  window.eval(source+`\nObject.assign(window,{screenState:state,filterMessage,remoteUrgent,shouldSpeakMessage,speechPhrase,maybeSpeakMessage,stopSpeechPlayback,windowsHostSpeakFallback,setAudioRunner:fn=>{onlineSpeakText=fn},pollDisplayCommands,handleDisplayCommand,handleTest,queueSpeech,finishSpeechJob,HOST_TEST:{},configureScreenTest:hooks=>{if(hooks.activate)activateMessage=hooks.activate;if(hooks.speak)maybeSpeakMessage=hooks.speak;reportClientHealth=async()=>{};commandReceipt=async(seq,status,detail)=>{hooks.receipts.push({seq,status,detail})};render=()=>{};clearActiveMessages=()=>{};},setJson:fn=>{json=fn},setQueueRunner:fn=>{startNextSpeechJob=fn},setTestReporter:fn=>{reportTestResult=fn}});`);
+  window.eval(source+`\nObject.assign(window,{screenState:state,filterMessage,remoteUrgent,shouldSpeakMessage,speechPhrase,maybeSpeakMessage,stopSpeechPlayback,windowsHostSpeakFallback,fetchTtsBlob,setAudioRunner:fn=>{onlineSpeakText=fn},pollDisplayCommands,handleDisplayCommand,handleTest,queueSpeech,finishSpeechJob,HOST_TEST:{},configureScreenTest:hooks=>{if(hooks.activate)activateMessage=hooks.activate;if(hooks.speak)maybeSpeakMessage=hooks.speak;reportClientHealth=async()=>{};commandReceipt=async(seq,status,detail)=>{hooks.receipts.push({seq,status,detail})};render=()=>{};clearActiveMessages=()=>{};},setJson:fn=>{json=fn},setQueueRunner:fn=>{startNextSpeechJob=fn},setTestReporter:fn=>{reportTestResult=fn}});`);
   return{window,instance};
 }
 
@@ -258,6 +258,29 @@ test('An empty studio phrase falls back and rejected audio can be tried again',(
     assert.equal(window.maybeSpeakMessage(message),true);
   }finally{window.close();}
 });
+test('Expired queued speech is discarded instead of speaking after a long unlock delay',()=>{
+  const {window}=monitor(),results=[];
+  try{
+    window.setQueueRunner(()=>{});window.queueSpeech('Oud',{priority:20,onResult:r=>results.push(r)});
+    window.screenState.speechQueue[0].queuedAt=Date.now()-2*60*1000;
+    window.queueSpeech('Nieuw',{priority:20});
+    assert.equal(results.length,1);assert.equal(results[0].ok,false);
+    assert.equal(window.screenState.speechQueue.length,1);assert.equal(window.screenState.speechQueue[0].text,'Nieuw');
+  }finally{window.close();}
+});
+test('TTS request carries the selected engine and reads rendered media metadata',async()=>{
+  const {window}=monitor(),posted=[];
+  try{
+    window.screenState.settings.speechEngine='piper';
+    window.fetch=async(_url,opts)=>{
+      posted.push(JSON.parse(opts.body));
+      const headers={'X-P2000-TTS-Engine':'linux-piper-wav','X-P2000-TTS-Requested-Engine':'piper','X-P2000-TTS-Attention':'embedded','X-P2000-TTS-Rate-Applied':'true','X-P2000-TTS-Chunk-Count':'2','X-P2000-TTS-Fallback':''};
+      return {ok:true,headers:{get:key=>headers[key]||null},blob:async()=>new window.Blob(['audio'.repeat(30)])};
+    };
+    const rendered=await window.fetchTtsBlob('Test',1000,'brandweer',false);
+    assert.equal(posted[0].engine,'piper');assert.equal(rendered.attentionEmbedded,true);assert.equal(rendered.rateApplied,true);assert.equal(rendered.chunks,2);
+  }finally{window.close();}
+});
 test('Stopping during the retry delay cannot resurrect a failed announcement',async()=>{
   const {window}=monitor();let attempts=0;const results=[];
   try{
@@ -303,15 +326,14 @@ test('Dashboard categories preserve role hiding and unsent test text',async()=>{
     assert.equal(window.document.querySelector('#test').hasAttribute('data-page-hidden'),true);
   }finally{window.close();}
 });
-test('Standard display keeps studio rules and design blocks intact',async()=>{
-  const {window,calls,setResponse}=mobile();const config={enabled:true,rules:[{id:'keep'}],layout:{enabled:true,scenes:{single:[{type:'message'}]}},speech:{enabled:true,template:'Eigen tekst'}};
+test('Standard display uses one backend action for Studio and shared settings',async()=>{
+  const {window,calls,setResponse}=mobile();
   try{
-    await settle();setResponse((url,opts)=>url==='/api/remote/studio/config'?(opts.method==='POST'?{ok:true}:{revision:12,config}):url==='/api/settings'?{settings:{messageDisplayMode:'parsed'}}:null);
+    await settle();setResponse((url,opts)=>url==='/api/remote/apply-standard'?{settings:{messageDisplayMode:'parsed',speechEnabled:true,speechMode:'normal'}}:null);
     window.document.querySelector('#calmDisplay').click();await settle();
-    const saved=JSON.parse(calls.find(x=>x.url==='/api/remote/studio/config'&&x.options.method==='POST').options.body);
-    assert.equal(saved.revision,12);assert.equal(saved.config.layout.enabled,false);
-    assert.deepEqual(saved.config.rules,config.rules);assert.deepEqual(saved.config.layout.scenes,config.layout.scenes);
-    assert.deepEqual(saved.config.speech,config.speech);
+    const action=calls.find(x=>x.url==='/api/remote/apply-standard');
+    assert.ok(action);assert.deepEqual(JSON.parse(action.options.body),{kind:'layout'});
+    assert.equal(calls.some(x=>x.url==='/api/remote/studio/config'||x.url==='/api/settings'),false);
   }finally{window.close();}
 });
 test('Settings navigation retains unsaved fields and supports existing deep links',()=>{

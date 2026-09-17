@@ -5,5 +5,5 @@
   "display": "fullscreen",
   "background_color": "#050a0f",
   "theme_color": "#071018",
-  "icons": []
+  "icons":[{"src":"/remote-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]
 }

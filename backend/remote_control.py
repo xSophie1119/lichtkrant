@@ -24,11 +24,22 @@ class RemoteAccess:
         # The old shared admin token is intentionally no longer a credential.
         self.path = token_path.parent / 'devices.json'
         self.lock = threading.RLock()
+        self.load_warning = ''
         if self.path.exists():
-            data = json.loads(self.path.read_text(encoding='utf-8'))
-            if not isinstance(data, dict) or not isinstance(data.get('devices'), dict):
-                raise RuntimeError('Ongeldig apparatenbestand; herstel data/secrets/devices.json')
-            self.devices = data['devices']
+            try:
+                data = json.loads(self.path.read_text(encoding='utf-8'))
+                if not isinstance(data, dict) or not isinstance(data.get('devices'), dict):
+                    raise ValueError('het hoofdniveau bevat geen apparatenlijst')
+                self.devices = data['devices']
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                # Device credentials fail closed: LAN sessions are not recreated
+                # or guessed, while the local monitor can still start and repair.
+                stamp=time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())
+                damaged=self.path.with_name(f'{self.path.stem}.beschadigd-{stamp}{self.path.suffix}')
+                try: os.replace(self.path,damaged); kept=f' Bewaard als {damaged.name}.'
+                except OSError: kept=' Het oorspronkelijke bestand is niet overschreven.'
+                self.devices = {}
+                self.load_warning='Apparaattoegang is veilig uitgeschakeld omdat devices.json beschadigd is.'+kept
         else:
             self.devices = {}
         self.invites = {}

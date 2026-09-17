@@ -77,6 +77,8 @@ def post(handler, path, payload, runtime):
             return handler.send_json({'ok': True})
         if path == '/api/remote/profile':
             return handler.send_json({'ok': True, 'settings': dash.profile(str(payload.get('id', '')))})
+        if path == '/api/remote/apply-standard':
+            return handler.send_json({'ok': True, **dash.apply_standard(str(payload.get('kind', '')))})
         if path == '/api/remote/checkpoint':
             with state.config_lock:
                 point_id = dash.checkpoint(payload.get('description', 'Handmatig herstelpunt'), state.get_display_settings())

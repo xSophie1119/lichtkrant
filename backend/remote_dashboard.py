@@ -35,6 +35,26 @@ def fingerprint(settings):
     return hashlib.sha256(json.dumps(settings, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
+def _load_restore_history(path):
+    """Read optional restore data without allowing a damaged convenience file to stop the monitor."""
+    if not path.exists():
+        return [], ""
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+        if not isinstance(value, list):
+            raise ValueError('het hoofdniveau is geen lijst')
+        return [row for row in value if isinstance(row, dict) and isinstance(row.get('settings'), dict)][:40], ""
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        quarantined = path.with_name(f'{path.stem}.beschadigd-{stamp}{path.suffix}')
+        try:
+            os.replace(path, quarantined)
+            kept = f' Bewaard als {quarantined.name}.'
+        except OSError:
+            kept = ' Het oorspronkelijke bestand is niet overschreven.'
+        return [], f'Herstelpunten konden niet worden gelezen en zijn overgeslagen ({str(exc)[:120]}).{kept}'
+
+
 def measured(name):
     def decorate(fn):
         @wraps(fn)
@@ -89,9 +109,7 @@ class Dashboard:
         self.samples = deque(maxlen=360)  # one hour, independent of installation age
         self.last_sample = time.monotonic()
         self.last_cpu = time.process_time()
-        self.history = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else []
-        if not isinstance(self.history, list):
-            raise ValueError('Ongeldig bestand met herstelpunten')
+        self.history, self.history_error = _load_restore_history(self.path)
 
     def notify(self):
         with self.changed:
@@ -127,11 +145,22 @@ class Dashboard:
                     stages[name] = {'samples': len(rows), 'p50_ms': rows[len(rows)//2], 'p95_ms': rows[min(len(rows)-1, math.ceil(len(rows)*.95)-1)], 'max_ms': rows[-1]}
             return {'stages': stages, 'process': list(self.samples), 'window_seconds': 3600}
 
+    def _studio_snapshot(self):
+        studio = getattr(self.state, 'studio', None)
+        return studio.snapshot() if studio is not None else None
+
+    def _restore_bundle(self):
+        return {'settings': self.state.get_display_settings(), 'studio': self._studio_snapshot()}
+
     def checkpoint(self, label, settings):
+        studio = self._studio_snapshot()
         with self.lock:
-            if self.history and self.history[0]['settings'] == settings:
+            if self.history and self.history[0].get('settings') == settings and self.history[0].get('studio') == studio:
                 return self.history[0]['id']
-            row = {'id': secrets.token_hex(12), 'created_at': now_iso(), 'description': str(label)[:160], 'settings': copy.deepcopy(settings)}
+            row = {
+                'id': secrets.token_hex(12), 'created_at': now_iso(), 'description': str(label)[:160],
+                'settings': copy.deepcopy(settings), 'studio': copy.deepcopy(studio),
+            }
             history = [row, *self.history][:40]
             atomic_json(self.path, history, private=True)
             self.history = history
@@ -139,24 +168,48 @@ class Dashboard:
 
     def history_view(self):
         with self.lock:
-            return [{k: v for k, v in row.items() if k != 'settings'} for row in self.history]
+            return [{**{k: v for k, v in row.items() if k not in {'settings', 'studio'}}, 'includes_studio': isinstance(row.get('studio'), dict)} for row in self.history]
 
     def restore_preview(self, point_id):
-        current = self.state.get_display_settings()
+        current = self._restore_bundle()
         with self.lock:
-            row = next((copy.deepcopy(x) for x in self.history if x['id'] == point_id), None)
+            row = next((copy.deepcopy(x) for x in self.history if x.get('id') == point_id), None)
         if not row: raise ValueError('Herstelpunt bestaat niet meer')
-        changes = [{'key': key, 'before': current.get(key), 'after': row['settings'].get(key)} for key in sorted(set(current) | set(row['settings'])) if current.get(key) != row['settings'].get(key)]
-        return dict(row, changes=changes, expected=fingerprint(current))
+        saved_settings = row.get('settings') or {}
+        changes = [{'key': key, 'before': current['settings'].get(key), 'after': saved_settings.get(key)} for key in sorted(set(current['settings']) | set(saved_settings)) if current['settings'].get(key) != saved_settings.get(key)]
+        studio_changes = []
+        saved_studio = row.get('studio')
+        if isinstance(saved_studio, dict) and saved_studio != current['studio']:
+            old = (current['studio'] or {}).get('config', {})
+            new = saved_studio.get('config', {})
+            labels = [('layout', 'Studio-ontwerp'), ('rules', 'Studio-regels'), ('speech', 'Studio-omroep'), ('corrections', 'Studio-correcties'), ('examples', 'Studio-testvoorbeelden')]
+            studio_changes = [label for key, label in labels if old.get(key) != new.get(key)] or ['Studio-inrichting']
+        return dict(row, changes=changes, studio_changes=studio_changes, expected=fingerprint(current), includes_studio=isinstance(saved_studio, dict))
 
     def restore(self, point_id, expected):
         with self.state.config_lock:
+            current = self._restore_bundle()
             preview = self.restore_preview(point_id)
             if preview['expected'] != expected:
-                raise ValueError('Instellingen zijn intussen gewijzigd; bekijk de voorvertoning opnieuw')
-            # Replace sparse settings too: keys introduced after the checkpoint must disappear.
-            self.checkpoint('Vóór terugzetten herstelpunt', self.state.get_display_settings())
-            result = self.state.save_display_settings(preview['settings'], replace=True)
+                raise ValueError('Instellingen of Studio zijn intussen gewijzigd; bekijk de voorvertoning opnieuw')
+            # Preserve a coherent return point before either persistent store changes.
+            self.checkpoint('Vóór terugzetten herstelpunt', current['settings'])
+            previous_studio, restored_studio = current['studio'], None
+            try:
+                if preview.get('includes_studio'):
+                    restored_studio = self.state.studio.restore_snapshot(preview['studio'], expected=(previous_studio or {}).get('revision'))
+                result = self.state.save_display_settings(preview['settings'], replace=True)
+            except Exception:
+                # Both stores are local and independent. Compensate a partial restore
+                # so a failed action never silently leaves settings and Studio apart.
+                if restored_studio is not None and previous_studio is not None:
+                    try: self.state.studio.restore_snapshot(previous_studio)
+                    except Exception: pass
+                try: self.state.save_display_settings(current['settings'], replace=True)
+                except Exception: pass
+                raise
+            if restored_studio is not None:
+                self.state.broadcast({'type': 'studio', 'design': restored_studio})
             return result
 
     def profile(self, key):
@@ -171,6 +224,31 @@ class Dashboard:
             if key == 'normal': patch['speechEnabled'] = base.get('speechEnabled', True)
             self.checkpoint('Vóór profiel ' + PROFILES[key]['label'], current)
             return self.state.save_display_settings(patch)
+
+    def apply_standard(self, kind):
+        if kind not in {'layout', 'speech'}:
+            raise ValueError('Onbekende standaardinstelling')
+        patch = {'messageDisplayMode': 'parsed'} if kind == 'layout' else {'speechEnabled': True, 'speechMode': 'normal'}
+        label = 'Rustige schermweergave' if kind == 'layout' else 'Standaardomroep'
+        with self.state.config_lock:
+            before_settings = self.state.get_display_settings()
+            before_studio = self.state.studio.snapshot()
+            config = copy.deepcopy(before_studio['config'])
+            config[kind]['enabled'] = False
+            self.checkpoint('Vóór ' + label, before_settings)
+            saved_studio = None
+            try:
+                saved_studio = self.state.studio.save(config, before_studio['revision'])
+                result = self.state.save_display_settings(patch)
+            except Exception:
+                if saved_studio is not None:
+                    try: self.state.studio.restore_snapshot(before_studio)
+                    except Exception: pass
+                try: self.state.save_display_settings(before_settings, replace=True)
+                except Exception: pass
+                raise
+            self.state.broadcast({'type': 'studio', 'design': saved_studio})
+            return {'settings': result, 'studio': saved_studio}
 
     def expect(self, seq, action, target=''):
         with self.lock:
@@ -230,4 +308,5 @@ class Dashboard:
                 'profiles': [{'id': k, 'label': v['label'], 'description': v['description']} for k, v in PROFILES.items()],
                 'diagnostics': {'source_last_success': max(successes, default=None), 'last_message': messages[0]['published'] if messages else None,
                                 'sources': [{'status': x.get('status'), 'role': x.get('role'), 'error': x.get('error'), 'fetch_ms': x.get('fetch_ms'), 'last_success': x.get('last_success')} for x in feeds]},
-                'metrics': self.metrics()}
+                'metrics': self.metrics(), 'restore_warning': self.history_error,
+                'audio_runtime': runtime.tts_runtime_status()}

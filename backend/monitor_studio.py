@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import sqlite3
 import threading
 import time
@@ -147,8 +148,15 @@ class Studio:
         self.path=self.root/'design.json';self.db=self.root/'recorder.sqlite3';self.lock=threading.RLock();self.seen=OrderedDict();self.error=''
         self.doc=dict(revision=0,config=defaults())
         if self.path.exists():
-            stored=json.loads(self.path.read_text(encoding='utf-8'));conf=validate(stored['config']);conf['examples']=stored['config'].get('examples',[])[:200]
-            self.doc=dict(revision=int(stored['revision']),config=conf)
+            try:
+                stored=json.loads(self.path.read_text(encoding='utf-8'));conf=validate(stored['config']);conf['examples']=copy.deepcopy(stored['config'].get('examples',[])[:200])
+                self.doc=dict(revision=int(stored['revision']),config=conf)
+            except (OSError, UnicodeError, ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                stamp=time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())
+                damaged=self.path.with_name(f'{self.path.stem}.beschadigd-{stamp}{self.path.suffix}')
+                try: os.replace(self.path,damaged); kept=f' Bewaard als {damaged.name}.'
+                except OSError: kept=' Het oorspronkelijke bestand is niet overschreven.'
+                self.error='Studio-inrichting kon niet worden gelezen en is veilig overgeslagen.'+kept
         with self.connect() as con:
             con.executescript('''PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS records(seq INTEGER PRIMARY KEY AUTOINCREMENT, mid TEXT UNIQUE, at REAL, payload TEXT, scope INTEGER, design TEXT);
@@ -174,6 +182,19 @@ class Studio:
             if expected!=self.doc['revision']: raise ValueError('Instellingen zijn elders gewijzigd. Laad opnieuw en bekijk je wijzigingen.')
             clean['examples']=copy.deepcopy(self.doc['config'].get('examples',[]))
             if example: clean['examples']=(clean['examples']+[example])[-200:]
+            doc=dict(revision=self.doc['revision']+1,config=clean)
+            atomic_json(self.path,doc);self.doc=doc
+            return copy.deepcopy(doc)
+
+    def restore_snapshot(self,document,expected=None):
+        """Restore a validated Studio snapshot and advance its revision once."""
+        if not isinstance(document,dict) or not isinstance(document.get('config'),dict): raise ValueError('Herstelpunt bevat geen geldige Studio-inrichting')
+        clean=validate(document['config'])
+        examples=document['config'].get('examples',[])
+        clean['examples']=copy.deepcopy(examples[:200]) if isinstance(examples,list) else []
+        with self.lock:
+            if expected is not None and expected!=self.doc['revision']:
+                raise ValueError('Studio is intussen gewijzigd; bekijk de voorvertoning opnieuw')
             doc=dict(revision=self.doc['revision']+1,config=clean)
             atomic_json(self.path,doc);self.doc=doc
             return copy.deepcopy(doc)

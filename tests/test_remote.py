@@ -6,6 +6,8 @@ import http.client
 import json
 import threading
 import time
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 import test_runtime as runtime
@@ -109,6 +111,56 @@ class RemoteTests(unittest.TestCase):
         with patch.object(self.state.dashboard,'checkpoint',side_effect=OSError('disk full')):
             with self.assertRaises(OSError):self.state.save_display_settings({'name':'Must not save'})
         self.assertEqual(self.state.get_display_settings(),original)
+
+    def test_damaged_device_store_fails_closed_without_blocking_startup(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);path=root/'secrets'/'devices.json';path.parent.mkdir(parents=True);path.write_text('{beschadigd',encoding='utf-8')
+            access=self.module.RemoteAccess(root/'secrets'/'admin-token.txt')
+            self.assertEqual(access.devices,{});self.assertIn('veilig uitgeschakeld',access.load_warning)
+            self.assertTrue(list(path.parent.glob('devices.beschadigd-*.json')))
+
+    def test_damaged_restore_history_is_quarantined_without_stopping_dashboard(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);path=root/'remote'/'restore-points.json';path.parent.mkdir(parents=True);path.write_text('{beschadigd',encoding='utf-8')
+            dashboard=type(self.state.dashboard)(self.state,root)
+            self.assertEqual(dashboard.history,[]);self.assertIn('overgeslagen',dashboard.history_error)
+            self.assertTrue(list(path.parent.glob('restore-points.beschadigd-*.json')))
+
+    def test_restore_point_also_restores_the_studio_design(self):
+        original_settings=copy.deepcopy(self.state.get_display_settings());original_studio=self.state.studio.snapshot()
+        try:
+            config=copy.deepcopy(original_studio['config']);config['layout']['enabled']=True
+            self.state.studio.save(config,original_studio['revision'])
+            point=self.request('/api/remote/checkpoint',{'description':'Studio herstel'})[1]['id']
+            changed=copy.deepcopy(self.state.studio.snapshot()['config']);changed['layout']['enabled']=False
+            self.state.studio.save(changed,self.state.studio.snapshot()['revision']);self.state.save_display_settings({'masterVolume':17})
+            preview=self.request('/api/remote/restore-preview?id='+point)[1]['preview']
+            self.assertIn('Studio-ontwerp',preview['studio_changes']);self.assertTrue(preview['includes_studio'])
+            self.assertEqual(self.request('/api/remote/restore',{'id':point,'expected':preview['expected']})[0],200)
+            self.assertTrue(self.state.studio.snapshot()['config']['layout']['enabled'])
+        finally:
+            self.state.save_display_settings(original_settings,replace=True);self.state.studio.restore_snapshot(original_studio)
+
+    def test_standard_action_updates_studio_and_settings_together(self):
+        original_settings=copy.deepcopy(self.state.get_display_settings());original_studio=self.state.studio.snapshot()
+        try:
+            config=copy.deepcopy(original_studio['config']);config['layout']['enabled']=True;config['speech']['enabled']=True
+            self.state.studio.save(config,original_studio['revision'])
+            code,result,_=self.request('/api/remote/apply-standard',{'kind':'layout'})
+            self.assertEqual(code,200);self.assertFalse(result['studio']['config']['layout']['enabled'])
+            self.assertEqual(result['settings']['messageDisplayMode'],'parsed')
+            self.assertTrue(result['studio']['config']['speech']['enabled'])
+        finally:
+            self.state.save_display_settings(original_settings,replace=True);self.state.studio.restore_snapshot(original_studio)
+
+    def test_tts_honours_selected_engine_and_keeps_long_dispatches(self):
+        m=self.module
+        with patch.object(m,'SAFE_MODE',False),patch.object(m,'generate_online_tts',side_effect=lambda text:(b'ID3'+str(text).encode())*24) as tts:
+            text='Eerste zin. Tweede zin met voldoende woorden. '*80
+            code,data,headers=self.request('/api/tts',{'text':text,'engine':'online','attention':True})
+        self.assertEqual(code,200);self.assertGreater(len(data),100);self.assertGreater(tts.call_count,1)
+        self.assertEqual(headers['X-P2000-TTS-Engine'],'gtts-mp3');self.assertEqual(headers['X-P2000-TTS-Requested-Engine'],'online')
+        self.assertEqual(headers['X-P2000-TTS-Attention'],'none');self.assertEqual(headers['X-P2000-TTS-Rate-Applied'],'false')
 
     def test_history_and_metrics_remain_bounded(self):
         dash=self.state.dashboard

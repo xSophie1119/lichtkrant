@@ -129,7 +129,7 @@ except Exception:
     urllib3 = None
     _HTTP_POOL = None
 
-APP_VERSION = "4.8.1"
+APP_VERSION = "4.9.0"
 
 _STATIC_CACHE: dict[str, tuple[int, int, bytes]] = {}
 _STATIC_CACHE_LOCK = threading.Lock()
@@ -6487,6 +6487,9 @@ _TTS_RENDER_LAST_ENGINE = ""
 _TTS_RENDER_LAST_ERROR = ""
 _TTS_RENDER_LAST_AT = ""
 _TTS_RENDER_LAST_VOICE = ""
+_TTS_RENDER_REQUESTED_ENGINE = "native"
+_TTS_RENDER_FALLBACK_REASON = ""
+_TTS_RENDER_CHUNKS = 0
 
 
 def _powershell_executable() -> str | None:
@@ -6703,14 +6706,18 @@ def generate_local_piper_wav(text: str, rate: float = 0.96, service: str = "bran
     exe,model=_piper_config()
     if not exe: raise RuntimeError("Piper is niet geinstalleerd")
     if not model: raise RuntimeError("Piper is aanwezig maar er staat geen Nederlands .onnx-model in data/voices")
-    key=hashlib.sha256((f"piper-v1|{model}|{service}|{int(urgent)}|{int(attention)}|"+text).encode()).hexdigest()
+    rate=max(.65,min(1.25,float(rate or .96)))
+    key=hashlib.sha256((f"piper-v2|{model}|{rate:.3f}|{service}|{int(urgent)}|{int(attention)}|"+text).encode()).hexdigest()
     TTS_CACHE_DIR.mkdir(parents=True,exist_ok=True); cache=TTS_CACHE_DIR/f"{key}.wav"
     if cache.exists() and cache.stat().st_size>1000:
         _TTS_RENDER_LAST_ENGINE="linux-piper-wav-cache"; _TTS_RENDER_LAST_VOICE=f"Piper • {model.stem}"; _TTS_RENDER_LAST_ERROR=""; _TTS_RENDER_LAST_AT=utcnow_iso(); return cache.read_bytes()
     with _TTS_RENDER_LOCK:
         tmp=TTS_CACHE_DIR/f".{key}-{time.time_ns()}.wav"
         try:
-            cp=subprocess.run([exe,"--model",str(model),"--output_file",str(tmp)],input=(text+"\n").encode("utf-8"),stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=20,creationflags=(getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0))
+            # Piper's length scale is inverse: a larger speech-rate needs a
+            # shorter generated waveform. Keeping it in the cache key prevents
+            # a previous speed from silently being reused.
+            cp=subprocess.run([exe,"--model",str(model),"--output_file",str(tmp),"--length_scale",f"{1.0/rate:.4f}"],input=(text+"\n").encode("utf-8"),stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,timeout=20,creationflags=(getattr(subprocess,"CREATE_NO_WINDOW",0) if os.name=="nt" else 0))
             if cp.returncode!=0 or not tmp.exists() or tmp.stat().st_size<1000:
                 raise RuntimeError(cp.stderr.decode("utf-8","replace")[-500:] or "Piper maakte geen bruikbaar WAV-bestand")
             speech=tmp.read_bytes(); data=_prepend_attention_to_wav(speech,service,urgent) if attention else speech
@@ -6761,30 +6768,121 @@ def generate_local_espeak_wav(text: str, rate: float = 0.96, service: str = "bra
             except Exception: pass
 
 
-def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = "brandweer", urgent: bool = False, attention: bool = True) -> tuple[bytes, str, str]:
-    """Render one dispatch asset with a deterministic per-platform fallback chain."""
-    global _TTS_RENDER_LAST_ENGINE, _TTS_RENDER_LAST_ERROR, _TTS_RENDER_LAST_AT, _TTS_RENDER_LAST_VOICE
-    errors=[]
-    # OS-native audio first. Linux prefers a fixed Piper voice and falls back to
-    # eSpeak; browser speechSynthesis is deliberately the last frontend fallback.
-    renderers=[]
-    if os.name=="nt": renderers=[generate_local_sapi_wav]
-    elif sys.platform.startswith("linux"): renderers=[generate_local_piper_wav, generate_local_espeak_wav]
-    if SAFE_MODE:
-        raise RuntimeError("TTS is uitgeschakeld in veilige modus")
-    for local_renderer in renderers:
-        try:
-            data=local_renderer(text,rate=rate,service=service,urgent=urgent,attention=attention)
-            return data,"audio/wav",_TTS_RENDER_LAST_ENGINE or "native-wav"
-        except Exception as exc:
-            errors.append(str(exc))
+def _tts_normalize_text(text: str, limit: int = 4000) -> str:
+    return normalize_space(str(text or ''))[:limit]
+
+
+def _tts_chunks(text: str, limit: int = 1050) -> list[str]:
+    """Split long dispatches on useful boundaries, never in the middle of a word."""
+    text = _tts_normalize_text(text)
+    if not text:
+        raise ValueError('empty tts text')
+    if len(text) <= limit:
+        return [text]
+    rows, pending = [], text
+    while len(pending) > limit:
+        cut = max(pending.rfind(mark, 0, limit + 1) for mark in ('. ', '; ', ': ', ', ', ' '))
+        if cut < max(80, limit // 3):
+            cut = limit
+        else:
+            cut += 1
+        rows.append(pending[:cut].strip())
+        pending = pending[cut:].strip()
+    if pending:
+        rows.append(pending)
+    return [row for row in rows if row]
+
+
+def _combine_wavs(parts: list[bytes]) -> bytes:
+    if len(parts) == 1:
+        return parts[0]
     try:
-        data=generate_online_tts(text)
-        _TTS_RENDER_LAST_ENGINE="gtts-mp3-fallback"; _TTS_RENDER_LAST_VOICE="Google TTS • Nederlands (nl)"; _TTS_RENDER_LAST_ERROR="; ".join(errors)[:500]; _TTS_RENDER_LAST_AT=utcnow_iso()
-        return data,"audio/mpeg","gtts-mp3-fallback"
+        rendered = []
+        for data in parts:
+            with wave.open(BytesIO(data), 'rb') as source:
+                params = source.getparams()
+                rendered.append((params, source.readframes(source.getnframes())))
+        first = rendered[0][0]
+        if any(row[0][:4] != first[:4] for row in rendered[1:]):
+            raise ValueError('ongelijke WAV-indeling')
+        silence_frames = max(1, int(first.framerate * .14))
+        silence = b'\0' * silence_frames * first.nchannels * first.sampwidth
+        out = BytesIO()
+        with wave.open(out, 'wb') as target:
+            target.setparams(first)
+            for index, (_, frames) in enumerate(rendered):
+                if index:
+                    target.writeframes(silence)
+                target.writeframes(frames)
+        return out.getvalue()
     except Exception as exc:
-        errors.append(str(exc)); _TTS_RENDER_LAST_ERROR="; ".join(errors)[:500]; _TTS_RENDER_LAST_AT=utcnow_iso()
-        raise RuntimeError("geen TTS-audio beschikbaar: "+"; ".join(errors)) from exc
+        raise RuntimeError(f'TTS-fragmenten konden niet worden samengevoegd: {exc}') from exc
+
+
+def _trim_tts_cache(max_files: int = 220, max_bytes: int = 180 * 1024 * 1024) -> None:
+    try:
+        files = sorted((file for file in TTS_CACHE_DIR.glob('*') if file.suffix.lower() in {'.wav', '.mp3'}), key=lambda file: file.stat().st_mtime, reverse=True)
+        total = 0
+        for index, file in enumerate(files):
+            size = file.stat().st_size
+            if index < max_files and total + size <= max_bytes:
+                total += size
+                continue
+            try: file.unlink()
+            except OSError: pass
+    except OSError:
+        pass
+
+
+def _selected_tts_renderers(engine: str) -> list:
+    preferred = str(engine or 'native').lower()
+    if preferred == 'native':
+        if os.name == 'nt': return [generate_local_sapi_wav]
+        if sys.platform.startswith('linux'): return [generate_local_piper_wav, generate_local_espeak_wav]
+        return []
+    mapping = {'sapi': generate_local_sapi_wav, 'piper': generate_local_piper_wav, 'espeak': generate_local_espeak_wav}
+    return [mapping[preferred]] if preferred in mapping else []
+
+
+def generate_dispatch_audio(text: str, rate: float = 0.96, service: str = 'brandweer', urgent: bool = False, attention: bool = True, engine: str = 'native') -> tuple[bytes, str, str]:
+    """Render one dispatch asset, honouring the selected engine with a visible fallback reason."""
+    global _TTS_RENDER_LAST_ENGINE, _TTS_RENDER_LAST_ERROR, _TTS_RENDER_LAST_AT, _TTS_RENDER_LAST_VOICE
+    global _TTS_RENDER_REQUESTED_ENGINE, _TTS_RENDER_FALLBACK_REASON, _TTS_RENDER_CHUNKS
+    selected = str(engine or 'native').lower()
+    if selected not in {'native', 'piper', 'espeak', 'sapi', 'online'}:
+        selected = 'native'
+    chunks = _tts_chunks(text)
+    _TTS_RENDER_REQUESTED_ENGINE, _TTS_RENDER_CHUNKS = selected, len(chunks)
+    _TTS_RENDER_FALLBACK_REASON = ''
+    if SAFE_MODE:
+        raise RuntimeError('TTS is uitgeschakeld in veilige modus')
+    errors = []
+    if selected != 'online':
+        for local_renderer in _selected_tts_renderers(selected):
+            try:
+                parts = [local_renderer(chunk, rate=rate, service=service, urgent=urgent, attention=attention and index == 0) for index, chunk in enumerate(chunks)]
+                data = _combine_wavs(parts)
+                _TTS_RENDER_FALLBACK_REASON = ''
+                _trim_tts_cache()
+                return data, 'audio/wav', _TTS_RENDER_LAST_ENGINE or 'native-wav'
+            except Exception as exc:
+                errors.append(str(exc))
+        if not _selected_tts_renderers(selected):
+            errors.append(f'{selected} is niet beschikbaar op dit platform')
+    try:
+        # gTTS receives short fragments too. Concatenated MP3 frames are played
+        # in order by the browser and avoid silently losing the end of a dispatch.
+        data = b''.join(generate_online_tts(chunk) for chunk in chunks)
+        _TTS_RENDER_LAST_ENGINE = 'gtts-mp3' if selected == 'online' else 'gtts-mp3-fallback'
+        _TTS_RENDER_LAST_VOICE = 'Google TTS • Nederlands (nl)'
+        _TTS_RENDER_FALLBACK_REASON = normalize_space('; '.join(errors))[:500]
+        _TTS_RENDER_LAST_ERROR = _TTS_RENDER_FALLBACK_REASON
+        _TTS_RENDER_LAST_AT = utcnow_iso()
+        _trim_tts_cache()
+        return data, 'audio/mpeg', _TTS_RENDER_LAST_ENGINE
+    except Exception as exc:
+        errors.append(str(exc)); _TTS_RENDER_LAST_ERROR=normalize_space('; '.join(errors))[:500]; _TTS_RENDER_LAST_AT=utcnow_iso()
+        raise RuntimeError('geen TTS-audio beschikbaar: '+'; '.join(errors)) from exc
 
 
 _TTS_ONLINE_LOCK = threading.Lock()
@@ -6797,11 +6895,11 @@ def generate_online_tts(text: str) -> bytes:
     It never falls back to a different system voice automatically, so consecutive
     announcements keep the same speaker. Retries only repeat this exact route.
     """
-    text = normalize_space(str(text or ""))[:1200]
+    text = _tts_normalize_text(text, 1050)
     if not text:
         raise ValueError("empty tts text")
     # New namespace prevents older .com-fallback audio from being reused.
-    cache_key = hashlib.sha256(("gtts-nl-fixed-com-v3|" + text).encode("utf-8")).hexdigest()
+    cache_key = hashlib.sha256(("gtts-nl-fixed-com-v4|" + text).encode("utf-8")).hexdigest()
     TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = TTS_CACHE_DIR / f"{cache_key}.mp3"
     try:
@@ -6944,7 +7042,7 @@ def _estimate_dispatch_ms(text: str, rate: float = 0.96) -> int:
     return max(3000, min(40000, int((words / (2.2 * safe_rate)) * 1000 + 2600)))
 
 
-def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, cue_service: str = "brandweer", cue_urgent: bool = False, attention: bool = True) -> dict:
+def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, cue_service: str = "brandweer", cue_urgent: bool = False, attention: bool = True, engine: str = "native") -> dict:
     """Windows-only last-resort playback on the kiosk machine itself.
 
     The normal route still plays inside the lightkrant browser. This fallback is
@@ -6954,17 +7052,17 @@ def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, 
     global _TTS_PLAY_GENERATION, _TTS_PLAYER_PROCESS, _TTS_LAST_ERROR, _TTS_LAST_PLAYER, _TTS_LAST_PLAYED
     if os.name != "nt":
         raise RuntimeError("Windows host-TTS is alleen beschikbaar op Windows")
-    text = normalize_space(str(text or ""))[:1200]
+    text = _tts_normalize_text(text)
     if not text:
         raise ValueError("empty tts text")
     with _TTS_PLAYER_LOCK:
         _TTS_PLAY_GENERATION += 1
         generation = _TTS_PLAY_GENERATION
-    audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=cue_service or "brandweer", urgent=bool(cue_urgent), attention=bool(attention))
+    audio, mime, actual_engine = generate_dispatch_audio(text, rate=rate, service=cue_service or "brandweer", urgent=bool(cue_urgent), attention=bool(attention), engine=engine)
     volume = max(0, min(100, int(volume)))
     if mime == "audio/wav": audio = attenuate_wav(audio, volume)
     ext = ".wav" if mime == "audio/wav" else ".mp3"
-    key = hashlib.sha256((f"host-dispatch-v3|{rate}|{volume}|{cue_service}|{int(bool(cue_urgent))}|{int(bool(attention))}|" + text).encode("utf-8")).hexdigest()
+    key = hashlib.sha256((f"host-dispatch-v4|{engine}|{rate}|{volume}|{cue_service}|{int(bool(cue_urgent))}|{int(bool(attention))}|" + text).encode("utf-8")).hexdigest()
     TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = TTS_CACHE_DIR / f"host-{key}{ext}"
     if not cache_file.exists() or cache_file.stat().st_size < 100:
@@ -6994,7 +7092,7 @@ def play_dispatch_tts_on_host(text: str, rate: float = 0.96, volume: int = 100, 
         _TTS_LAST_ERROR = ""
         _TTS_LAST_PLAYED = utcnow_iso()
     return {
-        "ok": True, "player": player, "engine": engine, "played_at": _TTS_LAST_PLAYED, "playback_token": playback_token,
+        "ok": True, "player": player, "engine": actual_engine, "requested_engine": engine, "played_at": _TTS_LAST_PLAYED, "playback_token": playback_token,
         "bytes": len(audio), "volume": volume,
         "estimated_ms": _estimate_dispatch_ms(text, rate) + 900,
     }
@@ -7092,6 +7190,9 @@ def tts_runtime_status() -> dict:
         "server_playback_ready": False,
         "playback_target": "lightkrant-tab",
         "render_last_engine": _TTS_RENDER_LAST_ENGINE,
+        "render_requested_engine": _TTS_RENDER_REQUESTED_ENGINE,
+        "render_fallback_reason": _TTS_RENDER_FALLBACK_REASON,
+        "render_chunks": _TTS_RENDER_CHUNKS,
         "render_last_error": _TTS_RENDER_LAST_ERROR,
         "render_last_at": _TTS_RENDER_LAST_AT,
         "render_last_voice": _TTS_RENDER_LAST_VOICE,
@@ -8624,7 +8725,7 @@ class Handler(BaseHTTPRequestHandler):
             categories = payload.get("categories") if isinstance(payload.get("categories"), list) else []
             return self.send_json({"ok": True, "parse": parse_raw_p2000_line(self.state, raw, categories)})
         if parsed.path == "/api/tts":
-            text = str(payload.get("text") or "")[:500]
+            text = _tts_normalize_text(payload.get("text"), 4000)
             service = normalize_space(str(payload.get("service") or "brandweer"))[:40].lower()
             urgent = bool(payload.get("urgent", False))
             attention = bool(payload.get("attention", True))
@@ -8633,8 +8734,8 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 rate = 0.96
             try:
-                audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=service, urgent=urgent, attention=attention)
-                return self.send_bytes(audio, mime, extra_headers={"X-P2000-TTS-Engine": engine})
+                audio, mime, engine = generate_dispatch_audio(text, rate=rate, service=service, urgent=urgent, attention=attention, engine=str(payload.get('engine') or 'native'))
+                return self.send_bytes(audio, mime, extra_headers={'X-P2000-TTS-Engine': engine, 'X-P2000-TTS-Requested-Engine': _TTS_RENDER_REQUESTED_ENGINE, 'X-P2000-TTS-Attention': 'embedded' if attention and mime == 'audio/wav' else 'none', 'X-P2000-TTS-Rate-Applied': 'true' if mime == 'audio/wav' else 'false', 'X-P2000-TTS-Chunk-Count': str(_TTS_RENDER_CHUNKS), 'X-P2000-TTS-Fallback': _TTS_RENDER_FALLBACK_REASON[:400]})
             except Exception as e:
                 return self.send_json({"error": str(e), "fallback": "none"}, 503)
         if parsed.path == "/api/tts/play":
@@ -8645,7 +8746,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"ok": False, "error": "Windows host-TTS is alleen toegestaan vanaf de lokale lichtkrant."}, 403)
             if os.name != "nt":
                 return self.send_json({"ok": False, "error": "Windows host-TTS is niet nodig op dit platform."}, 409)
-            text = normalize_space(str(payload.get("text") or ""))[:500]
+            text = _tts_normalize_text(payload.get('text'), 4000)
             try:
                 rate = max(0.65, min(1.25, float(payload.get("rate", 0.96) or 0.96)))
             except Exception:
@@ -8656,6 +8757,7 @@ class Handler(BaseHTTPRequestHandler):
                     cue_service=normalize_space(str(payload.get("service") or "brandweer"))[:40].lower(),
                     cue_urgent=bool(payload.get("urgent", False)),
                     attention=bool(payload.get("attention", True)),
+                    engine=str(payload.get('engine') or 'native'),
                 )
                 return self.send_json(result)
             except Exception as exc:
