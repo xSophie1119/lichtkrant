@@ -1,7 +1,9 @@
 <resources>
-    <style name="Theme.RoutePilot" parent="android:style/Theme.Material.Light.NoActionBar">
+    <style name="Theme.RoutePilot" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/rp_primary</item>
+        <item name="colorPrimaryDark">@color/rp_primary_dark</item>
+        <item name="colorAccent">@color/rp_accent</item>
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">@color/rp_primary</item>
         <item name="android:navigationBarColor">#FFFFFF</item>
         <item name="android:statusBarColor">@color/rp_primary_dark</item>
         <item name="android:windowLightStatusBar">false</item>
