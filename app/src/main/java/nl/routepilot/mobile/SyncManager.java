@@ -50,7 +50,7 @@ public final class SyncManager {
                 }catch(Exception ex){db.markShiftError(shiftId,ex.getMessage());throw ex;}
             }
             int since=db.knowledgeRevision();
-            String qs="?since="+since+"&device_id="+enc(deviceId)+"&device_name="+enc(deviceName)+"&app_version="+enc("5.2.1-android");
+            String qs="?since="+since+"&device_id="+enc(deviceId)+"&device_name="+enc(deviceName)+"&app_version="+enc("5.2.2-android");
             JSONObject pull=request(base+"/api/sync/training"+qs,"GET",token,null);
             if(!pull.optBoolean("ok",false))throw new Exception(pull.optString("error","trainingssync mislukt"));
             int revision=pull.optInt("revision",since);
@@ -58,7 +58,7 @@ public final class SyncManager {
             if(changed){
                 JSONObject knowledge=pull.optJSONObject("knowledge");if(knowledge==null)knowledge=new JSONObject();
                 db.saveKnowledge(revision,pull.optString("hash",""),knowledge);
-                JSONObject ack=new JSONObject();ack.put("device_id",deviceId);ack.put("device_name",deviceName);ack.put("app_version","5.2.1-android");ack.put("revision",revision);
+                JSONObject ack=new JSONObject();ack.put("device_id",deviceId);ack.put("device_name",deviceName);ack.put("app_version","5.2.2-android");ack.put("revision",revision);
                 request(base+"/api/sync/ack","POST",token,ack);
             }
             p.edit().putLong("last_sync_at",System.currentTimeMillis()).putString("last_sync_error","").apply();
@@ -71,7 +71,7 @@ public final class SyncManager {
     }
 
     public static JSONObject request(String url,String method,String token,JSONObject body)throws Exception{
-        HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setRequestMethod(method);c.setConnectTimeout(8000);c.setReadTimeout(25000);c.setRequestProperty("Accept","application/json");c.setRequestProperty("User-Agent","RoutePilot-Android/5.2.1");
+        HttpURLConnection c=(HttpURLConnection)new URL(url).openConnection();c.setRequestMethod(method);c.setConnectTimeout(8000);c.setReadTimeout(25000);c.setRequestProperty("Accept","application/json");c.setRequestProperty("User-Agent","RoutePilot-Android/5.2.2");
         if(token!=null&&!token.trim().isEmpty()){c.setRequestProperty("Authorization","Bearer "+token.trim());c.setRequestProperty("X-RoutePilot-Token",token.trim());}
         if(body!=null){c.setDoOutput(true);c.setRequestProperty("Content-Type","application/json; charset=utf-8");byte[] bytes=body.toString().getBytes(StandardCharsets.UTF_8);c.setFixedLengthStreamingMode(bytes.length);try(OutputStream out=c.getOutputStream()){out.write(bytes);}}
         int code=c.getResponseCode();InputStream in=(code>=200&&code<300)?c.getInputStream():c.getErrorStream();String text=readAll(in);c.disconnect();
