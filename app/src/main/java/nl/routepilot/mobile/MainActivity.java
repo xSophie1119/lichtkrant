@@ -55,7 +55,7 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
 
     @Override protected void onCreate(Bundle state){
         super.onCreate(state);db=RoutePilotDb.get(this);prefs=RoutePilotApp.prefs(this);knowledge=new KnowledgeEngine(db.knowledge());
-        locationManager=(LocationManager)getSystemService(LOCATION_SERVICE);buildUi();refreshUi();requestLocationPermissions();
+        locationManager=(LocationManager)getSystemService(LOCATION_SERVICE);buildUi();refreshUi();showPreviousCrashIfAny();requestLocationPermissions();
         if(!prefs.getString(RoutePilotApp.KEY_SERVER_URL,"").trim().isEmpty())SyncManager.syncAsync(this,(ok,msg)->{syncStatus.setText(msg);knowledge=new KnowledgeEngine(db.knowledge());refreshUi();});
     }
 
@@ -132,6 +132,17 @@ public class MainActivity extends AppCompatActivity implements LocationListener 
         String server=prefs.getString(RoutePilotApp.KEY_SERVER_URL,"");topStatus.setText((trip.isEmpty()?"CHAUFFEURMODUS":"● LIVE RIT")+" • "+(server.isEmpty()?"sync nog niet ingesteld":"2-richtingen-sync actief"));
         if(!trip.isEmpty()){JSONObject t=db.currentTrip(trip);if(t!=null&&destination==null){destination=new RoutingClient.Place(t.optString("destination"),t.optDouble("dest_lat"),t.optDouble("dest_lon"),"");showDestinationMarker();}}
         updateArrival();
+    }
+
+    private void showPreviousCrashIfAny(){
+        String crash=CrashLogger.consumeLastCrash(this);
+        if(crash==null||crash.isEmpty())return;
+        String compact=crash.length()>6500?crash.substring(0,6500)+"\n…":crash;
+        new AlertDialog.Builder(this)
+                .setTitle("RoutePilot hersteld na een crash")
+                .setMessage(compact)
+                .setPositiveButton("Sluiten",null)
+                .show();
     }
 
     private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
