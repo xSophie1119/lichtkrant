@@ -26,9 +26,18 @@ public class RoutePilotApp extends Application {
 
     @Override public void onCreate() {
         super.onCreate();
-        Configuration.getInstance().setUserAgentValue(getPackageName() + "/5.2.1");
+        CrashLogger.install(this);
         prefs(this);
-        scheduleBackgroundSync(this);
+        try {
+            Configuration.getInstance().setUserAgentValue(getPackageName() + "/5.2.2");
+        } catch (Throwable t) {
+            CrashLogger.noteNonFatal(this, t);
+        }
+        try {
+            scheduleBackgroundSync(this);
+        } catch (Throwable t) {
+            CrashLogger.noteNonFatal(this, t);
+        }
     }
 
     public static SharedPreferences prefs(Context c) {
