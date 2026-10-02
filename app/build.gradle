@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'nl.routepilot.mobile'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'nl.routepilot.mobile'
+        minSdk 26
+        targetSdk 35
+        versionCode 52001
+        versionName '5.2.1'
+    }
+
+    buildTypes {
+        debug {
+            debuggable true
+            applicationIdSuffix ''
+            versionNameSuffix '-debug'
+        }
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'androidx.work:work-runtime:2.10.0'
+    implementation 'androidx.car.app:app-projected:1.4.0'
+    implementation 'org.osmdroid:osmdroid-android:6.1.20'
+}
