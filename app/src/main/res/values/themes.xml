@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.RoutePilot" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/rp_primary</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <item name="android:statusBarColor">@color/rp_primary_dark</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowBackground">@color/rp_bg</item>
+    </style>
+</resources>
