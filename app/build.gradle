@@ -36,6 +36,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.7.0'
     implementation 'androidx.core:core:1.15.0'
     implementation 'androidx.work:work-runtime:2.10.0'
+    implementation 'androidx.car.app:app:1.4.0'
     implementation 'androidx.car.app:app-projected:1.4.0'
+    implementation 'com.google.guava:listenablefuture:1.0'
     implementation 'org.osmdroid:osmdroid-android:6.1.20'
 }
