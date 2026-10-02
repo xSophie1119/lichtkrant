@@ -21,12 +21,14 @@ public class RoutePilotDb extends SQLiteOpenHelper {
         return INSTANCE;
     }
 
-    private RoutePilotDb(Context context) { super(context, DB_NAME, null, DB_VERSION); }
+    private RoutePilotDb(Context context) {
+        super(context, DB_NAME, null, DB_VERSION);
+        setWriteAheadLoggingEnabled(true);
+    }
 
     @Override public void onConfigure(SQLiteDatabase db) {
         super.onConfigure(db);
         db.setForeignKeyConstraintsEnabled(true);
-        db.enableWriteAheadLogging();
     }
 
     @Override public void onCreate(SQLiteDatabase db) {
