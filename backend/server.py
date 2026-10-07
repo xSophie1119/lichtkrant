@@ -3243,6 +3243,7 @@ import remote_api
 from monitor_studio import Studio
 import studio_api
 from playback_tracker import PlaybackTracker, attenuate_wav
+from sw_incident_bridge import SWIncidentBridge
 HOST_PLAYBACK = PlaybackTracker()
 
 
@@ -3319,6 +3320,7 @@ class AppState:
             "source": "SW Mediaproducties Roepnummer API",
         }
         self.started_monotonic = time.monotonic()
+        self.sw_incident_bridge = SWIncidentBridge(ROOT)
         self.api_requests = 0
         self.api_errors = 0
         self.sse_peak = 0
@@ -5438,6 +5440,10 @@ class AppState:
             payload = asdict(m)
             payload["ingested_at"] = ingested_times.get(m.id) or utcnow_iso()
             self.broadcast({"type": "message", "message": payload})
+            # Best-effort push to the SW Mediaproducties Incidentdesk. The bridge
+            # owns its own bounded background queue, so feed ingestion never
+            # waits on the website or network.
+            self.sw_incident_bridge.submit(payload)
         return inserted
 
     def broadcast(self, payload: dict) -> int:
@@ -5626,6 +5632,7 @@ class AppState:
             "active_display_clients": self.active_display_clients(),
             "tts": tts_runtime_status(),
             "sw_roepnummer_api": self.sw_api_status_view(),
+            "sw_incidentdesk": self.sw_incident_bridge.status(),
             "supervisor": supervisor_status(),
             "update": update_runtime_status(),
             "startup_selftest": getattr(self,"startup_selftest",{}),
